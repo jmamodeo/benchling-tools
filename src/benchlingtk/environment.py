@@ -38,11 +38,11 @@ def protection_summary(environment: Environment) -> str:
     if environment.protected:
         return (
             f"protected: `changes apply` needs `--env {name} --confirm-env {name}`; "
-            f"MCP `apply_changes` needs `--allow-writes {name}`"
+            f"MCP `changes_apply` needs `--allow-writes {name}`"
         )
     return (
         f"not protected: `changes apply` needs `--env {name}`; "
-        f"MCP `apply_changes` needs `--allow-writes {name}`"
+        f"MCP `changes_apply` needs `--allow-writes {name}`"
     )
 
 

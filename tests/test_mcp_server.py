@@ -14,34 +14,34 @@ from benchlingtk.mcp_server import build_mcp_server, run_mcp_server
 from benchlingtk.runtime import RuntimePool
 
 READ_TOOLS = {
-    "list_environments",
-    "get_capabilities",
-    "resolve_entry",
-    "get_entry",
-    "inspect_entry",
-    "get_entries",
-    "get_folder",
-    "get_template",
-    "list_templates",
-    "get_section",
-    "get_part",
-    "get_table",
-    "list_entries",
-    "get_schema",
-    "list_schemas",
-    "find_schema",
-    "get_entry_fields",
-    "list_results",
-    "get_result",
-    "get_blob",
-    "list_result_tables",
-    "list_results_table_rows",
-    "read_back_results",
-    "verify_results",
-    "get_container",
-    "find_containers",
-    "list_container_schemas",
-    "get_change_status",
+    "auth_status",
+    "doctor",
+    "entry_resolve",
+    "entry_get",
+    "entry_inspect",
+    "entry_bulk_get",
+    "folder_get",
+    "template_get",
+    "template_list",
+    "section_get",
+    "part_get",
+    "table_get",
+    "entry_list",
+    "schema_get",
+    "schema_list",
+    "schema_find",
+    "entry_fields_get",
+    "results_list",
+    "results_get",
+    "blob_get",
+    "results_tables",
+    "results_rows",
+    "results_pending",
+    "results_verify",
+    "container_get",
+    "container_find",
+    "container_schema_list",
+    "changes_status",
 }
 
 
@@ -84,19 +84,19 @@ def writer(pool):
 
 async def test_tools_are_annotated_by_whether_they_can_write(client) -> None:
     tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-    assert READ_TOOLS | {"export", "plan_changes", "apply_changes", "issue_draft"} == set(tools)
+    assert READ_TOOLS | {"export", "changes_plan", "changes_apply", "issue_draft"} == set(tools)
     for name in READ_TOOLS:
         assert tools[name].annotations.read_only_hint is True, name
-    assert tools["apply_changes"].annotations.destructive_hint is True
-    assert tools["plan_changes"].annotations.read_only_hint is False
-    assert tools["plan_changes"].annotations.destructive_hint is False
+    assert tools["changes_apply"].annotations.destructive_hint is True
+    assert tools["changes_plan"].annotations.read_only_hint is False
+    assert tools["changes_plan"].annotations.destructive_hint is False
     assert tools["export"].annotations.read_only_hint is False
     assert tools["export"].annotations.destructive_hint is False
-    schema = tools["get_capabilities"].output_schema
+    schema = tools["doctor"].output_schema
     assert schema["properties"]["schema_version"]["const"] == "1.0"
     assert "ok" in schema["required"]
     assert tools["issue_draft"].annotations.read_only_hint is True
-    for name in set(tools) - {"list_environments", "issue_draft"}:
+    for name in set(tools) - {"auth_status", "issue_draft"}:
         assert "env" in tools[name].input_schema["required"], name
 
 
@@ -117,14 +117,14 @@ async def test_get_blob_reads_metadata_without_writes(client, fake) -> None:
         "mimeType": "image/png",
         "uploadStatus": "COMPLETE",
     }
-    payload = await call(client, "get_blob", env="sandbox", blob_id=blob_id)
+    payload = await call(client, "blob_get", env="sandbox", blob_id=blob_id)
     assert payload["ok"] is True
     assert payload["data"]["uploadStatus"] == "COMPLETE"
     assert fake.writes() == []
 
 
 async def test_missing_env_argument_is_a_protocol_error(client) -> None:
-    result = await client.call_tool("get_entry", {"reference": ENTRY_ID})
+    result = await client.call_tool("entry_get", {"reference": ENTRY_ID})
     assert result.is_error is True
 
 
@@ -138,17 +138,17 @@ async def test_entry_creation_preview_stays_read_only_until_enabled_apply(
     }
     planned = await call(
         client,
-        "plan_changes",
+        "changes_plan",
         env="sandbox",
         family="entry",
-        specification=request,
+        spec=request,
     )
     assert planned["data"]["after"]["folder"]["name"] == "Synthetic folder"
     assert fake.writes() == []
 
     blocked = await call(
         client,
-        "apply_changes",
+        "changes_apply",
         env="sandbox",
         plan_id=planned["data"]["id"],
     )
@@ -157,7 +157,7 @@ async def test_entry_creation_preview_stays_read_only_until_enabled_apply(
 
     applied = await call(
         writer,
-        "apply_changes",
+        "changes_apply",
         env="sandbox",
         plan_id=planned["data"]["id"],
     )
@@ -167,7 +167,7 @@ async def test_entry_creation_preview_stays_read_only_until_enabled_apply(
 
 
 async def test_unknown_env_returns_structured_error_with_choices(client, fake) -> None:
-    payload = await call(client, "get_entry", env="prod", reference=ENTRY_ID)
+    payload = await call(client, "entry_get", env="prod", reference=ENTRY_ID)
     assert payload["ok"] is False
     assert payload["error"]["code"] == "validation_error"
     assert payload["error"]["details"]["available_envs"] == ["sandbox"]
@@ -180,7 +180,7 @@ async def test_list_environments_reports_write_permission(pool, benchling_env, m
 
     configure_env("other", "https://other-tenant.benchling.com", secret="other-secret-value")
     active = Session(build_mcp_server(pool, writable_envs={"other"}))
-    data = (await call(active, "list_environments"))["data"]["environments"]
+    data = (await call(active, "auth_status"))["data"]["environments"]
     assert {name: item["writes_allowed"] for name, item in data.items()} == {
         "other": True,
         "sandbox": False,
@@ -190,57 +190,61 @@ async def test_list_environments_reports_write_permission(pool, benchling_env, m
 
 
 async def test_capabilities_reports_each_api_check(client, fake) -> None:
-    payload = await call(client, "get_capabilities", env="sandbox")
+    payload = await call(client, "doctor", env="sandbox")
     assert payload["ok"] is True
     assert payload["meta"]["env"] == "sandbox"
     assert payload["data"]["capabilities"]["entry_fields"] is True
     fake.fail("GET", "/entry/items", 403)
-    degraded = (await call(client, "get_capabilities", env="sandbox"))["data"]
+    failed = await call(client, "doctor", env="sandbox")
+    assert failed["ok"] is False
+    assert failed["error"]["code"] == "authentication_error"
+    assert failed["meta"]["env"] == "sandbox"
+    degraded = failed["error"]["details"]
     assert degraded["ok"] is False
     assert degraded["capabilities"]["document_parts"] is False
     assert degraded["checks"][0]["code"] == "access_denied"
 
 
 async def test_resolve_entry_by_id_and_display_id(client) -> None:
-    by_id = (await call(client, "resolve_entry", env="sandbox", reference=ENTRY_ID))["data"]
-    by_display = (await call(client, "resolve_entry", env="sandbox", reference="EXP-1"))["data"]
+    by_id = (await call(client, "entry_resolve", env="sandbox", reference=ENTRY_ID))["data"]
+    by_display = (await call(client, "entry_resolve", env="sandbox", reference="EXP-1"))["data"]
     assert by_id["resolved_by"] == "canonical_id"
     assert by_display["resolved_by"] == "display_id"
     assert by_id["entry_id"] == by_display["entry_id"] == ENTRY_ID
-    missing = await call(client, "resolve_entry", env="sandbox", reference="EXP-99")
+    missing = await call(client, "entry_resolve", env="sandbox", reference="EXP-99")
     assert missing["error"]["code"] == "not_found"
 
 
 async def test_container_read_tools_and_plans_keep_default_read_only(client, writer, fake) -> None:
-    container = await call(client, "get_container", env="sandbox", container_id="con_source1")
+    container = await call(client, "container_get", env="sandbox", container_id="con_source1")
     assert container["data"]["name"] == "Source vial"
-    found = await call(client, "find_containers", env="sandbox", barcode="BAR-SOURCE", limit=10)
+    found = await call(client, "container_find", env="sandbox", barcode="BAR-SOURCE", limit=10)
     assert found["data"]["items"][0]["id"] == "con_source1"
-    schemas = await call(client, "list_container_schemas", env="sandbox")
+    schemas = await call(client, "container_schema_list", env="sandbox")
     assert schemas["data"]["items"][0]["fieldDefinitions"][0]["name"] == "Storage note"
 
     planned = await call(
         client,
-        "plan_changes",
+        "changes_plan",
         env="sandbox",
         family="containers",
-        specification={
+        spec={
             "operation": "create",
             "schema_id": "contsch_abc123",
             "name": "Synthetic vial from MCP",
         },
     )
     assert planned["ok"] is True, planned
-    denied = await call(client, "apply_changes", env="sandbox", plan_id=planned["data"]["id"])
+    denied = await call(client, "changes_apply", env="sandbox", plan_id=planned["data"]["id"])
     assert denied["error"]["code"] == "unsupported_capability"
     assert fake.writes() == []
-    applied = await call(writer, "apply_changes", env="sandbox", plan_id=planned["data"]["id"])
+    applied = await call(writer, "changes_apply", env="sandbox", plan_id=planned["data"]["id"])
     assert applied["ok"] is True
     assert [call.path for call in fake.writes()] == ["/api/v2/containers"]
 
 
 async def test_get_entry_without_full_returns_metadata_only(client, fake) -> None:
-    data = (await call(client, "get_entry", env="sandbox", reference=ENTRY_ID))["data"]
+    data = (await call(client, "entry_get", env="sandbox", reference=ENTRY_ID))["data"]
     assert data["version_id"] == "ver_1"
     assert "parts" not in data
     assert not any("parts/items" in c.path for c in fake.calls)
@@ -252,7 +256,7 @@ async def test_full_entry_pages_parts_results_and_table_rows(client, fake) -> No
     first = (
         await call(
             client,
-            "get_entry",
+            "entry_get",
             env="sandbox",
             reference=ENTRY_ID,
             full=True,
@@ -285,7 +289,7 @@ async def test_full_entry_pages_parts_results_and_table_rows(client, fake) -> No
     second = (
         await call(
             client,
-            "get_entry",
+            "entry_get",
             env="sandbox",
             reference=ENTRY_ID,
             full=True,
@@ -308,31 +312,31 @@ async def test_full_entry_pages_parts_results_and_table_rows(client, fake) -> No
 @pytest.mark.parametrize(
     ("tool", "arguments"),
     [
-        ("get_entry", {"reference": ENTRY_ID, "full": True, "part_offset": -1}),
-        ("get_entry", {"reference": ENTRY_ID, "full": True, "result_limit": 0}),
-        ("get_entry", {"reference": ENTRY_ID, "full": True, "table_row_limit": 0}),
-        ("get_section", {"reference": ENTRY_ID, "section": "Results", "part_limit": 0}),
-        ("get_section", {"reference": ENTRY_ID, "section": "Results", "table_row_offset": -1}),
-        ("get_part", {"reference": ENTRY_ID, "part_id": TEXT_PART, "row_offset": -1}),
-        ("get_part", {"reference": ENTRY_ID, "part_id": TEXT_PART, "row_limit": 0}),
-        ("get_table", {"part_id": TABLE_PART, "row_offset": -1}),
-        ("get_table", {"part_id": TABLE_PART, "row_limit": 0}),
-        ("get_schema", {"schema_id": "entsch_abc123", "field_offset": -1}),
-        ("get_schema", {"schema_id": "entsch_abc123", "field_limit": 0}),
-        ("list_result_tables", {"reference": ENTRY_ID, "offset": -1}),
-        ("list_result_tables", {"reference": ENTRY_ID, "limit": 101}),
-        ("list_result_tables", {"reference": ENTRY_ID, "limit": 0}),
-        ("list_results", {"page_size": 0}),
-        ("list_results", {"page_size": 101}),
-        ("list_entries", {"limit": 0}),
-        ("list_entries", {"limit": 101}),
-        ("list_results_table_rows", {"part_id": "docpart_rt1", "limit": 0}),
-        ("list_results_table_rows", {"part_id": "docpart_rt1", "limit": 101}),
-        ("read_back_results", {"result_ids": ["id1"], "limit": 0}),
-        ("read_back_results", {}),
-        ("verify_results", {"plan_id": "0" * 32, "sample": 0}),
-        ("list_schemas", {"limit": 0}),
-        ("list_schemas", {"kind": "sample"}),
+        ("entry_get", {"reference": ENTRY_ID, "full": True, "part_offset": -1}),
+        ("entry_get", {"reference": ENTRY_ID, "full": True, "result_limit": 0}),
+        ("entry_get", {"reference": ENTRY_ID, "full": True, "table_row_limit": 0}),
+        ("section_get", {"reference": ENTRY_ID, "section": "Results", "part_limit": 0}),
+        ("section_get", {"reference": ENTRY_ID, "section": "Results", "table_row_offset": -1}),
+        ("part_get", {"reference": ENTRY_ID, "part_id": TEXT_PART, "row_offset": -1}),
+        ("part_get", {"reference": ENTRY_ID, "part_id": TEXT_PART, "row_limit": 0}),
+        ("table_get", {"part_id": TABLE_PART, "row_offset": -1}),
+        ("table_get", {"part_id": TABLE_PART, "row_limit": 0}),
+        ("schema_get", {"schema_id": "entsch_abc123", "field_offset": -1}),
+        ("schema_get", {"schema_id": "entsch_abc123", "field_limit": 0}),
+        ("results_tables", {"reference": ENTRY_ID, "offset": -1}),
+        ("results_tables", {"reference": ENTRY_ID, "limit": 101}),
+        ("results_tables", {"reference": ENTRY_ID, "limit": 0}),
+        ("results_list", {"page_size": 0}),
+        ("results_list", {"page_size": 101}),
+        ("entry_list", {"limit": 0}),
+        ("entry_list", {"limit": 101}),
+        ("results_rows", {"part_id": "docpart_rt1", "limit": 0}),
+        ("results_rows", {"part_id": "docpart_rt1", "limit": 101}),
+        ("results_pending", {"result_ids": ["id1"], "limit": 0}),
+        ("results_pending", {}),
+        ("results_verify", {"plan_id": "0" * 32, "sample": 0}),
+        ("schema_list", {"limit": 0}),
+        ("schema_list", {"kind": "sample"}),
     ],
 )
 async def test_invalid_pagination_arguments_return_validation_envelopes(
@@ -346,7 +350,7 @@ async def test_invalid_pagination_arguments_return_validation_envelopes(
 
 
 async def test_inspect_entry_summarizes_structure(client) -> None:
-    data = (await call(client, "inspect_entry", env="sandbox", reference=ENTRY_ID))["data"]
+    data = (await call(client, "entry_inspect", env="sandbox", reference=ENTRY_ID))["data"]
     assert [s["title"] for s in data["sections"]] == ["Methods", "Results"]
     assert data["tables"][TABLE_PART]["row_count"] == 3
     assert data["tables"][TABLE_PART]["name"] == "Measurements"
@@ -367,24 +371,24 @@ async def test_read_only_lookup_tools_get_entries_folder_and_template(client, fa
     }
     entries = await call(
         client,
-        "get_entries",
+        "entry_bulk_get",
         env="sandbox",
         entry_ids=[ENTRY_ID, "etr_list2"],
     )
     assert [item["id"] for item in entries["data"]["items"]] == [ENTRY_ID, "etr_list2"]
-    folder = await call(client, "get_folder", env="sandbox", folder_id="lib_abc123")
-    template = await call(client, "get_template", env="sandbox", template_id="etpl_abc123")
+    folder = await call(client, "folder_get", env="sandbox", folder_id="lib_abc123")
+    template = await call(client, "template_get", env="sandbox", template_id="etpl_abc123")
     template_page = await call(
         client,
-        "list_templates",
+        "template_list",
         env="sandbox",
         name="Synthetic template",
         limit=10,
     )
-    first_page = await call(client, "list_templates", env="sandbox", limit=1)
+    first_page = await call(client, "template_list", env="sandbox", limit=1)
     second_page = await call(
         client,
-        "list_templates",
+        "template_list",
         env="sandbox",
         limit=1,
         cursor=first_page["data"]["next_token"],
@@ -401,7 +405,7 @@ async def test_get_section_by_title_or_part_id_with_paging(client, fake) -> None
     by_title = (
         await call(
             client,
-            "get_section",
+            "section_get",
             env="sandbox",
             reference=ENTRY_ID,
             section="Results",
@@ -419,7 +423,7 @@ async def test_get_section_by_title_or_part_id_with_paging(client, fake) -> None
     by_id = (
         await call(
             client,
-            "get_section",
+            "section_get",
             env="sandbox",
             reference=ENTRY_ID,
             section="docpart_sec2",
@@ -428,14 +432,14 @@ async def test_get_section_by_title_or_part_id_with_paging(client, fake) -> None
     )["data"]
     assert [p["id"] for p in by_id["parts"]] == ["docpart_struct1", "docpart_text2"]
     assert by_id["tables"] == {}
-    missing = await call(client, "get_section", env="sandbox", reference=ENTRY_ID, section="Nope")
+    missing = await call(client, "section_get", env="sandbox", reference=ENTRY_ID, section="Nope")
     assert missing["error"]["code"] == "not_found"
 
 
 async def test_duplicate_section_titles_require_a_part_id(client, fake) -> None:
     fake.parts[0]["title"] = "Results"
     payload = await call(
-        client, "get_section", env="sandbox", reference=ENTRY_ID, section="Results"
+        client, "section_get", env="sandbox", reference=ENTRY_ID, section="Results"
     )
     assert payload["error"]["code"] == "validation_error"
     assert payload["error"]["details"]["part_ids"] == ["docpart_sec1", "docpart_sec2"]
@@ -445,7 +449,7 @@ async def test_get_part_pages_table_detail_but_not_text(client) -> None:
     table = (
         await call(
             client,
-            "get_part",
+            "part_get",
             env="sandbox",
             reference=ENTRY_ID,
             part_id=TABLE_PART,
@@ -460,12 +464,12 @@ async def test_get_part_pages_table_detail_but_not_text(client) -> None:
         "next_offset": 2,
     }
     assert table["detail"]["content"]["rows"][0]["cells"][0]["inputValue"]["value"] == "B"
-    text = (await call(client, "get_part", env="sandbox", reference=ENTRY_ID, part_id=TEXT_PART))[
+    text = (await call(client, "part_get", env="sandbox", reference=ENTRY_ID, part_id=TEXT_PART))[
         "data"
     ]
     assert text["detail"] is None
     assert text["part"]["content"]["text"] == "before"
-    missing = await call(client, "get_part", env="sandbox", reference=ENTRY_ID, part_id="docpart_x")
+    missing = await call(client, "part_get", env="sandbox", reference=ENTRY_ID, part_id="docpart_x")
     assert missing["error"]["code"] == "not_found"
 
 
@@ -473,18 +477,18 @@ async def test_get_table_pages_rows_across_upstream_pages(client, fake) -> None:
     fake.table_page_size = 2
     page = (
         await call(
-            client, "get_table", env="sandbox", part_id=TABLE_PART, row_offset=2, row_limit=5
+            client, "table_get", env="sandbox", part_id=TABLE_PART, row_offset=2, row_limit=5
         )
     )["data"]
     assert page["pagination"] == {"offset": 2, "returned": 1, "total": 3, "next_offset": None}
     assert page["versionMetadata"]["versionId"] == "ver_1"
-    missing = await call(client, "get_table", env="sandbox", part_id="docpart_unknown")
+    missing = await call(client, "table_get", env="sandbox", part_id="docpart_unknown")
     assert missing["error"]["code"] == "not_found"
 
 
 async def test_get_schema_pages_field_definitions(client) -> None:
     first = (
-        await call(client, "get_schema", env="sandbox", schema_id="entsch_abc123", field_limit=5)
+        await call(client, "schema_get", env="sandbox", schema_id="entsch_abc123", field_limit=5)
     )["data"]
     assert [f["systemName"] for f in first["field_definitions"]] == [
         "temperature",
@@ -497,7 +501,7 @@ async def test_get_schema_pages_field_definitions(client) -> None:
     last = (
         await call(
             client,
-            "get_schema",
+            "schema_get",
             env="sandbox",
             schema_id="entsch_abc123",
             field_offset=10,
@@ -505,16 +509,16 @@ async def test_get_schema_pages_field_definitions(client) -> None:
         )
     )["data"]
     assert last["pagination"]["next_offset"] is None and last["pagination"]["returned"] == 2
-    result_schema = (await call(client, "get_schema", env="sandbox", schema_id="assaysch_abc123"))[
+    result_schema = (await call(client, "schema_get", env="sandbox", schema_id="assaysch_abc123"))[
         "data"
     ]
     assert result_schema["schema"]["id"] == "assaysch_abc123"
-    missing = await call(client, "get_schema", env="sandbox", schema_id="entsch_none")
+    missing = await call(client, "schema_get", env="sandbox", schema_id="entsch_none")
     assert missing["error"]["code"] == "not_found"
 
 
 async def test_get_entry_fields_maps_values_by_system_name(client) -> None:
-    data = (await call(client, "get_entry_fields", env="sandbox", reference=ENTRY_ID))["data"]
+    data = (await call(client, "entry_fields_get", env="sandbox", reference=ENTRY_ID))["data"]
     assert data["fields_by_system_name"]["temperature"] == 20
     assert data["fields_by_system_name"]["flag"] is None
     assert data["project_id"] == "src_abc123"
@@ -523,12 +527,12 @@ async def test_get_entry_fields_maps_values_by_system_name(client) -> None:
 
 async def test_list_results_uses_explicit_cursor_pagination(client, fake) -> None:
     fake.results_page_size = 2
-    first = (await call(client, "list_results", env="sandbox", entry="EXP-1", page_size=2))["data"]
+    first = (await call(client, "results_list", env="sandbox", entry="EXP-1", page_size=2))["data"]
     assert [r["id"] for r in first["items"]] == ["result_1", "result_2"]
     assert first["next_token"] == "2"
     second = (
         await call(
-            client, "list_results", env="sandbox", entry=ENTRY_ID, cursor=first["next_token"]
+            client, "results_list", env="sandbox", entry=ENTRY_ID, cursor=first["next_token"]
         )
     )["data"]
     assert [r["id"] for r in second["items"]] == ["result_3"]
@@ -536,29 +540,29 @@ async def test_list_results_uses_explicit_cursor_pagination(client, fake) -> Non
     sent = [c.params for c in fake.calls if c.path.endswith("/result/items")]
     assert sent[0] == {"pageSize": "2", "entry.eq": ENTRY_ID}
     assert sent[1]["nextToken"] == "2"
-    filtered = (await call(client, "list_results", env="sandbox", schema_id="assaysch_none"))[
+    filtered = (await call(client, "results_list", env="sandbox", schema_id="assaysch_none"))[
         "data"
     ]
     assert filtered["items"] == []
 
 
 async def test_get_result_returns_record_or_not_found(client) -> None:
-    assert (await call(client, "get_result", env="sandbox", result_id="result_2"))["data"][
+    assert (await call(client, "results_get", env="sandbox", result_id="result_2"))["data"][
         "id"
     ] == "result_2"
-    missing = await call(client, "get_result", env="sandbox", result_id="result_zzz")
+    missing = await call(client, "results_get", env="sandbox", result_id="result_zzz")
     assert missing["error"]["code"] == "not_found"
 
 
 async def test_list_result_tables_pages_targets(client, fake) -> None:
-    data = (await call(client, "list_result_tables", env="sandbox", reference=ENTRY_ID))["data"]
+    data = (await call(client, "results_tables", env="sandbox", reference=ENTRY_ID))["data"]
     assert data["items"][0]["table_id"] == "strtbl_example"
     assert data["items"][0]["schema_id"] == "assaysch_abc123"
     assert data["pagination"] == {"offset": 0, "returned": 1, "total": 1, "next_offset": None}
     assert data["id_namespace"] == "v2_structured_table"
-    past_end = (
-        await call(client, "list_result_tables", env="sandbox", reference=ENTRY_ID, offset=1)
-    )["data"]
+    past_end = (await call(client, "results_tables", env="sandbox", reference=ENTRY_ID, offset=1))[
+        "data"
+    ]
     assert past_end["items"] == [] and past_end["pagination"]["returned"] == 0
 
 
@@ -570,14 +574,14 @@ async def test_upstream_errors_map_to_envelope_codes(client, fake) -> None:
         (400, "validation_error"),
     ):
         fake.fail("GET", f"/entry/{ENTRY_ID}", status)
-        payload = await call(client, "resolve_entry", env="sandbox", reference=ENTRY_ID)
+        payload = await call(client, "entry_resolve", env="sandbox", reference=ENTRY_ID)
         assert payload["error"]["code"] == code, status
         assert payload["error"]["details"]["status"] == status
 
 
 async def test_unexpected_local_failures_do_not_leak_internals(client, fake) -> None:
     fake.fail("GET", f"/entry/{ENTRY_ID}", 0)
-    payload = await call(client, "resolve_entry", env="sandbox", reference=ENTRY_ID)
+    payload = await call(client, "entry_resolve", env="sandbox", reference=ENTRY_ID)
     assert payload["error"]["code"] == "upstream_error"
     assert payload["error"]["details"] == {"type": "RuntimeError"}
     assert "simulated" not in json.dumps(payload)
@@ -586,19 +590,19 @@ async def test_unexpected_local_failures_do_not_leak_internals(client, fake) -> 
 async def test_plan_and_status_work_but_apply_is_blocked_by_default(client, fake) -> None:
     planned = await call(
         client,
-        "plan_changes",
+        "changes_plan",
         env="sandbox",
         entry=ENTRY_ID,
         family="document",
-        specification={"operation": "delete", "from_part_id": TEXT_PART},
+        spec={"operation": "delete", "from_part_id": TEXT_PART},
     )
     assert planned["ok"] is True
     plan_id = planned["data"]["id"]
-    blocked = await call(client, "apply_changes", env="sandbox", plan_id=plan_id)
+    blocked = await call(client, "changes_apply", env="sandbox", plan_id=plan_id)
     assert blocked["error"]["code"] == "unsupported_capability"
     assert "--allow-writes sandbox" in blocked["error"]["message"]
     assert fake.writes() == []
-    status = (await call(client, "get_change_status", env="sandbox", plan_id=plan_id))["data"]
+    status = (await call(client, "changes_status", env="sandbox", plan_id=plan_id))["data"]
     assert status["journal"]["status"] == "pending"
     assert status["plan"]["family"] == "document"
 
@@ -606,16 +610,16 @@ async def test_plan_and_status_work_but_apply_is_blocked_by_default(client, fake
 async def test_plan_validation_errors_are_enveloped(client, fake) -> None:
     payload = await call(
         client,
-        "plan_changes",
+        "changes_plan",
         env="sandbox",
         entry=ENTRY_ID,
         family="document",
-        specification={"operation": "explode"},
+        spec={"operation": "explode"},
     )
     assert payload["error"]["code"] == "validation_error"
     bad_family = await client.call_tool(
-        "plan_changes",
-        {"env": "sandbox", "entry": ENTRY_ID, "family": "magic", "specification": {}},
+        "changes_plan",
+        {"env": "sandbox", "entry": ENTRY_ID, "family": "magic", "spec": {}},
     )
     assert bad_family.is_error is True
 
@@ -623,22 +627,22 @@ async def test_plan_validation_errors_are_enveloped(client, fake) -> None:
 async def test_apply_changes_when_writes_are_enabled(writer, fake) -> None:
     planned = await call(
         writer,
-        "plan_changes",
+        "changes_plan",
         env="sandbox",
         entry=ENTRY_ID,
         family="table",
-        specification={
+        spec={
             "operation": "append_rows",
             "table_part_id": TABLE_PART,
             "rows": [["D", "4"]],
         },
     )
     plan_id = planned["data"]["id"]
-    applied = await call(writer, "apply_changes", env="sandbox", plan_id=plan_id)
+    applied = await call(writer, "changes_apply", env="sandbox", plan_id=plan_id)
     assert applied["ok"] is True
     assert applied["data"]["journal"]["status"] == "succeeded"
     assert len(fake.table_content["rows"]) == 4
-    again = await call(writer, "apply_changes", env="sandbox", plan_id=plan_id)
+    again = await call(writer, "changes_apply", env="sandbox", plan_id=plan_id)
     assert again["error"]["code"] == "conflict"
     assert len(fake.writes()) == 1
 
@@ -646,26 +650,26 @@ async def test_apply_changes_when_writes_are_enabled(writer, fake) -> None:
 async def test_apply_conflict_and_partial_completion_are_structured(writer, fake) -> None:
     stale = await call(
         writer,
-        "plan_changes",
+        "changes_plan",
         env="sandbox",
         entry=ENTRY_ID,
         family="document",
-        specification={"operation": "delete", "from_part_id": TEXT_PART},
+        spec={"operation": "delete", "from_part_id": TEXT_PART},
     )
     fake.entry_version += 1
-    conflict = await call(writer, "apply_changes", env="sandbox", plan_id=stale["data"]["id"])
+    conflict = await call(writer, "changes_apply", env="sandbox", plan_id=stale["data"]["id"])
     assert conflict["error"]["code"] == "conflict"
     assert conflict["error"]["details"] == {"expected": "ver_1", "actual": "ver_2"}
     unknown = await call(
         writer,
-        "plan_changes",
+        "changes_plan",
         env="sandbox",
         entry=ENTRY_ID,
         family="document",
-        specification={"operation": "delete", "from_part_id": TEXT_PART},
+        spec={"operation": "delete", "from_part_id": TEXT_PART},
     )
     fake.fail("PATCH", f"/entry/{ENTRY_ID}", 500)
-    outcome = await call(writer, "apply_changes", env="sandbox", plan_id=unknown["data"]["id"])
+    outcome = await call(writer, "changes_apply", env="sandbox", plan_id=unknown["data"]["id"])
     assert outcome["error"]["code"] == "partial_or_unknown_completion"
     assert outcome["error"]["details"]["journal"]["status"] == "unknown"
 
@@ -680,16 +684,16 @@ async def test_apply_is_guarded_per_environment(pool, fake, monkeypatch) -> None
         active = Session(build_mcp_server(both, writable_envs={"sandbox"}))
         planned = await call(
             active,
-            "plan_changes",
+            "changes_plan",
             env="other",
             entry=ENTRY_ID,
             family="document",
-            specification={"operation": "delete", "from_part_id": TEXT_PART},
+            spec={"operation": "delete", "from_part_id": TEXT_PART},
         )
-        blocked = await call(active, "apply_changes", env="other", plan_id=planned["data"]["id"])
+        blocked = await call(active, "changes_apply", env="other", plan_id=planned["data"]["id"])
         assert blocked["error"]["code"] == "unsupported_capability"
         wrong_env = await call(
-            active, "apply_changes", env="sandbox", plan_id=planned["data"]["id"]
+            active, "changes_apply", env="sandbox", plan_id=planned["data"]["id"]
         )
         assert wrong_env["error"]["code"] == "validation_error"
         assert fake.writes() == []
@@ -713,7 +717,7 @@ def test_serve_requires_at_least_one_environment() -> None:
 
 async def test_list_entries_is_read_only_and_routes_folder_filters_to_v2(client, fake) -> None:
     result = await client.call_tool(
-        "list_entries",
+        "entry_list",
         {"env": "sandbox", "folder": "lib_abc123", "name": "Late note", "limit": 10},
     )
     assert result.is_error is False, result
@@ -729,16 +733,16 @@ async def test_list_entries_is_read_only_and_routes_folder_filters_to_v2(client,
 
 async def test_list_results_table_rows_is_read_only_and_paged(client, fake) -> None:
     fake.add_results_table()
-    first = (
-        await call(client, "list_results_table_rows", env="sandbox", part_id="docpart_rt1", limit=2)
-    )["data"]
+    first = (await call(client, "results_rows", env="sandbox", part_id="docpart_rt1", limit=2))[
+        "data"
+    ]
     assert [row["id"] for row in first["items"]] == ["strow_1", "strow_2"]
     assert first["result_schema_id"] == "assaysch_abc123"
     assert first["next_token"]
     second = (
         await call(
             client,
-            "list_results_table_rows",
+            "results_rows",
             env="sandbox",
             part_id="docpart_rt1",
             limit=2,
@@ -764,21 +768,21 @@ async def test_read_back_and_verify_results_without_allow_writes(client, pool, f
     (result_id,) = fake.complete_upload()
     writes = len(fake.writes())
 
-    pending = (await call(client, "read_back_results", env="sandbox", plan_id=planned.id))["data"]
+    pending = (await call(client, "results_pending", env="sandbox", plan_id=planned.id))["data"]
     assert pending["needs_accept"] == [result_id]
     assert "plug" in pending["next_step"]
-    verified = (await call(client, "verify_results", env="sandbox", plan_id=planned.id))["data"]
+    verified = (await call(client, "results_verify", env="sandbox", plan_id=planned.id))["data"]
     assert verified["ok"] is True and verified["counts"]["pending"] == 1
     assert len(fake.writes()) == writes
 
 
 async def test_list_schemas_pages_without_allow_writes(client, fake) -> None:
     fake.schema_page_size = 2
-    first = (await call(client, "list_schemas", env="sandbox", limit=2))["data"]
+    first = (await call(client, "schema_list", env="sandbox", limit=2))["data"]
     assert [item["kind"] for item in first["items"]] == ["entry", "entry"]
     assert first["next_token"]
     second = (
-        await call(client, "list_schemas", env="sandbox", limit=50, cursor=first["next_token"])
+        await call(client, "schema_list", env="sandbox", limit=50, cursor=first["next_token"])
     )["data"]
     ids = [item["id"] for item in first["items"] + second["items"]]
     assert ids[0] == "entsch_abc123"
@@ -789,7 +793,7 @@ async def test_list_schemas_pages_without_allow_writes(client, fake) -> None:
 
 
 async def test_list_schemas_accepts_an_exact_name(client, fake) -> None:
-    data = (await call(client, "list_schemas", env="sandbox", name="Second result schema"))["data"]
+    data = (await call(client, "schema_list", env="sandbox", name="Second result schema"))["data"]
     assert [item["id"] for item in data["items"]] == ["assaysch_two"]
     assert fake.writes() == []
 
@@ -798,7 +802,7 @@ async def test_find_schema_returns_typed_fields(client, fake) -> None:
     data = (
         await call(
             client,
-            "find_schema",
+            "schema_find",
             env="sandbox",
             name="Schema assaysch_abc123",
             kind="result",
@@ -811,7 +815,7 @@ async def test_find_schema_returns_typed_fields(client, fake) -> None:
 
 
 async def test_get_schema_includes_dropdown_options(client, fake) -> None:
-    data = (await call(client, "get_schema", env="sandbox", schema_id="entsch_choice"))["data"]
+    data = (await call(client, "schema_get", env="sandbox", schema_id="entsch_choice"))["data"]
     status = data["field_definitions"][0]
     assert status["dropdown"]["name"] == "Status"
     assert status["dropdown"]["options"][0]["id"] == "sfso_open"
@@ -931,7 +935,7 @@ app(["mcp", "serve"])
             "id": 2,
             "method": "tools/call",
             "params": {
-                "name": "resolve_entry",
+                "name": "entry_resolve",
                 "arguments": {"env": "sandbox", "reference": "etr_abc123"},
             },
         }
@@ -966,11 +970,11 @@ async def test_plan_changes_updates_results_from_a_csv(writer, fake, tmp_path) -
     path.write_text("id,Ct\nresult_1,15\n", encoding="utf-8")
     planned = await call(
         writer,
-        "plan_changes",
+        "changes_plan",
         env="sandbox",
         entry=ENTRY_ID,
         family="results",
-        specification={
+        spec={
             "operation": "update",
             "csv_path": str(path),
             "id_column": "id",
@@ -980,17 +984,17 @@ async def test_plan_changes_updates_results_from_a_csv(writer, fake, tmp_path) -
     assert planned["ok"] is True
     assert fake.writes() == []
     assert planned["data"]["after"]["results"][0]["schema_fields"]["assayfield_ct"]["value"] == 15
-    applied = await call(writer, "apply_changes", env="sandbox", plan_id=planned["data"]["id"])
+    applied = await call(writer, "changes_apply", env="sandbox", plan_id=planned["data"]["id"])
     assert applied["ok"] is True
     assert applied["data"]["journal"]["result"]["state"] == "updated"
     path.write_text("id,Ct\nresult_1,16\n", encoding="utf-8")
     rejected = await call(
         writer,
-        "plan_changes",
+        "changes_plan",
         env="sandbox",
         entry=ENTRY_ID,
         family="results",
-        specification={
+        spec={
             "operation": "update",
             "csv_path": str(path),
             "id_column": "id",
@@ -1031,8 +1035,8 @@ async def test_every_tool_parameter_has_a_description(client) -> None:
         for name, prop in properties.items():
             description = prop.get("description")
             assert isinstance(description, str) and description.strip(), (tool.name, name)
-    plan = next(tool for tool in tools if tool.name == "plan_changes")
-    specification = plan.input_schema["properties"]["specification"]
+    plan = next(tool for tool in tools if tool.name == "changes_plan")
+    specification = plan.input_schema["properties"]["spec"]
     assert "anyOf" in specification
     assert specification.get("additionalProperties") is not True
     encoded = json.dumps(specification)
@@ -1086,11 +1090,11 @@ async def test_invalid_plan_specification_is_an_envelope(client, fake) -> None:
     for specification, expected in cases:
         payload = await call(
             client,
-            "plan_changes",
+            "changes_plan",
             env="sandbox",
             entry=ENTRY_ID,
             family="document",
-            specification=specification,
+            spec=specification,
         )
         assert payload["ok"] is False
         assert payload["error"]["code"] == "validation_error"
@@ -1103,11 +1107,11 @@ async def test_invalid_plan_specification_is_an_envelope(client, fake) -> None:
 async def test_plan_changes_accepts_inline_records_and_schema_fields(client, fake) -> None:
     uploaded = await call(
         client,
-        "plan_changes",
+        "changes_plan",
         env="sandbox",
         entry=ENTRY_ID,
         family="results",
-        specification={
+        spec={
             "table_id": "strtbl_example",
             "assay_results": [{"schemaId": "assaysch_abc123", "fields": {"ct": {"value": 12}}}],
         },
@@ -1118,11 +1122,11 @@ async def test_plan_changes_accepts_inline_records_and_schema_fields(client, fak
     assert uploaded["data"]["family"] == "results"
     fields = await call(
         client,
-        "plan_changes",
+        "changes_plan",
         env="sandbox",
         entry=ENTRY_ID,
         family="fields",
-        specification={"schema_fields": {"notes": {"value": "free text"}}},
+        spec={"schema_fields": {"notes": {"value": "free text"}}},
     )
     assert fields["ok"] is True
     assert fields["data"]["family"] == "fields"
@@ -1132,24 +1136,24 @@ async def test_plan_changes_accepts_inline_records_and_schema_fields(client, fak
 async def test_apply_changes_for_results_returns_the_next_step(writer, fake) -> None:
     planned = await call(
         writer,
-        "plan_changes",
+        "changes_plan",
         env="sandbox",
         entry=ENTRY_ID,
         family="results",
-        specification={
+        spec={
             "table_id": "strtbl_example",
             "assay_results": [{"schemaId": "assaysch_abc123", "fields": {"ct": {"value": 12}}}],
         },
     )
     assert planned["ok"] is True, planned
-    applied = await call(writer, "apply_changes", env="sandbox", plan_id=planned["data"]["id"])
+    applied = await call(writer, "changes_apply", env="sandbox", plan_id=planned["data"]["id"])
     assert applied["ok"] is True
     assert "pending" in applied["data"]["next_step"]
     assert "Assay results" in applied["data"]["next_step"]
     fake.task = {"status": "SUCCEEDED", "response": {"assayResults": []}}
     status = await call(
         writer,
-        "get_change_status",
+        "changes_status",
         env="sandbox",
         plan_id=planned["data"]["id"],
         wait=True,
@@ -1160,11 +1164,11 @@ async def test_apply_changes_for_results_returns_the_next_step(writer, fake) -> 
 
 async def test_entry_tools_return_web_url(client) -> None:
     url = entry_web_url(ENTRY_ID)
-    resolved = (await call(client, "resolve_entry", env="sandbox", reference=ENTRY_ID))["data"]
-    entry = (await call(client, "get_entry", env="sandbox", reference=ENTRY_ID))["data"]
-    full = (await call(client, "get_entry", env="sandbox", reference=ENTRY_ID, full=True))["data"]
-    listed = (await call(client, "list_entries", env="sandbox"))["data"]
-    bulk = (await call(client, "get_entries", env="sandbox", entry_ids=[ENTRY_ID]))["data"]
+    resolved = (await call(client, "entry_resolve", env="sandbox", reference=ENTRY_ID))["data"]
+    entry = (await call(client, "entry_get", env="sandbox", reference=ENTRY_ID))["data"]
+    full = (await call(client, "entry_get", env="sandbox", reference=ENTRY_ID, full=True))["data"]
+    listed = (await call(client, "entry_list", env="sandbox"))["data"]
+    bulk = (await call(client, "entry_bulk_get", env="sandbox", entry_ids=[ENTRY_ID]))["data"]
     assert resolved["web_url"] == entry["web_url"] == full["web_url"] == url
     assert listed["items"][0]["web_url"] == url
     assert bulk["items"][0]["web_url"] == url
@@ -1172,5 +1176,127 @@ async def test_entry_tools_return_web_url(client) -> None:
 
 async def test_entry_read_tools_describe_web_url(client) -> None:
     tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-    for name in ("resolve_entry", "get_entry", "list_entries", "get_entries"):
+    for name in ("entry_resolve", "entry_get", "entry_list", "entry_bulk_get"):
         assert "web_url" in (tools[name].description or ""), name
+
+
+CLI_ONLY_COMMANDS = {
+    ("auth", "login"),
+    ("auth", "logout"),
+    ("auth", "protect"),
+    ("auth", "unprotect"),
+    ("skill", "path"),
+    ("skill", "show"),
+    ("mcp", "serve"),
+}
+
+
+def _cli_commands():
+    import typer
+
+    from benchlingtk import cli
+    from benchlingtk.mcp_server import cli_commands
+
+    return dict(cli_commands(typer.main.get_command(cli.app)))
+
+
+async def test_every_cli_command_is_one_tool_named_after_its_path(client) -> None:
+    from benchlingtk.commands import CLI_ONLY_ATTR, TOOL_ATTR
+
+    commands = _cli_commands()
+    cli_only = {
+        path for path, command in commands.items() if hasattr(command.callback, CLI_ONLY_ATTR)
+    }
+    declared = {path for path, command in commands.items() if hasattr(command.callback, TOOL_ATTR)}
+    assert cli_only == CLI_ONLY_COMMANDS
+    assert declared | cli_only == set(commands)
+    expected = {"_".join(path).replace("-", "_") for path in declared}
+    tools = {tool.name for tool in (await client.list_tools()).tools}
+    assert tools == expected
+    assert tools == READ_TOOLS | {"export", "issue_draft", "changes_plan", "changes_apply"}
+
+
+def _tool_text(text: str, command) -> str:
+    names = {"--env": "env"}
+    for param in command.params:
+        names.update({option: param.name for option in param.opts if option.startswith("--")})
+    return re.sub(r"--[a-z][a-z-]*", lambda m: names.get(m.group(0), m.group(0)), text)
+
+
+async def test_tool_text_comes_from_cli_help(client) -> None:
+    from benchlingtk.commands import TOOL_ATTR
+
+    tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+    for path, command in _cli_commands().items():
+        declared = getattr(command.callback, TOOL_ATTR, None)
+        if declared is None:
+            continue
+        tool = tools["_".join(path).replace("-", "_")]
+        summary = declared.doc.split("\n")[0]
+        assert tool.description.split("\n")[0] == _tool_text(summary, command), path
+        properties = tool.input_schema.get("properties", {})
+        for param in command.params:
+            if param.name in declared.cli_only or param.name in declared.mcp_params:
+                assert param.name not in properties or param.name in declared.mcp_params
+                continue
+            assert properties[param.name]["description"] == _tool_text(param.help, command), (
+                path,
+                param.name,
+            )
+            if getattr(param.type, "min", None) is not None:
+                assert properties[param.name]["minimum"] == param.type.min
+        for param in command.params:
+            for option in param.opts:
+                if option.startswith("--"):
+                    assert option not in tool.description, (path, option)
+    assert "confirm_env" not in tools["changes_apply"].input_schema["properties"]
+    assert "confirm" not in tools["changes_apply"].description
+
+
+def test_a_command_without_a_declaration_fails_the_build(pool, monkeypatch) -> None:
+    import typer
+
+    from benchlingtk import cli
+
+    extra = typer.Typer()
+
+    @extra.command("loose")
+    def loose() -> None:
+        """Not declared."""
+
+    monkeypatch.setattr(cli, "app", typer.Typer())
+    cli.app.add_typer(extra, name="extra")
+    with pytest.raises(TypeError, match="extra loose"):
+        build_mcp_server(pool)
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (
+            {
+                "family": "entry",
+                "entry": ENTRY_ID,
+                "spec": {
+                    "entry_template_id": "etpl_abc123",
+                    "folder_id": "lib_abc123",
+                    "name": "X",
+                },
+            },
+            "must not specify entry",
+        ),
+        (
+            {"family": "document", "spec": {"operation": "delete", "from_part_id": TEXT_PART}},
+            "requires entry",
+        ),
+        (
+            {"family": "results", "entry": ENTRY_ID, "column_map": ["a=b"]},
+            "id_column and column_map require csv_path",
+        ),
+    ],
+)
+async def test_plan_entry_rules_are_validation_envelopes(client, fake, arguments, message) -> None:
+    payload = await call(client, "changes_plan", env="sandbox", **arguments)
+    assert payload["error"]["code"] == "validation_error"
+    assert message in payload["error"]["message"]
+    assert fake.writes() == []

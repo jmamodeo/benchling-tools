@@ -1,4 +1,4 @@
-"""Typed change specifications for the MCP plan_changes tool.
+"""Typed change specifications for the MCP changes_plan tool.
 
 The CLI still passes the JSON object through to the planner. MCP validates the
 same shapes first and returns a validation_error envelope when one does not match.
@@ -548,7 +548,7 @@ def _error_message(exc: ValidationError) -> str:
 
 
 def parse_change_specification(value: Any) -> dict[str, Any]:
-    """Validate a plan_changes specification and return the planner's object.
+    """Validate a changes_plan specification and return the planner's object.
 
     Omitted optional fields stay omitted. JSON null is kept only for projectId
     and for a field value, where null is meaningful.

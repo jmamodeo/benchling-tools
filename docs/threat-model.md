@@ -89,7 +89,7 @@ A plan is stale when the entry, fields, or results it was previewed against have
 
 ## Write scoping
 
-Every API command and every MCP tool except `list_environments` requires an environment name. There is no default. The plan stores the entry id resolved at preview time, and apply writes that id, not a new reference the caller supplies at apply time.
+Every API command and every MCP tool except `auth_status` requires an environment name. There is no default. The plan stores the entry id resolved at preview time, and apply writes that id, not a new reference the caller supplies at apply time.
 
 The write surface is the entry, document, table, fields, and results families. There is no tool that forwards an arbitrary method and path.
 
@@ -103,7 +103,7 @@ The write surface is the entry, document, table, fields, and results families. T
 
 `export` and `results rows` are reads of Benchling. Export's write is a local file. An existing file is left in place unless overwrite is set, using `os.link` so the no-overwrite path does not replace it.
 
-`--allow-writes ENV` is repeatable and is checked in `apply_changes` before `planner.apply`. Startup rejects an allow-list name that is not a configured environment. `plan_changes` and `get_change_status` do not consult the allow-list. `get_change_status` still runs `_check_plan_scope`, so a plan from another environment or tenant is not returned.
+`--allow-writes ENV` is repeatable and is checked in `changes_apply` before `planner.apply`. Startup rejects an allow-list name that is not a configured environment. `changes_plan` and `changes_status` do not consult the allow-list. `changes_status` still runs `_check_plan_scope`, so a plan from another environment or tenant is not returned.
 
 The app's Benchling policy is the other half of the scope. A read-only app cannot be turned into a writer by `--allow-writes`. A write app can edit whatever that app's policy allows, which may be wider than one entry. The plan limits which of those objects this process will send, but Benchling remains the authority for what the app may do.
 
@@ -118,15 +118,15 @@ The app's Benchling policy is the other half of the scope. A read-only app canno
 
 The MCP server is the agent boundary the code enforces.
 
-`apply_changes` is registered with `destructiveHint` and without `readOnlyHint`. Those annotations are hints to the client. The check that refuses the call is `rt.environment.name not in writable_envs`. A server started without `--allow-writes` returns `MCP writes are disabled for {env}` and does not call `ChangePlanner.apply`. `plan_changes` stays available. A read-only agent can still read entries and can still create local plans, including a destructive preview. It cannot send the write through this server.
+`changes_apply` is registered with `destructiveHint` and without `readOnlyHint`. Those annotations are hints to the client. The check that refuses the call is `rt.environment.name not in writable_envs`. A server started without `--allow-writes` returns `MCP writes are disabled for {env}` and does not call `ChangePlanner.apply`. `changes_plan` stays available. A read-only agent can still read entries and can still create local plans, including a destructive preview. It cannot send the write through this server.
 
-`--allow-writes` is consent for the process, not a confirmation on each call. Once the server is started with `--allow-writes write`, a tool call to `apply_changes` on `write` applies the plan. There is no second human prompt inside the server. The preview still exists as a plan, and a careful client shows it before calling apply. A client that does not is acting within the consent the operator gave at startup.
+`--allow-writes` is consent for the process, not a confirmation on each call. Once the server is started with `--allow-writes write`, a tool call to `changes_apply` on `write` applies the plan. There is no second human prompt inside the server. The preview still exists as a plan, and a careful client shows it before calling apply. A client that does not is acting within the consent the operator gave at startup.
 
-Entry content is untrusted. A notebook that says to delete a section, or to call `apply_changes`, is data the agent will read. With writes disabled, apply fails. With writes enabled, the agent can plan and apply whatever the family validators accept. Run agents that read untrusted entries against a server that was not passed `--allow-writes`, and prefer a Benchling app whose policy is Read. Put the write app on a separate environment and pass `--allow-writes` only for a server you intend to let apply.
+Entry content is untrusted. A notebook that says to delete a section, or to call `changes_apply`, is data the agent will read. With writes disabled, apply fails. With writes enabled, the agent can plan and apply whatever the family validators accept. Run agents that read untrusted entries against a server that was not passed `--allow-writes`, and prefer a Benchling app whose policy is Read. Put the write app on a separate environment and pass `--allow-writes` only for a server you intend to let apply.
 
-One server process can open every environment that has a keychain secret. The agent chooses the env argument. `list_environments` reports `writes_allowed` per env. An agent that can see both `read` and `write` will use `write` if it is on the allow-list. Do not point an untrusted client at a process that was started with `--allow-writes`.
+One server process can open every environment that has a keychain secret. The agent chooses the env argument. `auth_status` reports `writes_allowed` per env. An agent that can see both `read` and `write` will use `write` if it is on the allow-list. Do not point an untrusted client at a process that was started with `--allow-writes`.
 
-`plan_changes` for a result update reads `csv_path` from the local filesystem. The path is not confined to a directory. That is a local read, performed as the user, of a path the agent supplied. The bytes affect the plan only when they parse as the mapped CSV. Apply does not open the path again.
+`changes_plan` for a result update reads `csv_path` from the local filesystem. The path is not confined to a directory. That is a local read, performed as the user, of a path the agent supplied. The bytes affect the plan only when they parse as the mapped CSV. Apply does not open the path again.
 
 A result attachment value `{"file": PATH}`, or a CSV cell `file:PATH`, is also a local path the agent supplies, and it is not confined to a directory either. Unlike the CSV, these bytes leave the machine: apply uploads the whole file to the tenant as a blob. Planning only hashes it and stores the path in an owner-only file under the state directory, so the plan and the preview carry the base name, size and hashes but not the path or the contents. Files inside the toolkit state directory (which holds `environments.json` and the plans) are refused, as are non-regular and empty files and files over 100 MiB. Apply re-hashes the file and refuses a plan whose file changed. The control that matters is the same as for any write: a person reads the preview's file list before apply, and the server needs `--allow-writes`.
 
@@ -159,5 +159,5 @@ Issue drafts are a path from the tenant to a public repository. `issue_draft` an
 | Document, table, field writes | `plans/document.py`, `plans/table.py`, `plans/fields.py` |
 | Result upload and CSV update | `plans/results.py`, `plans/result_update.py` |
 | Read retry, write no-retry | `api.py` `BenchlingAPI.request` |
-| MCP allow-list and typed specs | `mcp_server.py` `apply_changes`, `change_spec.py` |
+| MCP allow-list and typed specs | `mcp_server.py` `McpCall.authorize_apply`, `change_spec.py` |
 | State directory modes | `config.py`, `environment.py` `write_private` |

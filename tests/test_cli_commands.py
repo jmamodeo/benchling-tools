@@ -868,3 +868,30 @@ def test_entry_read_help_mentions_web_url() -> None:
     for command in ("get", "list", "resolve", "bulk-get"):
         help_text = plain_stdout(["entry", command, "--help"])
         assert "web_url" in help_text, command
+
+
+def test_cli_pages_like_the_mcp_tools(invoke, fake) -> None:
+    fake.table_page_size = 2
+    code, table, _ = invoke("table", "get", TABLE_PART, "--row-offset", "2", "--row-limit", "5")
+    assert code == 0
+    assert table["data"]["pagination"] == {
+        "offset": 2,
+        "returned": 1,
+        "total": 3,
+        "next_offset": None,
+    }
+    code, entry, _ = invoke(
+        "entry", "get", ENTRY_ID, "--full", "--part-limit", "4", "--table-row-limit", "1"
+    )
+    assert code == 0
+    assert entry["data"]["pagination"]["parts"]["next_offset"] == 4
+    assert len(entry["data"]["tables"][TABLE_PART]["content"]["rows"]) == 1
+    code, schema, _ = invoke("schema", "get", "entsch_abc123", "--field-limit", "5")
+    assert code == 0
+    assert schema["data"]["pagination"]["next_offset"] == 5
+
+
+def test_cli_help_hides_mcp_only_text() -> None:
+    text = plain_stdout(["changes", "apply", "--help"])
+    assert "--confirm-env" in text
+    assert "MCP:" not in text and "allow-writes list" not in text

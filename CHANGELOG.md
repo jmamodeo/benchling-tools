@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** the MCP server is generated from the CLI. Each command declared in `cli.py` is one tool named after its command path, with the same arguments, defaults, limits, and help text, so no tool is written by hand and the two cannot drift. Commands that need a terminal or change local credentials (`auth login`, `auth logout`, `auth protect`, `auth unprotect`, `skill path`, `skill show`, `mcp serve`) have no tool. Tool renames: `list_environments` → `auth_status`, `get_capabilities` → `doctor`, `resolve_entry` → `entry_resolve`, `get_entry` → `entry_get`, `inspect_entry` → `entry_inspect`, `get_entries` → `entry_bulk_get`, `list_entries` → `entry_list`, `get_entry_fields` → `entry_fields_get`, `get_folder` → `folder_get`, `get_template` → `template_get`, `list_templates` → `template_list`, `get_section` → `section_get`, `get_part` → `part_get`, `get_table` → `table_get`, `get_schema` → `schema_get`, `list_schemas` → `schema_list`, `find_schema` → `schema_find`, `list_results` → `results_list`, `get_result` → `results_get`, `list_result_tables` → `results_tables`, `list_results_table_rows` → `results_rows`, `read_back_results` → `results_pending`, `verify_results` → `results_verify`, `get_blob` → `blob_get`, `get_container` → `container_get`, `find_containers` → `container_find`, `list_container_schemas` → `container_schema_list`, `get_change_status` → `changes_status`, `plan_changes` → `changes_plan`, `apply_changes` → `changes_apply`. `export` and `issue_draft` keep their names.
+- **Breaking:** tool arguments follow the CLI flags. `changes_plan` takes `spec` (was `specification`), `export` takes `output` (was `path`), `issue_draft` takes `attempted`, `solution`, and matching `cite_url` and `cite_quote` lists (were `attempted_action`, `proposed_solution`, and `citations`), and `results_list` takes `page_size`. `auth_status` returns the same rows as `benchlingtk auth status`, plus `writes_allowed`.
+- The paging that only the MCP tools had is now on the CLI too: `entry get --full` takes `--part-offset`, `--part-limit`, `--result-offset`, `--result-limit`, `--table-row-offset` and `--table-row-limit`; `section get` takes the part and table-row options; `part get` and `table get` take `--row-offset` and `--row-limit`; `schema get` takes `--field-offset` and `--field-limit`; and `results tables` takes `--offset` and `--limit`. Paged output has a `pagination` object.
+- `doctor` and the `doctor` tool return an `authentication_error` envelope, with the checks in `details`, when a check fails. CLI failures after the environment was opened carry `env` and `tenant_url` in `meta`, as MCP failures do. An out-of-range paging argument on a tool is a `validation_error` envelope.
+- Every CLI argument and option has help text.
+
 ## [0.6.0] - 2026-11-21
 
 ### Changed

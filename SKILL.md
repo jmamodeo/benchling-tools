@@ -36,13 +36,13 @@ Stop and do not improvise when:
 
 ## Safety defaults
 
-The MCP server is read-only by default. `benchlingtk mcp serve` does not enable writes. `apply_changes` is refused until that process was started with `--allow-writes ENV` for the environment in the call. Repeat the flag once per environment.
+The MCP server is read-only by default. `benchlingtk mcp serve` does not enable writes. `changes_apply` is refused until that process was started with `--allow-writes ENV` for the environment in the call. Repeat the flag once per environment.
 
-`changes plan` and the MCP tool `plan_changes` only read Benchling. They write an immutable local plan. They do not need `--allow-writes`.
+`changes plan` and the MCP tool `changes_plan` only read Benchling. They write an immutable local plan. They do not need `--allow-writes`.
 
 `changes apply PLAN_ID` is the remote write. Run it only after the person accepts that plan id, and only with the same `--env` that created the plan. Show them the plan id, the family, and the preview in the envelope before you apply. A plan is single-use. A stale plan exits 5. Do not retry a write that exits 8 (partial or unknown).
 
-A protected environment refuses `changes apply` (exit 2) unless `--env NAME` is on the command line and `--confirm-env NAME` repeats it. Add `--confirm-env` only after the person has confirmed that environment name for this plan. Never guess it, and never run `auth unprotect` to get around the guard. `doctor` shows `protected` and a `protection` line. On MCP, a protected environment's `apply_changes` is refused unless the server was started with `--allow-writes` for it. Reads and previews are unaffected.
+A protected environment refuses `changes apply` (exit 2) unless `--env NAME` is on the command line and `--confirm-env NAME` repeats it. Add `--confirm-env` only after the person has confirmed that environment name for this plan. Never guess it, and never run `auth unprotect` to get around the guard. `doctor` shows `protected` and a `protection` line. On MCP, a protected environment's `changes_apply` is refused unless the server was started with `--allow-writes` for it. Reads and previews are unaffected.
 
 `export` writes a local file and does not change Benchling. It does not need `--allow-writes`. Leave an existing file in place unless the person asked to replace it with `--overwrite`.
 
@@ -334,7 +334,7 @@ benchlingtk issue draft --spec issue.json
 benchlingtk issue draft --spec issue.json --file
 ```
 
-`issue.json` holds the fields above. `--cite-url` and `--cite-quote` can be repeated instead of `citations`, and every other field has a flag; run `benchlingtk issue draft --help` for the list. The MCP tool `issue_draft` is draft-only and never files.
+`issue.json` holds the fields above. `--cite-url` and `--cite-quote` can be repeated instead of `citations`, and every other field has a flag; run `benchlingtk issue draft --help` for the list. The MCP tool `issue_draft` takes the same fields as those flags (`attempted`, `solution`, and matching `cite_url` and `cite_quote` lists), is draft-only, and never files.
 
 ## Reading this skill from an install
 
@@ -351,18 +351,18 @@ The MCP server serves the same file as the read-only resource `skill://benchling
 
 If the benchlingtk MCP tools are already connected, call them with the same environment name. Do not put a client secret in the client config. The server reads the OS keychain.
 
-Reads, `export`, and `plan_changes` work when the server was started as:
+Reads, `export`, and `changes_plan` work when the server was started as:
 
 ```console
 benchlingtk mcp serve
 ```
 
-`apply_changes` works only for an environment named at startup. A protected environment is refused with a message that says so:
+`changes_apply` works only for an environment named at startup. A protected environment is refused with a message that says so:
 
 ```console
 benchlingtk mcp serve --allow-writes ENV
 ```
 
-Do not add `--allow-writes` unless the person asked to allow writes for that environment. `export` takes `kind`, `path`, `format`, and optional `part_id`, `entry`, and `schema_id`. It returns the same summary as the CLI and writes a local file only. `apply_changes` for entry creation returns the new entry ID and `web_url`; for results uploads it returns `web_url` and `next_step`: relay it to the user so they can accept pending results. `plan_changes` takes `env`, an optional `entry`, `family` (`entry`, `document`, `table`, `fields`, `results`, or `containers`), and `specification` (the same JSON shapes as `--spec`, including table-specific result `batches`). Omit `entry` for entry and container plans. `get_change_status` accepts `wait` and `timeout` to poll result tasks and does not need `--allow-writes`. `read_back_results` and `verify_results` read pushed results back, including pending ones, and do not need `--allow-writes`.
+Do not add `--allow-writes` unless the person asked to allow writes for that environment. `export` takes `kind`, `output`, `format`, and optional `part_id`, `entry`, and `schema_id`. It returns the same summary as the CLI and writes a local file only. `changes_apply` for entry creation returns the new entry ID and `web_url`; for results uploads it returns `web_url` and `next_step`: relay it to the user so they can accept pending results. `changes_plan` takes `env`, an optional `entry`, `family` (`entry`, `document`, `table`, `fields`, `results`, or `containers`), and `specification` (the same JSON shapes as `--spec`, including table-specific result `batches`). Omit `entry` for entry and container plans. `changes_status` accepts `wait` and `timeout` to poll result tasks and does not need `--allow-writes`. `results_pending` and `results_verify` read pushed results back, including pending ones, and do not need `--allow-writes`.
 
-Tools for this workflow: `list_environments`, `get_capabilities`, `list_entries`, `list_schemas`, `find_schema`, `resolve_entry`, `inspect_entry`, `get_entry`, `get_entries`, `get_folder`, `get_template`, `list_templates`, `get_entry_fields`, `get_section`, `get_part`, `get_table`, `get_schema`, `get_container`, `find_containers`, `list_container_schemas`, `list_results`, `get_result`, `get_blob`, `list_result_tables`, `list_results_table_rows`, `read_back_results`, `verify_results`, `export`, `plan_changes`, `apply_changes`, `get_change_status`, `issue_draft`. `list_environments` and `issue_draft` take no environment.
+Tools for this workflow: `auth_status`, `doctor`, `entry_list`, `schema_list`, `schema_find`, `entry_resolve`, `entry_inspect`, `entry_get`, `entry_bulk_get`, `folder_get`, `template_get`, `template_list`, `entry_fields_get`, `section_get`, `part_get`, `table_get`, `schema_get`, `container_get`, `container_find`, `container_schema_list`, `results_list`, `results_get`, `blob_get`, `results_tables`, `results_rows`, `results_pending`, `results_verify`, `export`, `changes_plan`, `changes_apply`, `changes_status`, `issue_draft`. `auth_status` and `issue_draft` take no environment.
