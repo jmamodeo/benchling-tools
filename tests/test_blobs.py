@@ -434,6 +434,7 @@ async def test_get_blob_reads_metadata_only(runtime, fake) -> None:
         "type": "VISUALIZATION",
         "mimeType": "image/png",
         "uploadStatus": "COMPLETE",
+        "id_namespace": "v2_blob_uuid",
     }
     assert fake.writes() == []
     with pytest.raises(ValidationError):
