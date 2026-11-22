@@ -18,6 +18,7 @@ from pydantic import WithJsonSchema
 from typer.core import TyperGroup
 
 from . import __version__
+from .blob_download import download_blob
 from .change_spec import CHANGE_SPECIFICATION_SCHEMA, parse_change_specification
 from .commands import CLI_ONLY_ATTR, TOOL_ATTR, Call, Command, McpParam, declare, surface_text
 from .credentials import build_environment, collect_status, login, login_fix_values, logout
@@ -121,7 +122,7 @@ part_app = typer.Typer(help="Read document parts.")
 table_app = typer.Typer(help="Read unstructured tables.")
 schema_app = typer.Typer(help="List and read entry, result, and run schemas.")
 results_app = typer.Typer(help="Read result records and results-table rows.")
-blob_app = typer.Typer(help="Read blob (attachment) metadata.")
+blob_app = typer.Typer(help="Read blob or attachment metadata and download files.")
 container_app = typer.Typer(help="Read and search inventory containers.")
 container_schema_app = typer.Typer(help="List container schemas.")
 changes_app = typer.Typer(help="Preview and explicitly apply safe changes.")
@@ -1140,17 +1141,45 @@ async def blob_get(
     call: Call,
     blob_id: str = typer.Argument(
         ...,
-        help=(
-            "V2 blob ID, a UUID: the value an attachment result field holds. "
-            "Not an attachment_… id or a docpart_… attachment part id."
-        ),
+        help=("V2 blob UUID or V3 attachment_… ID, not a docpart_… attachment part ID."),
     ),
 ) -> Any:
-    """Get one blob's metadata: name, type, MIME type and upload status. Nothing is downloaded.
-
-    Reads V2 GET /blobs/{blob_id}, so the id is a blob UUID, not an attachment_… id.
-    """
+    """Get metadata for a blob UUID or attachment_… ID. Nothing is downloaded."""
     return await call.runtime.service.get_blob(blob_id)
+
+
+@blob_app.command("download")
+@command(read_only=False)
+async def blob_download(
+    call: Call,
+    blob_id: str = typer.Argument(..., help="V2 blob UUID or V3 attachment_… ID."),
+    output: str = typer.Option(..., "--output", "-o", help="Local output file path."),
+    expect_sha256: str | None = typer.Option(
+        None, "--expect-sha256", help="Expected SHA-256 hex digest."
+    ),
+    expect_md5: str | None = typer.Option(None, "--expect-md5", help="Expected MD5 hex digest."),
+    expect_size: int | None = typer.Option(
+        None, "--expect-size", min=0, help="Expected size in bytes."
+    ),
+    compare: str | None = typer.Option(None, "--compare", help="Local reference file to compare."),
+    force: bool = typer.Option(False, "--force", help="Replace an existing output file."),
+) -> Any:
+    """Download a blob UUID or attachment_… ID to a file and report size and hashes.
+
+    Compare against caller-supplied expectations or a local reference file.
+    Without expectations the summary says verified is false. An existing output
+    is kept unless --force is given. Benchling is only read.
+    """
+    return await download_blob(
+        call.runtime.service,
+        blob_id,
+        output,
+        expect_sha256=expect_sha256,
+        expect_md5=expect_md5,
+        expect_size=expect_size,
+        compare=compare,
+        force=force,
+    )
 
 
 @results_app.command("tables")

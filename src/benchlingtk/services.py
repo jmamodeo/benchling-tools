@@ -6,6 +6,7 @@ import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote, urlparse
+from uuid import UUID
 
 from . import listing
 from .api import BenchlingAPI
@@ -1932,10 +1933,45 @@ class BenchlingService:
         return await self.api.request("GET", f"/result/{result_id}")
 
     async def get_blob(self, blob_id: str) -> dict[str, Any]:
-        """Read one blob's metadata (name, type, MIME type, upload status). No download."""
-        if not isinstance(blob_id, str) or not blob_id.strip():
-            raise ValidationError("Blob ID must be a non-empty string")
-        return await self.api.request("GET", f"/blobs/{quote(blob_id.strip(), safe='')}", version=2)
+        """Read blob or attachment metadata without downloading its contents."""
+        _, namespace, metadata = await self._blob_metadata(blob_id)
+        return {key: value for key, value in metadata.items() if key != "downloadUrl"} | {
+            "id_namespace": namespace
+        }
+
+    async def _blob_metadata(self, blob_id: str) -> tuple[str, str, dict[str, Any]]:
+        identifier = blob_id.strip() if isinstance(blob_id, str) else ""
+        if re.fullmatch(r"attachment_[A-Za-z0-9]+", identifier):
+            namespace, route, version = "v3_attachment", "/attachment/", 3
+        else:
+            namespace = "v3_attachment" if identifier.startswith("attachment_") else "unknown"
+            try:
+                parsed = UUID(identifier)
+                if str(parsed) != identifier.lower():
+                    raise ValueError
+            except ValueError as exc:
+                raise ValidationError(
+                    "Expected a blob UUID or attachment_ ID",
+                    details={
+                        "id_namespace": namespace,
+                        "expected_id_namespace": ["v2_blob_uuid", "v3_attachment"],
+                    },
+                ) from exc
+            identifier = str(parsed)
+            namespace, route, version = "v2_blob_uuid", "/blobs/", 2
+        try:
+            payload = await self.api.request(
+                "GET", route + quote(identifier, safe=""), version=version
+            )
+        except NotFoundError as exc:
+            exc.details.update({"id_namespace": namespace, "expected_id_namespace": namespace})
+            raise
+        if payload.get("id") != identifier:
+            raise UpstreamError(
+                "Benchling returned unexpected blob or attachment metadata",
+                details={"id_namespace": namespace, "expected_id_namespace": namespace},
+            )
+        return identifier, namespace, payload
 
     async def get_linked_entity_schema_id(self, entity_id: str) -> str:
         """Read a linked entity and return its entity schema ID for result-plan validation."""
