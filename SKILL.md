@@ -11,7 +11,11 @@ metadata:
 
 # benchlingtk
 
+A CLI for coding agents and humans, directly mirrored as an MCP server for chat agents.
+
 Unofficial. Not affiliated with or endorsed by Benchling, Inc.
+
+benchlingtk has no public Python API. Its Python modules are internal and may change in any release, so do not import them in scripts. A person who wants to script Benchling in Python should use the official Benchling SDK (https://docs.benchling.com/docs/getting-started-with-the-sdk). A public Python API may be added if there is enough interest; they can open a GitHub issue on https://github.com/jmamodeo/benchlingtk to ask for one.
 
 Use this when an agent should work in a Benchling tenant through the `benchlingtk` command or the local MCP server. The toolkit itself uses only the public HTTP API and never drives a browser. An agent that also has a browser signed in to the same tenant may use it alongside the toolkit, as described in "Working alongside the browser".
 
@@ -339,7 +343,7 @@ benchlingtk issue draft --spec issue.json --file
 
 ## Reading this skill from an install
 
-`pip install benchlingtk` installs this file as `share/benchlingtk/SKILL.md` under the environment prefix. These commands find it, or the repository copy in a source checkout, and never contact Benchling. `skill path` prints the absolute path and `skill show` prints the Markdown. If the file is missing, they print a `not_found` envelope:
+`uv tool install benchlingtk` (or `uvx benchlingtk`) installs this file as `share/benchlingtk/SKILL.md` under the tool environment's prefix. These commands find it, or the repository copy in a source checkout, and never contact Benchling. `skill path` prints the absolute path and `skill show` prints the Markdown. If the file is missing, they print a `not_found` envelope:
 
 ```console
 benchlingtk skill path

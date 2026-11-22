@@ -27,6 +27,10 @@ uv run python scripts/update_coverage_badge.py
 
 Add or update tests for behavior you change. Tests must stay offline and use mocked HTTP.
 
+The test suite is fully offline and needs no credentials. It runs the real client, services, planner, CLI and MCP server against a stateful in-process fake of the Benchling API (`tests/fake_benchling.py`).
+
+The suite has 503 test functions (788 collected cases, parametrization included) and reaches 96% branch coverage. CI enforces a `fail_under` floor of 96% in `pyproject.toml`, and also builds the sdist and wheel, runs `twine check`, and smoke-tests the built wheel. CI installs `skills-ref` 0.1.1 and runs its `agentskills validate` command on this directory.
+
 ## OpenAPI drift check
 
 `contracts/openapi-manifest.json` records the SHA-256 of each vendored public spec, the URL that file came from, and the `routes_used` paths this toolkit calls.
@@ -43,6 +47,20 @@ uv run python scripts/check_openapi_drift.py --spec-file path/to/openapi.yaml
 ```
 
 Unit tests for the script use fixture specs and do not download anything.
+
+## Opt-in sandbox exercise
+
+Offline tests never require credentials. For a live sandbox, run `benchlingtk auth login --env dev` in your own terminal first. The exercise below then creates a plan, pauses for a browser edit to invalidate it, verifies the conflict, and applies and verifies one selected-cell update. Add `--restore` to preview and explicitly restore the original input afterward.
+
+```console
+uv run python scripts/sandbox_exercise.py \
+  --env dev \
+  --entry etr_REPLACE_ME \
+  --table-part docpart_REPLACE_ME \
+  --row 0 --column 1 \
+  --value cli-sandbox-check \
+  --restore
+```
 
 ## Issues
 

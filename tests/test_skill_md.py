@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SKILL = (ROOT / "SKILL.md").read_text(encoding="utf-8")
 LISTING = ROOT / "agensi" / "listing.yaml"
 _URL = re.compile(r"https://[^\s)`]+")
-_ALLOWED_HOSTS = {"github.com"}
+_ALLOWED_HOSTS = {"github.com", "docs.benchling.com"}
 _ALLOWED_FRONTMATTER = {
     "name",
     "description",
@@ -160,7 +160,7 @@ def test_skill_pairs_the_toolkit_with_a_browser_without_driving_one() -> None:
     ) in alongside
 
 
-def test_skill_urls_are_the_repository_only() -> None:
+def test_skill_urls_are_the_repository_and_benchling_docs_only() -> None:
     hosts = set()
     for url in _URL.findall(SKILL):
         hosts.add(url.split("//", 1)[1].split("/", 1)[0])

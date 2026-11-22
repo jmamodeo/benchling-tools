@@ -8,6 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 README = (ROOT / "README.md").read_text(encoding="utf-8")
+DEMO = (ROOT / "docs" / "demo.md").read_text(encoding="utf-8")
 ARCHITECTURE = (ROOT / "ARCHITECTURE.md").read_text(encoding="utf-8")
 THREAT = (ROOT / "docs" / "threat-model.md").read_text(encoding="utf-8")
 CAST = (ROOT / "docs" / "demo.cast").read_text(encoding="utf-8")
@@ -68,11 +69,14 @@ def test_threat_model_covers_the_four_risks() -> None:
 def test_readme_embeds_the_fixture_demo() -> None:
     assert "![Scripted playback of the offline fixture demo:" in README
     assert "(docs/demo.gif)" in README
-    assert "(docs/demo.cast)" in README
-    assert "not a capture from the asciinema recorder" in README
-    start = README.index("<!-- demo-transcript:start -->")
-    end = README.index("<!-- demo-transcript:end -->")
-    transcript = README[start:end]
+    assert "(docs/demo.md)" in README
+    assert "![Scripted playback of the offline fixture demo:" in DEMO
+    assert "(demo.gif)" in DEMO
+    assert "(demo.cast)" in DEMO
+    assert "not a capture from the asciinema recorder" in DEMO
+    start = DEMO.index("<!-- demo-transcript:start -->")
+    end = DEMO.index("<!-- demo-transcript:end -->")
+    transcript = DEMO[start:end]
     assert "remote writes so far: 0" in transcript
     assert "MCP writes are disabled for demo" in transcript
     cast_ids = set(_PLAN_ID.findall(CAST))
@@ -100,6 +104,6 @@ def test_cast_is_asciinema_v2_from_the_fixture() -> None:
 
 def test_new_docs_use_placeholder_hosts_only() -> None:
     demo = README.split("## Demo", 1)[1].split("## Install", 1)[0]
-    combined = "\n".join([ARCHITECTURE, THREAT, CAST, demo])
+    combined = "\n".join([ARCHITECTURE, THREAT, CAST, demo, DEMO])
     unexpected = _hosts(combined) - _ALLOWED_HOSTS
     assert unexpected == set()

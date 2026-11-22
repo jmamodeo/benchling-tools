@@ -1,4 +1,4 @@
-"""Build the README demo cast and GIF from the offline fixture session.
+"""Build the demo cast, transcript page, and GIF from the offline fixture session.
 
 Runs ``scripts/demo.py``, which drives the real CLI and MCP server against
 ``tests/fake_benchling.py`` with ``httpx.MockTransport``. No credentials and no
@@ -9,7 +9,7 @@ terminal or a live tenant.
     uv run --with pillow python scripts/render_demo.py
 
 Pillow and ffmpeg are used only to draw the GIF. They are not package
-dependencies. ``--skip-gif`` writes the cast and refreshes the README transcript.
+dependencies. ``--skip-gif`` writes the cast and refreshes the transcript in docs/demo.md.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEMO = ROOT / "scripts" / "demo.py"
 CAST_PATH = ROOT / "docs" / "demo.cast"
 GIF_PATH = ROOT / "docs" / "demo.gif"
-README_PATH = ROOT / "README.md"
+DEMO_DOC_PATH = ROOT / "docs" / "demo.md"
 TRANSCRIPT_START = "<!-- demo-transcript:start -->"
 TRANSCRIPT_END = "<!-- demo-transcript:end -->"
 
@@ -139,21 +139,21 @@ def scripted_events(transcript: str) -> list[tuple[float, str, str]]:
     return events
 
 
-def refresh_readme(transcript: str) -> None:
-    """Replace the fenced transcript between the README markers."""
-    readme = README_PATH.read_text(encoding="utf-8")
-    if TRANSCRIPT_START not in readme or TRANSCRIPT_END not in readme:
-        raise SystemExit("README.md is missing demo-transcript markers")
+def refresh_transcript(transcript: str) -> None:
+    """Replace the fenced transcript between the markers in docs/demo.md."""
+    page = DEMO_DOC_PATH.read_text(encoding="utf-8")
+    if TRANSCRIPT_START not in page or TRANSCRIPT_END not in page:
+        raise SystemExit("docs/demo.md is missing demo-transcript markers")
     fenced = "```console\n" + transcript.rstrip() + "\n```"
     pattern = re.compile(
         re.escape(TRANSCRIPT_START) + r"\n.*?" + re.escape(TRANSCRIPT_END),
         re.DOTALL,
     )
     replacement = f"{TRANSCRIPT_START}\n{fenced}\n{TRANSCRIPT_END}"
-    updated, count = pattern.subn(replacement, readme, count=1)
+    updated, count = pattern.subn(replacement, page, count=1)
     if count != 1:
-        raise SystemExit("README.md demo-transcript markers were not replaced")
-    README_PATH.write_text(updated, encoding="utf-8")
+        raise SystemExit("docs/demo.md demo-transcript markers were not replaced")
+    DEMO_DOC_PATH.write_text(updated, encoding="utf-8")
 
 
 def render_gif(transcript: str, destination: Path) -> None:
@@ -323,14 +323,16 @@ def _ffmpeg(args: list[str]) -> None:
 
 
 def main() -> None:
-    """Capture the fixture demo and write docs/demo.cast, the README, and the GIF."""
+    """Capture the fixture demo and write docs/demo.cast, docs/demo.md, and the GIF."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--skip-gif", action="store_true", help="Write the cast and README only.")
+    parser.add_argument(
+        "--skip-gif", action="store_true", help="Write the cast and docs/demo.md only."
+    )
     args = parser.parse_args()
     transcript = capture_demo()
     assert_fixture_text(transcript)
     CAST_PATH.write_text(build_cast(transcript), encoding="utf-8")
-    refresh_readme(transcript)
+    refresh_transcript(transcript)
     if args.skip_gif:
         return
     render_gif(transcript, GIF_PATH)
