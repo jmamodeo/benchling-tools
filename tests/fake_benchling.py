@@ -567,6 +567,8 @@ class FakeBenchling:
         self.bulk_responses: list[dict[str, Any]] = []
         self.result_updates: list[dict[str, Any]] = []
         self.blobs: dict[str, dict[str, Any]] = {}
+        self.attachments: dict[str, dict[str, Any]] = {}
+        self.download_headers: list[dict[str, str]] = []
         self.assay_results: list[dict[str, Any]] = []
         self.assay_result_page_size: int | None = None
         self.linked_entities = {
@@ -598,6 +600,13 @@ class FakeBenchling:
     def handler(self, request: httpx.Request) -> httpx.Response:
         if request.url.path == "/oauth/token":
             return self._oauth(request)
+        if request.url.host == "downloads.example.test":
+            self.download_headers.append(dict(request.headers))
+            identifier = request.url.path.removeprefix("/files/")
+            item = self.blobs.get(identifier) or self.attachments.get(identifier)
+            if item is None:
+                return httpx.Response(404, request=request)
+            return httpx.Response(200, stream=httpx.ByteStream(item["data"]), request=request)
         body = json.loads(request.content) if request.content else None
         requested = urlsplit(str(request.url))
         self.origin = f"{requested.scheme}://{requested.netloc}"
@@ -1446,6 +1455,17 @@ class FakeBenchling:
             return 404, {"error": {"message": "blob not found"}}
         return 200, self._blob_view(blob)
 
+    def _blob_download_url(self, call: Call, blob_id: str) -> tuple[int, dict[str, Any]]:
+        if blob_id not in self.blobs:
+            return 404, {"error": {"message": "blob not found"}}
+        return 200, {"downloadURL": f"https://downloads.example.test/files/{blob_id}"}
+
+    def _get_attachment(self, call: Call, attachment_id: str) -> tuple[int, dict[str, Any]]:
+        attachment = self.attachments.get(attachment_id)
+        if attachment is None:
+            return 404, {"error": {"message": "attachment not found"}}
+        return 200, {key: value for key, value in attachment.items() if key != "data"}
+
     def _start_blob(self, call: Call) -> tuple[int, dict[str, Any]]:
         return 200, self._blob_view(self._new_blob(call.body))
 
@@ -1636,6 +1656,8 @@ ROUTES: list[tuple[str, str]] = [
     (r"/blobs", "POST v2|create_blob"),
     (r"/blobs:start-multipart-upload", "POST v2|start_blob"),
     (r"/blobs/([\w-]+)", "GET v2|get_blob"),
+    (r"/blobs/([\w-]+)/download-url", "GET v2|blob_download_url"),
+    (r"/attachment/(attachment_\w+)", "GET v3|get_attachment"),
     (r"/blobs/([\w-]+)/parts", "POST v2|blob_part"),
     (r"/blobs/([\w-]+):complete-upload", "POST v2|complete_blob"),
     (r"/blobs/([\w-]+):abort-upload", "POST v2|abort_blob"),
