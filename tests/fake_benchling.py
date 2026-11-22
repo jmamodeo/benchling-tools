@@ -1549,6 +1549,8 @@ class FakeBenchling:
         if "entry.eq" in call.params or "entryId" in call.params:
             return 400, {"error": {"message": "unsupported filter"}}
         items = self.assay_results
+        if call.params.get("archiveReason") != "ANY_ARCHIVED_OR_NOT_ARCHIVED":
+            items = [r for r in items if not r.get("archiveRecord")]
         if "schemaId" in call.params:
             items = [
                 r for r in items if (r.get("schema") or {}).get("id") == call.params["schemaId"]

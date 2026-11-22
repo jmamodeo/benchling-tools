@@ -1730,31 +1730,42 @@ class BenchlingService:
         return found
 
     async def _v2_results_for_v3(self, records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-        """Map V3 result ids to their V2 assay results.
+        """Map V3 result ids to their V2 assay results, archived ones included.
 
-        V3 results do not carry the V2 UUID, and V2 has no lookup by V3 id. For each
-        schema, V2 GET /assay-results is read in creation order within a second of the
-        records' createdAt and matched on ``v3Id``, at most V2_ID_LOOKUP_MAX_PAGES pages.
+        V3 results do not carry the V2 UUID, and V2 has no lookup by V3 id. Records of a
+        schema are grouped into runs created within two seconds of each other. For each
+        run, V2 GET /assay-results is read in creation order from a second before to a
+        second after it and matched on ``v3Id``, at most V2_ID_LOOKUP_MAX_PAGES pages plus
+        one per hundred ids wanted.
         A record without a schema or createdAt, or not matched, is left out.
         """
-        windows: dict[str, tuple[datetime, datetime, set[str]]] = {}
+        by_schema: dict[str, list[tuple[datetime, str]]] = {}
         for record in records:
             v3_id, schema_id = record.get("id"), _result_schema_id(record)
             created = _result_created_at(record)
-            if not isinstance(v3_id, str) or schema_id is None or created is None:
-                continue
-            low, high, wanted = windows.get(schema_id, (created, created, set()))
-            windows[schema_id] = (min(low, created), max(high, created), wanted | {v3_id})
+            if isinstance(v3_id, str) and schema_id is not None and created is not None:
+                by_schema.setdefault(schema_id, []).append((created, v3_id))
+        windows: list[tuple[str, datetime, datetime, set[str]]] = []
+        for schema_id, stamped in by_schema.items():
+            for created, v3_id in sorted(stamped):
+                last = windows[-1] if windows else None
+                if last and last[0] == schema_id and created - last[2] <= timedelta(seconds=2):
+                    windows[-1] = (schema_id, last[1], created, last[3] | {v3_id})
+                else:
+                    windows.append((schema_id, created, created, {v3_id}))
         found: dict[str, dict[str, Any]] = {}
-        for schema_id, (low, high, wanted) in windows.items():
+        for schema_id, low, high, wanted in windows:
             params: dict[str, Any] = {
                 "schemaId": schema_id,
                 "createdAt.gte": _rfc3339(low - timedelta(seconds=1)),
                 "createdAt.lte": _rfc3339(high + timedelta(seconds=1)),
+                "archiveReason": "ANY_ARCHIVED_OR_NOT_ARCHIVED",
                 "sort": "createdAt:asc",
                 "pageSize": 100,
             }
-            for _page in range(V2_ID_LOOKUP_MAX_PAGES):
+            for _page in range(V2_ID_LOOKUP_MAX_PAGES + len(wanted) // 100):
+                if wanted <= found.keys():
+                    break
                 payload = await self.api.request("GET", "/assay-results", version=2, params=params)
                 items = payload.get("assayResults")
                 if not isinstance(items, list):
@@ -1764,7 +1775,7 @@ class BenchlingService:
                         if item.get("v3Id") in wanted:
                             found[str(item["v3Id"])] = item
                 token = payload.get("nextToken")
-                if wanted <= found.keys() or not token:
+                if not token:
                     break
                 params["nextToken"] = token
         return found

@@ -315,3 +315,31 @@ async def test_v2_id_lookup_rejects_a_malformed_page(runtime, fake) -> None:
     fake.payload_overrides.append(("/api/v2/assay-results", 200, {"assayResults": "nope"}))
     with pytest.raises(Exception, match="unexpected result list response"):
         await runtime.planner.read_back_results(result_ids=[v3_ids[0]])
+
+
+async def test_archived_results_are_mapped_from_their_v3_id(runtime, fake) -> None:
+    _plan, v2_ids, v3_ids = await uploaded(runtime, fake, count=1)
+    fake.assay_results[0]["archiveRecord"] = {"reason": "Retired"}
+
+    data = await runtime.planner.read_back_results(result_ids=[v3_ids[0]])
+
+    assert [(item["v2_id"], item["state"]) for item in data["items"]] == [(v2_ids[0], "archived")]
+    (lookup,) = calls(fake, "/api/v2/assay-results")
+    assert lookup.params["archiveReason"] == "ANY_ARCHIVED_OR_NOT_ARCHIVED"
+
+
+async def test_results_created_far_apart_are_looked_up_in_their_own_windows(runtime, fake) -> None:
+    _plan, v2_ids, v3_ids = await uploaded(runtime, fake, count=3)
+    fake.assay_results[2]["createdAt"] = "2026-11-20T00:00:00Z"
+
+    data = await runtime.planner.read_back_results(result_ids=[v3_ids[0], v3_ids[2]])
+
+    assert [item["v2_id"] for item in data["items"]] == [v2_ids[0], v2_ids[2]]
+    windows = [
+        (call.params["createdAt.gte"], call.params["createdAt.lte"])
+        for call in calls(fake, "/api/v2/assay-results")
+    ]
+    assert windows == [
+        ("2026-11-19T00:00:00Z", "2026-11-19T00:00:02Z"),
+        ("2026-11-19T23:59:59Z", "2026-11-20T00:00:01Z"),
+    ]
