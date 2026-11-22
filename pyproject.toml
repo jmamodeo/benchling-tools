@@ -30,7 +30,6 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Topic :: Scientific/Engineering",
-  "Typing :: Typed",
 ]
 dependencies = [
   "filelock>=3.16",
@@ -71,9 +70,6 @@ version = { attr = "benchlingtk.__version__" }
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.setuptools.package-data]
-benchlingtk = ["py.typed"]
-
 [tool.setuptools.data-files]
 "share/benchlingtk" = ["SKILL.md"]
 "share/benchlingtk/schemas" = ["schemas/*.json"]
@@ -99,7 +95,7 @@ ignore = [
   "E501",  # the formatter wraps code; long strings and comments are tolerated
   "B008",  # typer uses call expressions in argument defaults
   "B905",  # zip() strictness would change behavior
-  "UP042", # str-mixin enums are part of the public API
+  "UP042", # StrEnum would change the str() and format() output of these enums
   "E402",
 ]
 

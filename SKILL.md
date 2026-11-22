@@ -343,7 +343,7 @@ benchlingtk issue draft --spec issue.json --file
 
 ## Reading this skill from an install
 
-`pip install benchlingtk` installs this file as `share/benchlingtk/SKILL.md` under the environment prefix. These commands find it, or the repository copy in a source checkout, and never contact Benchling. `skill path` prints the absolute path and `skill show` prints the Markdown. If the file is missing, they print a `not_found` envelope:
+`uv tool install benchlingtk` (or `uvx benchlingtk`) installs this file as `share/benchlingtk/SKILL.md` under the tool environment's prefix. These commands find it, or the repository copy in a source checkout, and never contact Benchling. `skill path` prints the absolute path and `skill show` prints the Markdown. If the file is missing, they print a `not_found` envelope:
 
 ```console
 benchlingtk skill path
