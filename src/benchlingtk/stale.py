@@ -10,10 +10,12 @@ in the UI.
 
 A column is compared when its ``SchemaFieldColumnDefinition.fieldDefinitionApiId``
 names a field the record returns in ``schemaFields`` (matched on
-``fieldDefinition.id``). Only rows whose ``submissionStatus`` is ``SUBMITTED``
-(or absent) and that are not archived are compared: a row with unsubmitted
-changes may differ because of a person's unsaved edit, and re-syncing it could
-discard that edit. These reads never write to Benchling.
+``fieldDefinition.id``). A row is skipped when it is archived or its
+``submissionStatus`` is ``UNSUBMITTED`` or ``HAS_UNSUBMITTED_CHANGES``: such a
+row may differ because of a person's unsaved edit, and re-syncing it could
+discard that edit. ``SUBMITTED``, ``UNEVALUATED`` (the status Benchling reports
+on accepted rows of a table not evaluated since the last write) and a missing
+status are compared. These reads never write to Benchling.
 """
 
 from __future__ import annotations
@@ -57,9 +59,12 @@ def row_result_id(row: dict[str, Any]) -> str | None:
     return None
 
 
+_UNSUBMITTED = frozenset({"UNSUBMITTED", "HAS_UNSUBMITTED_CHANGES"})
+
+
 def row_is_comparable(row: dict[str, Any]) -> bool:
-    """True for an accepted, unarchived row with no unsubmitted changes."""
-    return row.get("submissionStatus") in (None, "SUBMITTED") and not row.get("isArchived")
+    """False for an archived row or one with unsubmitted changes; True otherwise."""
+    return row.get("submissionStatus") not in _UNSUBMITTED and not row.get("isArchived")
 
 
 def _record_values(record: dict[str, Any]) -> dict[str, list[Any]] | None:

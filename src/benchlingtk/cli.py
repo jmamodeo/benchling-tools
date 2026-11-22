@@ -1125,7 +1125,8 @@ async def results_get(
     is a not_found error whose details give id_namespace (the namespace passed),
     expected_id_namespace, and lookup (the path used). Pending results are included.
     The record also adds table_check: the results-table row on its entry that links
-    it, and whether that row's cells match the record (in_sync or stale). A stale
+    it, and whether that row's cells match the record (in_sync or stale; not_compared
+    when the row is archived, UNSUBMITTED or HAS_UNSUBMITTED_CHANGES). A stale
     cell adds warnings; ask the person to use Re-sync table in the Benchling UI,
     which the API cannot do. Reads only.
     """
@@ -1211,8 +1212,10 @@ async def results_rows(
     listed_id_namespace. It is a validation_error when --entry is missing or no
     single part matches. Pass the previous next_token with --cursor.
 
-    Each submitted row linked to a result is compared with that result record,
-    column by column through fieldDefinitionApiId. A row whose cell disagrees
+    Each row linked to a result is compared with that result record, column by
+    column through fieldDefinitionApiId. SUBMITTED and UNEVALUATED rows are
+    compared; archived, UNSUBMITTED and HAS_UNSUBMITTED_CHANGES rows are skipped,
+    since they may hold an unsaved edit. A row whose cell disagrees
     carries warning and stale_cells, and the page carries warnings: the notebook
     cell is stale, so ask the person to use Re-sync table in the Benchling UI,
     which the API cannot do. stale_check counts compared and stale rows. Reads only.

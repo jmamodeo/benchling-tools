@@ -175,6 +175,55 @@ async def test_results_get_reports_a_stale_linked_row(runtime, fake) -> None:
     assert fake.writes() == []
 
 
+async def _unevaluated(runtime, fake, value) -> tuple[dict, dict]:
+    _linked_table(fake, {"__typename": "IntegerValue", "value": value})
+    fake.results_parts[PART]["rows"][0]["submissionStatus"] = "UNEVALUATED"
+    page = await stale.annotate_rows(
+        runtime.service, await runtime.service.list_results_table_rows(PART)
+    )
+    record = await stale.check_result_tables(
+        runtime.service, await runtime.service.get_result_by_any_id("result_1")
+    )
+    return page, record
+
+
+async def test_an_unevaluated_linked_row_that_agrees_is_in_sync(runtime, fake) -> None:
+    page, record = await _unevaluated(runtime, fake, 12)
+    assert page["items"][0]["submissionStatus"] == "UNEVALUATED"
+    assert page["stale_check"] == {"compared_rows": 1, "stale_rows": 0}
+    assert "warnings" not in page and "warning" not in page["items"][0]
+    assert record["table_check"]["status"] == "in_sync"
+    assert "warnings" not in record
+    assert fake.writes() == []
+
+
+async def test_an_unevaluated_linked_row_that_disagrees_is_stale(runtime, fake) -> None:
+    page, record = await _unevaluated(runtime, fake, 15)
+    assert page["stale_check"] == {"compared_rows": 1, "stale_rows": 1}
+    assert page["warnings"] == [stale.STALE_CELL_WARNING]
+    assert page["items"][0]["stale_cells"][0]["result_value"] == 15
+    assert record["table_check"]["status"] == "stale"
+    assert record["warnings"] == [stale.STALE_CELL_WARNING]
+    assert "Re-sync table" in record["table_check"]["warning"]
+    assert fake.writes() == []
+
+
+@pytest.mark.parametrize(
+    ("row", "comparable"),
+    [
+        ({"submissionStatus": "SUBMITTED"}, True),
+        ({"submissionStatus": "UNEVALUATED"}, True),
+        ({}, True),
+        ({"submissionStatus": "UNSUBMITTED"}, False),
+        ({"submissionStatus": "HAS_UNSUBMITTED_CHANGES"}, False),
+        ({"submissionStatus": "SUBMITTED", "isArchived": True}, False),
+        ({"submissionStatus": "UNEVALUATED", "isArchived": True}, False),
+    ],
+)
+def test_only_archived_or_unsubmitted_rows_are_skipped(row, comparable) -> None:
+    assert stale.row_is_comparable(row) is comparable
+
+
 async def test_results_get_reports_an_in_sync_linked_row(runtime, fake) -> None:
     _linked_table(fake, {"__typename": "IntegerValue", "value": 12})
     record = await stale.check_result_tables(
