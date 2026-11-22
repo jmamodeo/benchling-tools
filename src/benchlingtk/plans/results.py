@@ -537,7 +537,7 @@ class ResultsPlanning(ResultUpdatePlanning):
                     "details": exc.details,
                 }
                 failures.append(failure)
-                self._event(journal, "submit_results", "unknown", failure)
+                self._event(journal, "create_results", "unknown", failure)
                 continue
             except BenchlingAgentError as exc:
                 first_error = first_error or exc
@@ -549,7 +549,7 @@ class ResultsPlanning(ResultUpdatePlanning):
                     "details": exc.details,
                 }
                 failures.append(failure)
-                self._event(journal, "submit_results", "failed", failure)
+                self._event(journal, "create_results", "failed", failure)
                 continue
             task_id = response.get("taskId") or response.get("id")
             if not task_id:
@@ -567,7 +567,7 @@ class ResultsPlanning(ResultUpdatePlanning):
                 failures.append(failure)
                 self._event(
                     journal,
-                    "submit_results",
+                    "create_results",
                     "unknown",
                     {**write_event_details(response), **failure},
                 )
@@ -588,7 +588,7 @@ class ResultsPlanning(ResultUpdatePlanning):
             )
             if "http_status" in recorded:
                 result["http_status"] = recorded["http_status"]
-            self._event(journal, "submit_results", "succeeded", recorded)
+            self._event(journal, "create_results", "succeeded", recorded)
             submitted.append(result)
         if failures:
             details = {

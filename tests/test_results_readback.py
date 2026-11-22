@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 
 import pytest
 from conftest import runtime_for
@@ -10,6 +11,7 @@ from fake_benchling import ENTRY_ID, entry_web_url
 from typer.testing import CliRunner
 
 from benchlingtk import cli
+from benchlingtk.config import ConfigStore
 from benchlingtk.errors import ValidationError
 from benchlingtk.plans import readback
 
@@ -79,6 +81,47 @@ async def test_pending_by_plan_uses_ids_stored_by_changes_status(runtime, fake) 
 
     assert fake.task_requests == []
     assert data["counts"]["pending"] == 1
+
+
+async def test_pending_and_verify_load_portable_plan_from_fresh_home(
+    runtime, fake, tmp_path
+) -> None:
+    planned = await applied_plan(runtime, fake, [record(1), record(2)])
+    fake.complete_upload()
+    portable_dir = tmp_path / "portable"
+    portable_dir.mkdir()
+    plan_file = portable_dir / "results-plan.json"
+    shutil.copyfile(runtime.repository.config.plans_dir / f"{planned.id}.json", plan_file)
+    shutil.copyfile(
+        runtime.repository.config.journals_dir / f"{planned.id}.json",
+        portable_dir / f"{planned.id}.journal.json",
+    )
+    runtime.repository.config = ConfigStore(tmp_path / "fresh-home")
+
+    pending = await runtime.planner.read_back_results(plan_id=str(plan_file))
+    verified = await runtime.planner.verify_results(str(plan_file))
+
+    assert pending["counts"]["pending"] == 2
+    assert pending["source"]["plan_id"] == planned.id
+    assert verified["ok"] is True and verified["counts"]["matched"] == 2
+
+
+async def test_readback_accepts_legacy_submit_results_journal_stage(runtime, fake) -> None:
+    planned = await applied_plan(runtime, fake, [record()])
+    fake.complete_upload()
+    journal = runtime.repository.load_journal(planned.id)
+    for event in journal.events:
+        if event.stage == "create_results":
+            event.stage = "submit_results"
+    runtime.repository.save_journal(journal)
+
+    status = await runtime.planner.status(planned.id)
+    pending = await runtime.planner.read_back_results(plan_id=planned.id)
+    verified = await runtime.planner.verify_results(planned.id)
+
+    assert status["tasks"][0]["task_id"] == "task_abc123"
+    assert pending["counts"]["pending"] == 1
+    assert verified["ok"] is True and verified["counts"]["matched"] == 1
 
 
 async def test_accepted_rows_are_not_reported_as_needing_accept(runtime, fake) -> None:
@@ -424,6 +467,45 @@ def test_cli_pending_and_verify_read_back_a_plan(invoke, fake, tmp_path) -> None
     assert verified["data"]["sample_limit"] == 3
     code, failed = invoke("results", "pending")
     assert code == 2 and failed["error"]["code"] == "validation_error"
+
+
+def test_cli_pending_and_verify_accept_portable_plan_file(
+    invoke, fake, monkeypatch, tmp_path
+) -> None:
+    spec = tmp_path / "portable-results.json"
+    spec.write_text(json.dumps({"table_id": TABLE, "assay_results": [record(1), record(2)]}))
+    code, planned = invoke(
+        "changes", "plan", "--entry", ENTRY_ID, "--family", "results", "--spec", str(spec)
+    )
+    assert code == 0, planned
+    plan_id = planned["data"]["id"]
+    code, applied = invoke("changes", "apply", plan_id)
+    assert code == 0, applied
+    fake.complete_upload()
+    portable_dir = tmp_path / "portable-cli"
+    portable_dir.mkdir()
+    plan_file = portable_dir / "portable-plan.json"
+    shutil.copyfile(ConfigStore().plans_dir / f"{plan_id}.json", plan_file)
+    shutil.copyfile(
+        ConfigStore().journals_dir / f"{plan_id}.json",
+        portable_dir / f"{plan_id}.journal.json",
+    )
+    fresh_home = tmp_path / "cli-home"
+    runtime_factory = cli.Runtime
+
+    def runtime_with_fresh_home(environment):
+        active = runtime_factory(environment)
+        active.repository.config = ConfigStore(fresh_home)
+        return active
+
+    monkeypatch.setattr(cli, "Runtime", runtime_with_fresh_home)
+
+    pending_code, pending = invoke("results", "pending", "--plan", str(plan_file))
+    verify_code, verified = invoke("results", "verify", str(plan_file))
+
+    assert pending_code == verify_code == 0
+    assert pending["data"]["counts"]["pending"] == 2
+    assert verified["data"]["ok"] is True and verified["data"]["counts"]["matched"] == 2
 
 
 async def test_task_lookup_failure_and_unconfirmed_uploads_are_reported(runtime, fake) -> None:

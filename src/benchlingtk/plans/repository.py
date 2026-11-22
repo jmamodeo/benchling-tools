@@ -57,6 +57,18 @@ class PlanRepository:
         path = self._plan_path(plan_id)
         if not path.exists():
             raise ValidationError("Unknown change plan", details={"plan_id": plan_id})
+        return self._load_plan_path(path, plan_id)
+
+    def load_plan_file(self, path: Path) -> ChangePlan:
+        """Load and verify a plan from an explicit portable file path."""
+        try:
+            plan = self._load_plan_path(path, path.stem)
+        except FileNotFoundError as exc:
+            raise ValidationError("Unknown change plan file", details={"path": str(path)}) from exc
+        self._validate_id(plan.id)
+        return plan
+
+    def _load_plan_path(self, path: Path, plan_id: str) -> ChangePlan:
         plan = ChangePlan.model_validate_json(path.read_text("utf-8"))
         if checksum_for(plan.model_dump(mode="json")) != plan.checksum:
             raise ValidationError(
@@ -65,12 +77,23 @@ class PlanRepository:
             )
         return plan
 
-    def load_journal(self, plan_id: str) -> ChangeJournal:
+    def load_journal(self, plan_id: str, *, plan_file: Path | None = None) -> ChangeJournal:
         """Load a plan's journal, or a fresh pending one if none was written yet."""
         path = self._journal_path(plan_id)
+        if not path.exists() and plan_file is not None:
+            candidates = [plan_file.with_name(f"{plan_id}.journal.json")]
+            if plan_file.parent.name == "plans":
+                candidates.append(plan_file.parent.parent / "journals" / f"{plan_id}.json")
+            path = next((candidate for candidate in candidates if candidate.is_file()), path)
         if not path.exists():
             return ChangeJournal(plan_id=plan_id)
-        return ChangeJournal.model_validate_json(path.read_text("utf-8"))
+        journal = ChangeJournal.model_validate_json(path.read_text("utf-8"))
+        if journal.plan_id != plan_id:
+            raise ValidationError(
+                "Change journal does not match the plan",
+                details={"plan_id": plan_id},
+            )
+        return journal
 
     def save_journal(self, journal: ChangeJournal) -> None:
         """Atomically write the journal, replacing any previous version.

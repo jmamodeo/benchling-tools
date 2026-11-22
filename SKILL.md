@@ -151,11 +151,13 @@ benchlingtk results get RESULT_ID --env NAME
 benchlingtk blob get BLOB_ID --env NAME
 benchlingtk results tables etr_example --env NAME
 benchlingtk results rows docpart_example --limit 50 --cursor NEXT_TOKEN --env NAME
-benchlingtk results pending --plan PLAN_ID --env NAME
-benchlingtk results verify PLAN_ID --env NAME
+benchlingtk results pending --plan PLAN_ID_OR_FILE --env NAME
+benchlingtk results verify PLAN_ID_OR_FILE --env NAME
 ```
 
 `table get` reads an unstructured table. Its argument is a `docpart_…` id from `entry inspect`. `results tables` returns `table_id` values that are `strtbl_…` ids. `results rows` reads one page of a results-table part (`docpart_…`) from that part's rows URL; a `strtbl_…` id works only with `--entry ENTRY`, which maps it to that entry's part. `results get`, `results list --id` and `results pending --id` take either a V3 result id (`result_…`) or a V2 assay result UUID, and each record they return, like each `results verify` row, has both as `v3_id` and `v2_id` (`v2_id` is null when Benchling does not return it). When an id cannot be read, the error `details` give `id_namespace` (what was passed) and `lookup` (what was tried). `schema get` includes each dropdown field's options. `blob get` reads the metadata of the blob an attachment field links (name, type, MIME type, upload status); it takes that blob UUID, not an `attachment_…` id, and it does not download the file.
+
+`results pending --plan` and `results verify` accept either a plan ID in the current home or a path to a plan JSON file. To read results from another home, copy the plan and its applied journal; name the journal `<plan-id>.journal.json` and place it beside the plan. This transfers only the two needed files, not the whole config home. The active environment must still match the plan.
 
 ### Export
 
@@ -294,7 +296,9 @@ Results created through the API do not go straight into a notebook results table
 
 After a results create, tell the user, naming the entry and every submitted table: "Open entry X at LINK, go to results table Y, and click the plug icon in its toolbar to accept the pending results. Until you do, they do not show in the table and I cannot update them, because a results update needs a result that is on the entry. Refresh the page if the entry is already open." The apply response carries the same text in `next_step`, with the entry's `web_url` as the link, including partial or unconfirmed submissions where acceptance may be needed. Say it every time.
 
-Check, do not assume. `results pending --plan PLAN_ID` reads the plan's records back, including pending ones, and marks each `pending` or `accepted`; `needs_accept` lists the rows that still need the plug icon. `results verify PLAN_ID` diffs the pushed records against the plan field by field and reports mismatched, missing, and extra rows. Without a plan, use `results pending --id RESULT_ID` or `results pending --schema SCHEMA_ID --created-after TIME` (V2 has no entry filter, so that can include other entries' results). `results list --entry ENTRY` and `results rows PART_ID` do not show pending results. After acceptance they appear on the entry. Only then plan a results update. A result that is not on the entry is refused at plan time with "Result is not on the selected entry", and nothing is written.
+Check, do not assume. `results pending --plan PLAN_ID_OR_FILE` reads the plan's records back, including pending ones, and marks each `pending` or `accepted`; `needs_accept` lists the rows that still need the plug icon. `results verify PLAN_ID_OR_FILE` diffs the pushed records against the plan field by field and reports mismatched, missing, and extra rows. Without a plan, use `results pending --id RESULT_ID` or `results pending --schema SCHEMA_ID --created-after TIME` (V2 has no entry filter, so that can include other entries' results). `results list --entry ENTRY` and `results rows PART_ID` do not show pending results. After acceptance they appear on the entry. Only then plan a results update. A result that is not on the entry is refused at plan time with "Result is not on the selected entry", and nothing is written.
+
+For table rows, the [Benchling V3 API reference](https://docs.benchling.com/reference) defines `submissionStatus` values including `SUBMITTED`, `HAS_UNSUBMITTED_CHANGES`, and `UNEVALUATED`; the latter means the table has not been evaluated since its last write. `HAS_UNSUBMITTED_CHANGES` means the row has changes not yet submitted. `isSubmittable` separately says whether the row can be submitted in its current state. These API fields are not substitutes for checking whether an uploaded assay result is pending acceptance: the toolkit uses the result's entry association for its `pending`/`accepted` read-back state. In particular, do not infer the UI's "Submitted" label from `isSubmittable`, or treat `UNEVALUATED` as a submitted result.
 
 The accept control may insert every pending result that matches the table's schema, not only the ones just pushed. Do not create stray or test results against a table you care about.
 

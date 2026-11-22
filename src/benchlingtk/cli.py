@@ -1215,7 +1215,9 @@ async def results_rows(
 async def results_pending(
     call: Call,
     plan_id: str | None = typer.Option(
-        None, "--plan", help="Applied result upload plan ID; its journal gives the record IDs."
+        None,
+        "--plan",
+        help="Applied result upload plan ID in this home, or a portable plan JSON file.",
     ),
     result_ids: list[str] | None = typer.Option(
         None,
@@ -1264,7 +1266,9 @@ async def results_pending(
 @command(read_only=True)
 async def results_verify(
     call: Call,
-    plan_id: str = typer.Argument(..., help="Applied result upload plan ID in this environment."),
+    plan_id: str = typer.Argument(
+        ..., help="Applied result upload plan ID in this home, or a portable plan JSON file."
+    ),
     sample: int = typer.Option(
         20, "--sample", min=1, max=200, help="Rows to list per category, from 1 to 200."
     ),

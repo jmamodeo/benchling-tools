@@ -6,6 +6,7 @@ import asyncio
 import uuid
 from copy import deepcopy
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, NoReturn
 
 from filelock import FileLock
@@ -35,6 +36,11 @@ from .repository import checksum_for, json_diff
 from .result_update import request_is_result_update
 from .results import ResultsPlanning, pending_results_next_step, plan_entry_web_url
 from .table import TablePlanning
+
+
+def _is_result_creation_event(stage: str) -> bool:
+    """Recognize the current and legacy result-upload journal stage names."""
+    return stage in {"create_results", "submit_results"}
 
 
 def _with_http_status(details: dict[str, Any]) -> dict[str, Any]:
@@ -240,7 +246,7 @@ class ChangePlanner(
         for event in journal.events:
             table_id = event.details.get("table_id")
             if (
-                event.stage == "submit_results"
+                _is_result_creation_event(event.stage)
                 and event.status in {"succeeded", "unknown"}
                 and isinstance(table_id, str)
             ):
@@ -264,7 +270,7 @@ class ChangePlanner(
             for event in journal.events:
                 table_id = event.details.get("table_id")
                 if (
-                    event.stage == "submit_results"
+                    _is_result_creation_event(event.stage)
                     and event.status == "succeeded"
                     and isinstance(table_id, str)
                 ):
@@ -404,20 +410,29 @@ class ChangePlanner(
                     lock.release()
         return status
 
-    def _readback_plan(self, plan_id: str) -> tuple[ChangePlan, ChangeJournal]:
+    def _readback_plan(self, plan_reference: str) -> tuple[ChangePlan, ChangeJournal]:
         """Load an applied result upload plan for read-back in the active environment."""
-        plan = self.repository.load_plan(plan_id)
+        plan_file = Path(plan_reference)
+        if (
+            plan_file.is_file()
+            or plan_file.suffix.casefold() == ".json"
+            or plan_file.parent != Path(".")
+        ):
+            plan = self.repository.load_plan_file(plan_file)
+            journal = self.repository.load_journal(plan.id, plan_file=plan_file)
+        else:
+            plan = self.repository.load_plan(plan_reference)
+            journal = self.repository.load_journal(plan.id)
         self._check_plan_scope(plan)
         if plan.family != PlanFamily.RESULTS or plan.preconditions.get("operation") == "update":
             raise ValidationError(
                 "Only result upload plans can be read back",
-                details={"plan_id": plan_id, "family": plan.family.value},
+                details={"plan_id": plan.id, "family": plan.family.value},
             )
-        journal = self.repository.load_journal(plan_id)
         if journal.status == PlanStatus.PENDING:
             raise ValidationError(
                 "Plan has not been applied yet; run `changes apply` first",
-                details={"plan_id": plan_id, "status": journal.status.value},
+                details={"plan_id": plan.id, "status": journal.status.value},
             )
         return plan, journal
 
@@ -464,7 +479,10 @@ class ChangePlanner(
     def _unsubmitted_reason(journal: ChangeJournal, batch_index: int) -> str:
         """Why a planned batch has no task: the journal's submit outcome for it."""
         for event in journal.events:
-            if event.stage == "submit_results" and event.details.get("batch_index") == batch_index:
+            if (
+                _is_result_creation_event(event.stage)
+                and event.details.get("batch_index") == batch_index
+            ):
                 if event.status == "failed":
                     return "submission_failed"
                 if event.status == "unknown":
@@ -560,7 +578,7 @@ class ChangePlanner(
             response = {
                 "source": {
                     "mode": "plan",
-                    "plan_id": plan_id,
+                    "plan_id": plan.id,
                     "entry_id": plan.entry_id,
                     "web_url": plan_entry_web_url(plan),
                 },
@@ -694,7 +712,7 @@ class ChangePlanner(
         planned_count = sum(len(batch["records"]) for batch in batches)
         ok = not (totals["mismatched"] or totals["missing"] or totals["extra"])
         return {
-            "plan_id": plan_id,
+            "plan_id": plan.id,
             "entry_id": plan.entry_id,
             "web_url": plan_entry_web_url(plan),
             "ok": ok,
@@ -736,7 +754,7 @@ class ChangePlanner(
         prior_result = journal.result or {}
         for index, event in enumerate(journal.events):
             if (
-                event.stage != "submit_results"
+                not _is_result_creation_event(event.stage)
                 or event.status != "succeeded"
                 or not event.details.get("task_id")
             ):
