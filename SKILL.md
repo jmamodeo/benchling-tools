@@ -167,7 +167,7 @@ benchlingtk --env NAME export --kind assay-results --entry etr_example --schema 
 
 ## Preview, then apply
 
-One plan covers one existing-entry mutation, one entry creation, or one container operation. The families are `entry`, `document`, `table`, `fields`, `results`, and `containers`. For `entry`, pass `entry_template_id`, `folder_id`, and `name`; optional `schema_fields` are checked against the template's schema. Omit `--entry` for entry and container plans. Write the JSON specification to a file, then plan. `--spec -` reads that JSON from stdin, and `--spec-json TEXT` takes it inline. Pass only one of `--spec`, `--spec-json`, and `--csv`.
+One plan covers one existing-entry mutation, one entry creation, or one container operation. The families are `entry`, `document`, `table`, `fields`, `results`, and `containers`. For `entry`, pass `entry_template_id`, `folder_id`, and `name`; optional `schema_fields` are checked against the template's schema. Omit `--entry` for entry and container plans. Write the JSON spec to a file, then plan. `--spec -` reads that JSON from stdin, and `--spec-json TEXT` takes it inline. Pass only one of `--spec`, `--spec-json`, and `--csv`.
 
 ```console
 benchlingtk --env NAME changes plan --entry etr_example --family table --spec set-cells.json
@@ -185,7 +185,7 @@ After applying an entry plan, use the returned `entry_id` with `entry inspect` o
 
 Container create plans name a `schema_id`; transfer plans name a `source_container_id`, a `destination_container_id`, and `destination_contents` (using `entity_id`). Review the preview before `changes apply`. Create re-checks the schema and transfer re-checks both container modification timestamps. They are single-use plans, and uncertain writes are not retried.
 
-`examples/results-plate-reader.json`, `examples/results-multi-schema.json`, and `examples/results-invalid.json` are canned results specifications with synthetic IDs. They are for smoke tests against the offline fake API (`uv run pytest tests/test_examples.py`), not for a real tenant.
+`examples/results-plate-reader.json`, `examples/results-multi-schema.json`, and `examples/results-invalid.json` are canned results specs with synthetic IDs. They are for smoke tests against the offline fake API (`uv run pytest tests/test_examples.py`), not for a real tenant.
 
 Table, set cells. `examples/table-set-cells.json` is this shape. `table_part_id` is a `docpart_…` id.
 

@@ -12,6 +12,7 @@ from mcp import Client
 from typer.testing import CliRunner
 
 from benchlingtk import cli
+from benchlingtk.environment import EnvironmentConfigStore
 from benchlingtk.mcp_server import build_mcp_server
 
 TABLE_SPEC = {"operation": "append_rows", "table_part_id": TABLE_PART, "rows": [["D", "4"]]}
@@ -152,4 +153,34 @@ async def test_export_replies_match(cli_reply, mcp_reply, fake, tmp_path) -> Non
         "export", kind="table", part_id=TABLE_PART, format="csv", output=str(output), overwrite=True
     )
     assert printed == replied
+    assert fake.writes() == []
+
+
+async def test_unknown_entry_fails_with_the_same_envelope(cli_reply, mcp_reply, fake) -> None:
+    printed = await cli_reply("entry", "get", "EXP-99", "--full")
+    assert printed["ok"] is False, printed
+    assert printed == await mcp_reply("entry_get", reference="EXP-99", full=True)
+    assert fake.writes() == []
+
+
+async def test_protected_apply_refusal_has_the_same_code(cli_reply, pool, fake) -> None:
+    EnvironmentConfigStore().set_protected("sandbox", True)
+    printed_plan = await cli_reply(
+        "changes",
+        "plan",
+        "--entry",
+        ENTRY_ID,
+        "--family",
+        "table",
+        "--spec-json",
+        json.dumps(TABLE_SPEC),
+    )
+    plan_id = printed_plan["data"]["id"]
+    printed = await cli_reply("changes", "apply", plan_id)
+    async with Client(build_mcp_server(pool, writable_envs={"sandbox"})) as client:
+        result = await client.call_tool("changes_apply", {"env": "sandbox", "plan_id": plan_id})
+    replied = result.structured_content
+    assert printed["ok"] is replied["ok"] is False
+    assert printed["error"]["code"] == replied["error"]["code"] == "validation_error"
+    assert printed["error"]["details"] == replied["error"]["details"]
     assert fake.writes() == []

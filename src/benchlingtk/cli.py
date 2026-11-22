@@ -1185,11 +1185,11 @@ def _read_spec(path: str) -> dict[str, Any]:
         parsed = json.loads(raw)
     except (OSError, json.JSONDecodeError) as exc:
         raise ValidationError(
-            "Could not read change specification",
+            "Could not read change spec",
             details={"path": path, "reason": redact_text(str(exc))},
         ) from exc
     if not isinstance(parsed, dict):
-        raise ValidationError("Change specification must be a JSON object")
+        raise ValidationError("Change spec must be a JSON object")
     return parsed
 
 
@@ -1214,7 +1214,7 @@ def _parse_column_maps(column_map: list[str]) -> dict[str, str]:
 
 
 def _parse_spec_json(text: str) -> dict[str, Any]:
-    """Parse an inline --spec-json change specification."""
+    """Parse an inline --spec-json change spec."""
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -1222,7 +1222,7 @@ def _parse_spec_json(text: str) -> dict[str, Any]:
             "Could not parse --spec-json", details={"reason": redact_text(str(exc))}
         ) from exc
     if not isinstance(parsed, dict):
-        raise ValidationError("Change specification must be a JSON object")
+        raise ValidationError("Change spec must be a JSON object")
     return parsed
 
 
@@ -1291,7 +1291,7 @@ async def changes_plan(
     spec_json: str | None = typer.Option(
         None,
         "--spec-json",
-        help="The change specification as inline JSON text, instead of --spec or --csv.",
+        help="The change spec as inline JSON text, instead of --spec or --csv.",
     ),
     csv_path: str | None = typer.Option(
         None,
@@ -1311,11 +1311,11 @@ async def changes_plan(
 ) -> Any:
     """Create an immutable local preview of a change; nothing is written until it is applied.
 
-    CLI: Pass the specification as a file with --spec, or inline with --spec-json.
+    CLI: Pass the spec as a file with --spec, or inline with --spec-json.
 
-    MCP: spec is the change specification as a JSON object.
+    MCP: spec is the change spec as a JSON object.
 
-    The specification is a typed change, checked before any remote read; an
+    The spec is a typed change, checked before any remote read; an
     invalid one is a validation_error and nothing is written. Result updates can
     instead read a CSV file: --id-column names the result id, and each --map
     names a field by display name, system name, or field-definition id.

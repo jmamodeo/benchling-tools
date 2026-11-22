@@ -9,7 +9,7 @@ All notable changes to this project are documented here. The format is based on
 ### Added
 
 - CLI paging options that only the MCP tools had: `entry get --full` takes `--part-offset`, `--part-limit`, `--result-offset`, `--result-limit`, `--table-row-offset` and `--table-row-limit`; `section get` takes the part and table-row options; `part get` and `table get` take `--row-offset` and `--row-limit`; `schema get` takes `--field-offset` and `--field-limit`; and `results tables` takes `--offset` and `--limit`. Paged output has a `pagination` object.
-- `changes plan --spec-json TEXT` takes the change specification as inline JSON. Only one of `--spec`, `--spec-json`, and `--csv` may be passed.
+- `changes plan --spec-json TEXT` takes the change spec as inline JSON. Only one of `--spec`, `--spec-json`, and `--csv` may be passed.
 - Every MCP tool description ends with a generated write class: reads only; writes a local file or plan (`export`, `changes_plan`); or writes to Benchling (`changes_apply`), with its gating rule.
 
 ### Changed
