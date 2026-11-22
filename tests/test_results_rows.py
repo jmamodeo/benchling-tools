@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from fake_benchling import TENANT
+from fake_benchling import ENTRY_ID, TENANT
 
 from benchlingtk import services
 from benchlingtk.errors import NotFoundError, UpstreamError, ValidationError
@@ -266,3 +266,51 @@ def test_a_rejected_row_names_the_failing_check_part_and_row(row, check) -> None
     with pytest.raises(UpstreamError, match="invalid rows") as caught:
         services.normalize_table_row(row, require_text=False, part_id="docpart_x", position=0)
     assert caught.value.details == {"part_id": "docpart_x", "row_index": 0, "check": check}
+
+
+def _results_part(part_id: str, *, name: str, schema_id: str) -> dict:
+    return {
+        "id": part_id,
+        "__typename": "DocumentPartResultsTable",
+        "name": name,
+        "resultSchema": {"__typename": "ResultSchemaRef", "id": schema_id},
+    }
+
+
+async def test_results_rows_map_a_listed_table_id_to_its_document_part(runtime, fake) -> None:
+    fake.add_results_table()
+    fake.parts.append(_results_part(PART, name="Plate", schema_id="assaysch_abc123"))
+    page = await runtime.service.list_results_table_rows("strtbl_example", entry=ENTRY_ID, limit=2)
+    assert page["id"] == PART
+    assert page["table_id"] == "strtbl_example"
+    assert page["entry_id"] == ENTRY_ID
+    assert page["id_namespace"] == "v3_document_part"
+    assert page["listed_id_namespace"] == "v2_structured_table"
+    assert [row["id"] for row in page["items"]] == ["strow_1", "strow_2"]
+    assert not any("document-part-results-table/strtbl_" in call.path for call in fake.calls)
+    assert _row_calls(fake)[0].path.endswith(ROWS_PATH)
+    assert fake.writes() == []
+
+
+async def test_results_rows_need_an_entry_for_a_listed_table_id(runtime, fake) -> None:
+    with pytest.raises(ValidationError, match="--entry") as caught:
+        await runtime.service.list_results_table_rows("strtbl_example")
+    assert caught.value.details["id_namespace"] == "v2_structured_table"
+    assert caught.value.details["expected_id_namespace"] == "v3_document_part"
+    assert "results tables" in str(caught.value)
+    assert "entry inspect" in str(caught.value)
+    assert fake.calls == []
+
+
+async def test_results_rows_reject_a_listed_table_id_that_does_not_map(runtime, fake) -> None:
+    with pytest.raises(ValidationError, match="not found") as absent:
+        await runtime.service.list_results_table_rows("strtbl_missing", entry=ENTRY_ID)
+    assert absent.value.details["entry_id"] == ENTRY_ID
+    assert absent.value.details["id_namespace"] == "v2_structured_table"
+
+    fake.parts.append(_results_part("docpart_a", name="Plate A", schema_id="assaysch_abc123"))
+    fake.parts.append(_results_part("docpart_b", name="Plate B", schema_id="assaysch_abc123"))
+    with pytest.raises(ValidationError, match="single v3_document_part") as ambiguous:
+        await runtime.service.list_results_table_rows("strtbl_example", entry=ENTRY_ID)
+    assert ambiguous.value.details["expected_id_namespace"] == "v3_document_part"
+    assert not any("document-part-results-table" in call.path for call in fake.calls)
