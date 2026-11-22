@@ -44,6 +44,7 @@ from .redact import redact_text
 from .runtime import Runtime
 from .services import part_content
 from .skill import find_skill_md
+from .stale import annotate_rows, check_result_tables
 
 # Typer may vendor click, so take click's exception classes from one typer exports.
 _CLICK_USAGE_ERROR: Any = typer.BadParameter.__mro__[1]
@@ -1101,8 +1102,13 @@ async def results_get(
     """Get one result record by V3 result id (result_…) with V3 GET /result/{id}.
 
     For V2 assay result ids (UUIDs), including pending results, use results pending --id.
+    The record adds table_check: the results-table row on its entry that links it, and
+    whether that row's cells match the record (in_sync or stale). A stale cell adds
+    warnings; ask the person to use Re-sync table in the Benchling UI, which the API
+    cannot do. Reads only.
     """
-    return await call.runtime.service.get_result(result_id)
+    service = call.runtime.service
+    return await check_result_tables(service, await service.get_result(result_id))
 
 
 @blob_app.command("get")
@@ -1182,10 +1188,16 @@ async def results_rows(
     to the matching part on the --entry entry, and the response adds table_id and
     listed_id_namespace. It is a validation_error when --entry is missing or no
     single part matches. Pass the previous next_token with --cursor.
+
+    Each submitted row linked to a result is compared with that result record,
+    column by column through fieldDefinitionApiId. A row whose cell disagrees
+    carries warning and stale_cells, and the page carries warnings: the notebook
+    cell is stale, so ask the person to use Re-sync table in the Benchling UI,
+    which the API cannot do. stale_check counts compared and stale rows. Reads only.
     """
-    return await call.runtime.service.list_results_table_rows(
-        part_id, entry=entry, limit=limit, cursor=cursor
-    )
+    service = call.runtime.service
+    page = await service.list_results_table_rows(part_id, entry=entry, limit=limit, cursor=cursor)
+    return await annotate_rows(service, page)
 
 
 @results_app.command("pending")

@@ -186,6 +186,7 @@ flowchart TD
 | `change_spec.py` | Typed `changes_plan` specs and their validation |
 | `services.py` | Typed read services and entry snapshots |
 | `export.py` | Local JSON or CSV export; the response is a summary, not the rows |
+| `stale.py` | Compares results-table cells with their linked result records and warns that the table needs **Re-sync table** in the UI |
 | `listing.py` | Paged entry, schema, and dropdown discovery |
 | `plans/planner.py` | `ChangePlanner`: plan, apply (under a per-plan file lock), status, journal |
 | `plans/document.py`, `plans/table.py`, `plans/fields.py`, `plans/results.py` | One planning/apply mixin per change family |

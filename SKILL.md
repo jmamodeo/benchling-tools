@@ -311,7 +311,7 @@ Use the toolkit for every read, write, export and check. Use a browser only to s
    - `results verify PLAN_ID` is ok;
    - `results list --entry ENTRY` and `results rows PART_ID` now return the rows.
    Only then plan a results update.
-6. After a results update, run `results pending --id RESULT_ID`, then look at the table. If Benchling shows the change as pending, accept it the same way. Do not assume an updated accepted result stays accepted or goes pending again; check.
+6. After a results update, the result record changes, but its notebook results-table cell can keep showing the old value. Do not click the plug for this: the plug only accepts pending results after a create (steps 4 and 5). Run `results get RESULT_ID` and read `table_check`, or run `results rows PART_ID` and read each row's `stale_cells`. If `table_check.status` is `stale`, or the read carries `warnings`, the cell is stale: ask the person to open that table in Benchling and use **Re-sync table**. Re-syncing is UI-only, because the public API has no re-sync call. Run the read again afterwards and confirm `table_check.status` is `in_sync` and there are no `warnings`.
 7. After document or table writes, open the entry to confirm they render. Table formulas are re-evaluated only when the document is edited in the web app (Working with Tables, on docs.benchling.com), so a computed cell may show its input until then.
 
 In the browser, never sign, archive, delete, share or send for review. Never edit templates, schemas or settings, and never accept results in an entry you were not asked to work in.

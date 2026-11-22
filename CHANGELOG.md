@@ -14,6 +14,9 @@ All notable changes to this project are documented here. The format is based on
 - Every Benchling-id argument and option names its id namespace in its help, and so in the generated MCP tool descriptions: V3 result ids (`result_…`) for `results list` and `results get` versus V2 assay result UUIDs for `results pending --id`; `strtbl_…` from `results tables` versus `docpart_…` for `results rows`, `table get`, `part get` and `section get`; blob UUIDs versus `attachment_…` for `blob get`; and the entry (`etr_…`), folder (`lib_…`), project (`src_…`), template (`tmpl_…`), container (`con_…`) and result schema (`assaysch_…`) prefixes. `schema get` says which prefix selects which schema kind.
 - Every MCP tool description ends with a generated write class: reads only; writes a local file or plan (`export`, `changes_plan`); or writes to Benchling (`changes_apply`), with its gating rule.
 - A command line that does not parse (an unknown command or option, a missing argument or subcommand, or an invalid or out-of-range value) prints a JSON envelope on stdout with `error.code` `usage_error` and `command`, `usage`, and `help` in `error.details`, and exits 9 (`ExitCode.USAGE`).
+- `results rows` (MCP `results_rows`) detects stale results-table cells. After `PATCH /result/{id}`, a cell can keep the old value. Each submitted row that links a result is compared with that record. Each column is matched to its field through `fieldDefinitionApiId`. A row that disagrees carries `warning` and `stale_cells` (column, field-definition id, `table_value`, `result_value`). The page carries `stale_check` (`compared_rows`, `stale_rows`, `unreadable_results`), plus `warnings` telling the person to use **Re-sync table** in the Benchling UI. Each linked result is read once with `GET /result/{id}`. Rows with unsubmitted changes are not compared.
+- `results get` (MCP `results_get`) adds `table_check`. It finds the results-table row on the record's entry that links the result, and reports `in_sync`, `stale`, `not_compared`, `no_table_row`, `not_on_entry`, or `unavailable`. A stale row adds `warnings` with the same **Re-sync table** advice. This reads the entry's parts and its results tables of the record's schema.
+- Re-syncing a results table is documented as UI-only. The recorded V2 and V3 specs have no re-sync call, so no re-sync command is added.
 
 ### Changed
 
@@ -26,6 +29,10 @@ All notable changes to this project are documented here. The format is based on
 - **Breaking:** tool arguments follow the CLI flags. `changes_plan` takes `spec` (was `specification`), `export` takes `output` (was `path`), `issue_draft` takes `attempted`, `solution`, and matching `cite_url` and `cite_quote` lists (were `attempted_action`, `proposed_solution`, and `citations`), and `results_list` takes `page_size`. `auth_status` returns the same rows as `benchlingtk auth status`, plus `writes_allowed`.
 - `doctor` and the `doctor` tool return an `authentication_error` envelope, with the checks in `details`, when a check fails. CLI failures after the environment was opened carry `env` and `tenant_url` in `meta`, as MCP failures do. An out-of-range paging argument on a tool is a `validation_error` envelope.
 - Every CLI argument and option has help text.
+
+### Fixed
+
+- SKILL.md step 6 no longer says to accept an updated result with the plug icon. After a results update, the agent checks `results get` `table_check` or `results rows` `stale_cells`. If a cell is stale, it asks the person to use **Re-sync table** in the Benchling UI. The plug stays documented only for accepting pending results after a create.
 
 ## [0.6.0] - 2026-11-21
 
