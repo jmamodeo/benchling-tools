@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from conftest import runtime_for
 from fake_benchling import ENTRY_ID, TABLE_PART, TEXT_PART, entry_web_url
-from mcp import Client
+from mcp.shared.memory import create_connected_server_and_client_session as Client
 
 from benchlingtk.errors import AuthenticationError, ValidationError
 from benchlingtk.mcp_server import build_mcp_server, run_mcp_server
@@ -47,8 +47,8 @@ READ_TOOLS = {
 
 async def call(client, tool_name, **arguments):
     result = await client.call_tool(tool_name, arguments)
-    assert result.is_error is False, result
-    payload = result.structured_content
+    assert result.isError is False, result
+    payload = result.structuredContent
     assert set(payload) == {"schema_version", "ok", "data", "error", "meta"}
     return payload
 
@@ -64,11 +64,11 @@ class Session:
         self.server = server
 
     async def call_tool(self, name, arguments):
-        async with Client(self.server) as active:
+        async with Client(self.server._mcp_server) as active:
             return await active.call_tool(name, arguments)
 
     async def list_tools(self):
-        async with Client(self.server) as active:
+        async with Client(self.server._mcp_server) as active:
             return await active.list_tools()
 
 
@@ -92,20 +92,20 @@ async def test_tools_are_annotated_by_whether_they_can_write(client) -> None:
         "issue_draft",
     } == set(tools)
     for name in READ_TOOLS:
-        assert tools[name].annotations.read_only_hint is True, name
-    assert tools["changes_apply"].annotations.destructive_hint is True
-    assert tools["changes_plan"].annotations.read_only_hint is False
-    assert tools["changes_plan"].annotations.destructive_hint is False
-    assert tools["export"].annotations.read_only_hint is False
-    assert tools["export"].annotations.destructive_hint is False
-    assert tools["blob_download"].annotations.read_only_hint is False
-    assert tools["blob_download"].annotations.destructive_hint is False
-    schema = tools["doctor"].output_schema
+        assert tools[name].annotations.readOnlyHint is True, name
+    assert tools["changes_apply"].annotations.destructiveHint is True
+    assert tools["changes_plan"].annotations.readOnlyHint is False
+    assert tools["changes_plan"].annotations.destructiveHint is False
+    assert tools["export"].annotations.readOnlyHint is False
+    assert tools["export"].annotations.destructiveHint is False
+    assert tools["blob_download"].annotations.readOnlyHint is False
+    assert tools["blob_download"].annotations.destructiveHint is False
+    schema = tools["doctor"].outputSchema
     assert schema["properties"]["schema_version"]["const"] == "1.0"
     assert "ok" in schema["required"]
-    assert tools["issue_draft"].annotations.read_only_hint is True
+    assert tools["issue_draft"].annotations.readOnlyHint is True
     for name in set(tools) - {"auth_status", "issue_draft"}:
-        assert "env" in tools[name].input_schema["required"], name
+        assert "env" in tools[name].inputSchema["required"], name
 
 
 async def test_skill_md_lists_every_mcp_tool(client) -> None:
@@ -158,7 +158,7 @@ async def test_blob_download_tool(client, fake, tmp_path) -> None:
 
 async def test_missing_env_argument_is_a_protocol_error(client) -> None:
     result = await client.call_tool("entry_get", {"reference": ENTRY_ID})
-    assert result.is_error is True
+    assert result.isError is True
 
 
 async def test_entry_creation_preview_stays_read_only_until_enabled_apply(
@@ -676,7 +676,7 @@ async def test_plan_validation_errors_are_enveloped(client, fake) -> None:
         "changes_plan",
         {"env": "sandbox", "entry": ENTRY_ID, "family": "magic", "spec": {}},
     )
-    assert bad_family.is_error is True
+    assert bad_family.isError is True
 
 
 async def test_apply_changes_when_writes_are_enabled(writer, fake) -> None:
@@ -775,8 +775,8 @@ async def test_list_entries_is_read_only_and_routes_folder_filters_to_v2(client,
         "entry_list",
         {"env": "sandbox", "folder": "lib_abc123", "name": "Late note", "limit": 10},
     )
-    assert result.is_error is False, result
-    payload = result.structured_content
+    assert result.isError is False, result
+    payload = result.structuredContent
     assert set(payload) == {"schema_version", "ok", "data", "error", "meta"}
     data = payload["data"]
     assert [item["id"] for item in data["items"]] == ["etr_list4"]
@@ -842,7 +842,7 @@ async def test_tool_descriptions_name_id_namespaces(client) -> None:
     }
     for name, tokens in expected.items():
         text = json.dumps(
-            {"description": tools[name].description, "schema": tools[name].input_schema}
+            {"description": tools[name].description, "schema": tools[name].inputSchema}
         )
         for token in tokens:
             assert token in text, (name, token)
@@ -921,21 +921,21 @@ async def test_get_schema_includes_dropdown_options(client, fake) -> None:
 def test_serve_runs_stdio_transport_with_validated_writable_envs(
     benchling_env, monkeypatch
 ) -> None:
-    from mcp.server.mcpserver import MCPServer
+    from mcp.server.fastmcp import FastMCP
 
     seen: list[str] = []
-    monkeypatch.setattr(MCPServer, "run", lambda self, transport: seen.append(transport))
+    monkeypatch.setattr(FastMCP, "run", lambda self, transport: seen.append(transport))
     run_mcp_server(writable_envs={"sandbox"})
     assert seen == ["stdio"]
 
 
 def test_closed_loop_on_shutdown_is_not_a_startup_failure(benchling_env, monkeypatch) -> None:
-    from mcp.server.mcpserver import MCPServer
+    from mcp.server.fastmcp import FastMCP
 
     from benchlingtk.mcp_server import _close_pool, _closed_event_loop
 
     monkeypatch.setattr(
-        MCPServer,
+        FastMCP,
         "run",
         lambda self, transport: (_ for _ in ()).throw(RuntimeError("Event loop is closed")),
     )
@@ -947,7 +947,7 @@ def test_closed_loop_on_shutdown_is_not_a_startup_failure(benchling_env, monkeyp
             close()
         raise RuntimeError("Event loop is closed")
 
-    monkeypatch.setattr(MCPServer, "run", lambda self, transport: None)
+    monkeypatch.setattr(FastMCP, "run", lambda self, transport: None)
     monkeypatch.setattr("benchlingtk.mcp_server.asyncio.run", close_raises)
     run_mcp_server()
 
@@ -1125,12 +1125,12 @@ async def test_every_tool_parameter_has_a_description(client) -> None:
     tools = (await client.list_tools()).tools
     assert tools
     for tool in tools:
-        properties = tool.input_schema.get("properties", {})
+        properties = tool.inputSchema.get("properties", {})
         for name, prop in properties.items():
             description = prop.get("description")
             assert isinstance(description, str) and description.strip(), (tool.name, name)
     plan = next(tool for tool in tools if tool.name == "changes_plan")
-    specification = plan.input_schema["properties"]["spec"]
+    specification = plan.inputSchema["properties"]["spec"]
     assert "anyOf" in specification
     assert specification.get("additionalProperties") is not True
     encoded = json.dumps(specification)
@@ -1160,7 +1160,7 @@ async def test_every_tool_parameter_has_a_description(client) -> None:
     for name, prop in described:
         description = prop.get("description")
         assert isinstance(description, str) and description.strip(), name
-    family = plan.input_schema["$defs"]["PlanFamily"]
+    family = plan.inputSchema["$defs"]["PlanFamily"]
     assert set(family["enum"]) == {
         "entry",
         "document",
@@ -1334,10 +1334,10 @@ async def test_tool_text_comes_from_cli_help(client) -> None:
         tool = tools["_".join(path).replace("-", "_")]
         summary = declared.doc.split("\n")[0]
         assert tool.description.split("\n")[0] == _tool_text(summary, command), path
-        properties = tool.input_schema.get("properties", {})
+        properties = tool.inputSchema.get("properties", {})
         for param in command.params:
             if param.name == "env" and declared.needs_env:
-                assert "env" in tool.input_schema["required"], path
+                assert "env" in tool.inputSchema["required"], path
                 continue
             if param.name in declared.cli_only or param.name in declared.mcp_params:
                 assert param.name not in properties or param.name in declared.mcp_params
@@ -1353,10 +1353,10 @@ async def test_tool_text_comes_from_cli_help(client) -> None:
                 if option.startswith("--"):
                     assert option not in tool.description, (path, option)
     apply = tools["changes_apply"]
-    assert "confirm_env" not in apply.input_schema.get("required", [])
-    assert "person has confirmed" in apply.input_schema["properties"]["confirm_env"]["description"]
+    assert "confirm_env" not in apply.inputSchema.get("required", [])
+    assert "person has confirmed" in apply.inputSchema["properties"]["confirm_env"]["description"]
     assert "only after the person has confirmed" in apply.description
-    assert "spec_json" not in tools["changes_plan"].input_schema["properties"]
+    assert "spec_json" not in tools["changes_plan"].inputSchema["properties"]
 
 
 def test_a_command_without_a_declaration_fails_the_build(pool, monkeypatch) -> None:

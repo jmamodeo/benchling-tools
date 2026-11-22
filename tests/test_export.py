@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 from conftest import runtime_for
 from fake_benchling import ENTRY_ID, TABLE_PART, TENANT, text_cell
-from mcp import Client
+from mcp.shared.memory import create_connected_server_and_client_session as Client
 from typer.testing import CliRunner
 
 from benchlingtk import cli
@@ -1491,7 +1491,7 @@ class _Session:
         self.server = server
 
     async def call_tool(self, name, arguments):
-        async with Client(self.server) as active:
+        async with Client(self.server._mcp_server) as active:
             return await active.call_tool(name, arguments)
 
 
@@ -1510,8 +1510,8 @@ async def test_mcp_export_returns_a_summary_and_does_not_write_remotely(
             "entry": ENTRY_ID,
         },
     )
-    assert result.is_error is False
-    payload = result.structured_content
+    assert result.isError is False
+    payload = result.structuredContent
     assert payload["ok"] is True
     assert payload["meta"]["env"] == "sandbox"
     assert payload["data"]["row_count"] == 3
@@ -1524,8 +1524,8 @@ async def test_mcp_export_returns_a_summary_and_does_not_write_remotely(
         "export",
         {"env": "sandbox", "kind": "nope", "output": str(tmp_path / "no.json"), "format": "json"},
     )
-    assert blocked.is_error is False
-    assert blocked.structured_content["error"]["code"] == "validation_error"
+    assert blocked.isError is False
+    assert blocked.structuredContent["error"]["code"] == "validation_error"
     assert not (tmp_path / "no.json").exists()
 
     existing = await session.call_tool(
@@ -1537,5 +1537,5 @@ async def test_mcp_export_returns_a_summary_and_does_not_write_remotely(
             "format": "json",
         },
     )
-    assert existing.structured_content["error"]["code"] == "validation_error"
+    assert existing.structuredContent["error"]["code"] == "validation_error"
     assert json.loads(path.read_text(encoding="utf-8"))["rows"][0]["id"] == "result_1"

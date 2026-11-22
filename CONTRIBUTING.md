@@ -19,17 +19,11 @@ uv run ruff check .      # must pass; use --fix for mechanical fixes
 uv run mypy              # must pass; strict-ish config in pyproject.toml
 ```
 
-After changing code or tests, refresh the README coverage badge from the latest `pytest --cov` run:
-
-```console
-uv run python scripts/update_coverage_badge.py
-```
-
 Add or update tests for behavior you change. Tests must stay offline and use mocked HTTP.
 
 The test suite is fully offline and needs no credentials. It runs the real client, services, planner, CLI and MCP server against a stateful in-process fake of the Benchling API (`tests/fake_benchling.py`).
 
-The suite has 503 test functions (788 collected cases, parametrization included) and reaches 96% branch coverage. CI enforces a `fail_under` floor of 96% in `pyproject.toml`, and also builds the sdist and wheel, runs `twine check`, and smoke-tests the built wheel. CI installs `skills-ref` 0.1.1 and runs its `agentskills validate` command on this directory.
+CI enforces a 96% branch coverage floor, tests native keyrings on macOS and Windows, builds the sdist and wheel, runs `twine check`, and smoke-tests the built wheel. CI installs `skills-ref` 0.1.1 and runs its `agentskills validate` command on this directory.
 
 ## OpenAPI drift check
 

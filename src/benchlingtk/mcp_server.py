@@ -62,28 +62,19 @@ INSTRUCTIONS = (
 )
 
 if TYPE_CHECKING:
-    from mcp.server.mcpserver import MCPServer
+    from mcp.server.fastmcp import FastMCP
     from mcp.types import ToolAnnotations
 
 
 def _annotations(read_only: bool, destructive: bool = False) -> ToolAnnotations:
     from mcp.types import ToolAnnotations
 
-    values: dict[str, Any] = {
-        "readOnlyHint": read_only,
-        "destructiveHint": destructive,
-        "idempotentHint": read_only,
-        "openWorldHint": True,
-    }
-    try:
-        return ToolAnnotations(**values)
-    except Exception:
-        return ToolAnnotations(
-            read_only_hint=read_only,
-            destructive_hint=destructive,
-            idempotent_hint=read_only,
-            open_world_hint=True,
-        )
+    return ToolAnnotations(
+        readOnlyHint=read_only,
+        destructiveHint=destructive,
+        idempotentHint=read_only,
+        openWorldHint=True,
+    )
 
 
 def _closed_event_loop(exc: BaseException) -> bool:
@@ -280,7 +271,7 @@ def build_mcp_server(
     writable_envs: set[str] | frozenset[str] = frozenset(),
     verbose: bool = False,
     lifespan: Any = None,
-) -> MCPServer:
+) -> FastMCP:
     """Create the MCP server with one tool per CLI command.
 
     changes_apply works only for envs in writable_envs. Request logging is off
@@ -288,14 +279,11 @@ def build_mcp_server(
     library traffic, which hides startup failures. Raises TypeError when a CLI
     command is neither declared nor marked cli_only.
     """
-    try:
-        from mcp.server.mcpserver import MCPServer
-    except ImportError:  # pragma: no cover - compatibility with MCP 1.x
-        from mcp.server.fastmcp import FastMCP as MCPServer  # type: ignore[no-redef, attr-defined]  # FastMCP exists only in mcp 1.x
+    from mcp.server.fastmcp import FastMCP
 
     from .cli import app
 
-    mcp = MCPServer(
+    mcp = FastMCP(
         "Benchling",
         instructions=INSTRUCTIONS,
         log_level="DEBUG" if verbose else "WARNING",
@@ -327,7 +315,7 @@ def build_mcp_server(
 SKILL_RESOURCE_URI = "skill://benchlingtk/SKILL.md"
 
 
-def _register_skill_resource(mcp: MCPServer) -> None:
+def _register_skill_resource(mcp: FastMCP) -> None:
     """Register the packaged SKILL.md as a read-only resource. It needs no environment."""
 
     @mcp.resource(

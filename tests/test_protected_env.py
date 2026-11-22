@@ -8,7 +8,7 @@ import httpx
 import pytest
 from conftest import configure_env, runtime_for
 from fake_benchling import ENTRY_ID, TABLE_PART, TEXT_PART, FakeBenchling
-from mcp import Client
+from mcp.shared.memory import create_connected_server_and_client_session as Client
 from typer.testing import CliRunner
 
 from benchlingtk import cli
@@ -199,10 +199,10 @@ def test_damaged_protected_flag_fails_closed() -> None:
 
 
 async def _mcp_call(server, tool: str, **arguments):
-    async with Client(server) as client:
+    async with Client(server._mcp_server) as client:
         result = await client.call_tool(tool, arguments)
-    assert result.is_error is False, result
-    return result.structured_content
+    assert result.isError is False, result
+    return result.structuredContent
 
 
 async def test_mcp_apply_on_protected_env_needs_allow_writes(pool, fake) -> None:
