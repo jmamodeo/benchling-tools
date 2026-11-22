@@ -121,7 +121,7 @@ def test_doctor_and_auth_status_show_protection(invoke) -> None:
     assert doctor["data"]["protected"] is True
     assert doctor["data"]["protection"] == (
         "protected: `changes apply` needs `--env sandbox --confirm-env sandbox`; "
-        "MCP `changes_apply` needs `--allow-writes sandbox`"
+        "MCP `changes_apply` needs `--allow-writes sandbox` and `confirm_env=sandbox`"
     )
     result = CliRunner().invoke(cli.app, ["auth", "status"])
     assert json.loads(result.stdout)["data"]["environments"]["sandbox"]["protected"] is True
@@ -231,6 +231,40 @@ async def test_mcp_apply_on_protected_env_needs_allow_writes(pool, fake) -> None
     assert fake.writes() == []
 
     writer = build_mcp_server(pool, writable_envs={"sandbox"})
+    missing = await _mcp_call(writer, "changes_apply", env="sandbox", plan_id=plan_id)
+    assert missing["error"]["code"] == "validation_error"
+    assert "confirm_env set to sandbox" in missing["error"]["message"]
+    assert missing["error"]["details"] == {"env": "sandbox", "protected": True}
+    mismatched = await _mcp_call(
+        writer, "changes_apply", env="sandbox", plan_id=plan_id, confirm_env="prod"
+    )
+    assert mismatched["error"]["code"] == "validation_error"
+    assert "confirm_env does not match env sandbox" in mismatched["error"]["message"]
+    assert fake.writes() == []
+
+    applied = await _mcp_call(
+        writer, "changes_apply", env="sandbox", plan_id=plan_id, confirm_env="sandbox"
+    )
+    assert applied["ok"] is True, applied
+    assert len(fake.writes()) == 1
+
+
+async def test_mcp_apply_on_unprotected_env_refuses_a_mismatched_confirmation(pool, fake) -> None:
+    writer = build_mcp_server(pool, writable_envs={"sandbox"})
+    planned = await _mcp_call(
+        writer,
+        "changes_plan",
+        env="sandbox",
+        entry=ENTRY_ID,
+        family="table",
+        spec={"operation": "append_rows", "table_part_id": TABLE_PART, "rows": [["D", "4"]]},
+    )
+    plan_id = planned["data"]["id"]
+    mismatched = await _mcp_call(
+        writer, "changes_apply", env="sandbox", plan_id=plan_id, confirm_env="prod"
+    )
+    assert mismatched["error"]["code"] == "validation_error"
+    assert fake.writes() == []
     applied = await _mcp_call(writer, "changes_apply", env="sandbox", plan_id=plan_id)
     assert applied["ok"] is True, applied
 

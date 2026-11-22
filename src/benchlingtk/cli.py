@@ -1213,16 +1213,32 @@ def _parse_column_maps(column_map: list[str]) -> dict[str, str]:
     return mapped
 
 
+def _parse_spec_json(text: str) -> dict[str, Any]:
+    """Parse an inline --spec-json change specification."""
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValidationError(
+            "Could not parse --spec-json", details={"reason": redact_text(str(exc))}
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise ValidationError("Change specification must be a JSON object")
+    return parsed
+
+
 def _plan_request(
     family: PlanFamily,
     spec: str | dict[str, Any] | None,
     csv_path: str | None,
     id_column: str | None,
     column_map: list[str],
+    spec_json: str | None = None,
 ) -> dict[str, Any]:
-    """Choose the spec (a file path, or an object from MCP) or the CSV result-update flags."""
-    if csv_path is not None and spec is not None:
-        raise ValidationError("Pass either --spec or --csv, not both")
+    """Choose the spec (a file path, inline JSON, or an MCP object) or the CSV flags."""
+    if sum(value is not None for value in (spec, spec_json, csv_path)) > 1:
+        raise ValidationError("Pass only one of --spec, --spec-json, or --csv")
+    if spec_json is not None:
+        spec = _parse_spec_json(spec_json)
     if csv_path is not None:
         if family != PlanFamily.RESULTS:
             raise ValidationError("CSV result updates require the results family")
@@ -1235,7 +1251,9 @@ def _plan_request(
     if column_map or id_column is not None:
         raise ValidationError("--id-column and --map require --csv")
     if spec is None:
-        raise ValidationError("A change plan needs --spec, or --csv with --id-column and --map")
+        raise ValidationError(
+            "A change plan needs --spec or --spec-json, or --csv with --id-column and --map"
+        )
     return spec if isinstance(spec, dict) else _read_spec(spec)
 
 
@@ -1258,7 +1276,7 @@ _SPECIFICATION = McpParam(
 
 
 @changes_app.command("plan")
-@command(read_only=False, mcp_params={"spec": _SPECIFICATION})
+@command(read_only=False, cli_only=("spec_json",), mcp_params={"spec": _SPECIFICATION})
 async def changes_plan(
     call: Call,
     entry: str | None = typer.Option(
@@ -1270,6 +1288,11 @@ async def changes_plan(
         help="Change family: entry, document, table, fields, results, or containers.",
     ),
     spec: str | None = typer.Option(None, "--spec", help="JSON file path, or '-' for stdin."),
+    spec_json: str | None = typer.Option(
+        None,
+        "--spec-json",
+        help="The change specification as inline JSON text, instead of --spec or --csv.",
+    ),
     csv_path: str | None = typer.Option(
         None,
         "--csv",
@@ -1288,7 +1311,11 @@ async def changes_plan(
 ) -> Any:
     """Create an immutable local preview of a change; nothing is written until it is applied.
 
-    --spec is a typed change specification, checked before any remote read; an
+    CLI: Pass the specification as a file with --spec, or inline with --spec-json.
+
+    MCP: spec is the change specification as a JSON object.
+
+    The specification is a typed change, checked before any remote read; an
     invalid one is a validation_error and nothing is written. Result updates can
     instead read a CSV file: --id-column names the result id, and each --map
     names a field by display name, system name, or field-definition id.
@@ -1311,19 +1338,22 @@ async def changes_plan(
         raise ValidationError("Entry creation plans must not specify --entry")
     if family not in (PlanFamily.ENTRY, PlanFamily.CONTAINERS) and entry is None:
         raise ValidationError("This change family requires --entry")
-    request = _plan_request(family, spec, csv_path, id_column, column_map)
+    request = _plan_request(family, spec, csv_path, id_column, column_map, spec_json)
     return await call.runtime.planner.plan(entry, family, request)
 
 
 @changes_app.command("apply")
-@command(read_only=False, destructive=True, cli_only=("confirm_env",))
+@command(read_only=False, destructive=True)
 async def changes_apply(
     call: Call,
     plan_id: str = typer.Argument(..., help="ID of a plan created in this environment."),
     confirm_env: str | None = typer.Option(
         None,
         "--confirm-env",
-        help="Repeat the --env name. Required to apply to a protected environment.",
+        help=(
+            "Repeat the --env name. Required to apply to a protected environment; "
+            "set it only after the person has confirmed that environment name."
+        ),
     ),
 ) -> Any:
     """Apply a previously previewed plan, re-checking its preconditions first.
@@ -1331,8 +1361,11 @@ async def changes_apply(
     CLI: A protected environment is refused unless --env names it on the command
     line and --confirm-env repeats the same name.
 
-    MCP: Writes need env in the server's --allow-writes list; a protected env is
-    refused with a message saying so, and only a restart can enable it.
+    MCP: Writes need env in the server's --allow-writes list; a protected env
+    that is not listed is refused with a message saying so, and only a restart
+    can enable it. A protected env also needs confirm_env equal to env. Set
+    confirm_env only after the person has confirmed that environment name for
+    this plan; never guess it or copy it from env.
 
     Entry creation returns the new entry ID and web_url (its Benchling web-app
     link, or null). A results upload also returns the entry's web_url; relay

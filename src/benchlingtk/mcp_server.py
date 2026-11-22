@@ -19,6 +19,7 @@ import typer
 from pydantic import Field, JsonValue
 
 from .commands import CLI_ONLY_ATTR, TOOL_ATTR, Call, Command, rename_flags, surface_text
+from .environment import check_apply_allowed
 from .errors import (
     AuthenticationError,
     BenchlingAgentError,
@@ -124,7 +125,7 @@ class McpCall(Call):
         return self._writable_envs
 
     def authorize_apply(self, confirm_env: str | None) -> None:
-        """Allow writes only in envs the server was started with --allow-writes for."""
+        """Allow writes only in --allow-writes envs; a protected env also needs confirm_env."""
         environment = self.runtime.environment
         name = environment.name
         protected = environment.protected or self.pool.config.saved_protection(name)
@@ -140,6 +141,12 @@ class McpCall(Call):
                 f"MCP writes are disabled for {name}; restart with "
                 f"`benchlingtk mcp serve --allow-writes {name}`"
             )
+        check_apply_allowed(
+            environment.model_copy(update={"protected": protected}),
+            env_on_command_line=True,
+            confirm_env=confirm_env,
+            surface="mcp",
+        )
 
 
 def cli_commands(group: Any, path: tuple[str, ...] = ()) -> Iterator[tuple[tuple[str, ...], Any]]:
@@ -154,6 +161,35 @@ def cli_commands(group: Any, path: tuple[str, ...] = ()) -> Iterator[tuple[tuple
 def tool_name(path: tuple[str, ...]) -> str:
     """The tool name for a command path: ``entry bulk-get`` is ``entry_bulk_get``."""
     return "_".join(path).replace("-", "_")
+
+
+WRITE_CLASS_NOTES = {
+    "read": (
+        "Write class: reads only. Nothing is written to Benchling, and no file or plan "
+        "is created. Works without --allow-writes."
+    ),
+    "local": (
+        "Write class: writes a local file or plan. Benchling is only read. Works "
+        "without --allow-writes."
+    ),
+    "benchling": (
+        "Write class: writes to Benchling. Refused unless the server was started with "
+        "--allow-writes for env; a protected env also needs confirm_env equal to env, "
+        "set only after the person confirms that environment name."
+    ),
+}
+
+
+def write_class(declared: Command) -> str:
+    """read, local, or benchling: what a call to this command can write."""
+    if declared.destructive:
+        return "benchling"
+    return "read" if declared.read_only else "local"
+
+
+def write_class_note(declared: Command) -> str:
+    """The generated last paragraph of every tool description."""
+    return WRITE_CLASS_NOTES[write_class(declared)]
 
 
 def _flag_names(command: Any) -> dict[str, str]:
@@ -277,7 +313,11 @@ def build_mcp_server(
         mcp.add_tool(
             _tool_function(name, declared, flags, pool, allowed),
             name=name,
-            description=rename_flags(surface_text(declared.doc, "mcp"), flags),
+            description=(
+                rename_flags(surface_text(declared.doc, "mcp"), flags)
+                + "\n\n"
+                + write_class_note(declared)
+            ),
             annotations=_annotations(declared.read_only, declared.destructive),
         )
     _register_skill_resource(mcp)

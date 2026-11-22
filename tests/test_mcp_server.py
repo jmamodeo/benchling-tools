@@ -1249,8 +1249,11 @@ async def test_tool_text_comes_from_cli_help(client) -> None:
             for option in param.opts:
                 if option.startswith("--"):
                     assert option not in tool.description, (path, option)
-    assert "confirm_env" not in tools["changes_apply"].input_schema["properties"]
-    assert "confirm" not in tools["changes_apply"].description
+    apply = tools["changes_apply"]
+    assert "confirm_env" not in apply.input_schema.get("required", [])
+    assert "person has confirmed" in apply.input_schema["properties"]["confirm_env"]["description"]
+    assert "only after the person has confirmed" in apply.description
+    assert "spec_json" not in tools["changes_plan"].input_schema["properties"]
 
 
 def test_a_command_without_a_declaration_fails_the_build(pool, monkeypatch) -> None:
@@ -1300,3 +1303,19 @@ async def test_plan_entry_rules_are_validation_envelopes(client, fake, arguments
     assert payload["error"]["code"] == "validation_error"
     assert message in payload["error"]["message"]
     assert fake.writes() == []
+
+
+async def test_every_tool_description_ends_with_its_write_class(client) -> None:
+    from benchlingtk.mcp_server import WRITE_CLASS_NOTES
+
+    tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+    expected = {name: "read" for name in READ_TOOLS | {"issue_draft"}}
+    expected.update(export="local", changes_plan="local", changes_apply="benchling")
+    assert set(expected) == set(tools)
+    for name, tool in tools.items():
+        note = tool.description.rsplit("\n\n", 1)[-1]
+        assert note == WRITE_CLASS_NOTES[expected[name]], name
+    assert "reads only" in tools["entry_get"].description
+    assert "writes a local file or plan" in tools["export"].description
+    assert "writes to Benchling" in tools["changes_apply"].description
+    assert "--allow-writes for env" in tools["changes_apply"].description

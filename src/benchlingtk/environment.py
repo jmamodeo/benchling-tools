@@ -38,7 +38,7 @@ def protection_summary(environment: Environment) -> str:
     if environment.protected:
         return (
             f"protected: `changes apply` needs `--env {name} --confirm-env {name}`; "
-            f"MCP `changes_apply` needs `--allow-writes {name}`"
+            f"MCP `changes_apply` needs `--allow-writes {name}` and `confirm_env={name}`"
         )
     return (
         f"not protected: `changes apply` needs `--env {name}`; "
@@ -47,21 +47,29 @@ def protection_summary(environment: Environment) -> str:
 
 
 def check_apply_allowed(
-    environment: Environment, *, env_on_command_line: bool, confirm_env: str | None
+    environment: Environment,
+    *,
+    env_on_command_line: bool,
+    confirm_env: str | None,
+    surface: str = "cli",
 ) -> None:
-    """Refuse a CLI apply to a protected environment unless it is named and confirmed.
+    """Refuse an apply to a protected environment unless it is named and confirmed.
 
-    The environment must come from ``--env`` on the command line, and
-    ``--confirm-env`` must repeat the same name. A ``--confirm-env`` that names
-    another environment is refused even when the target is not protected.
+    On the CLI the environment must come from ``--env`` on the command line, and
+    ``--confirm-env`` must repeat the same name. Over MCP, ``confirm_env`` must
+    equal the tool's ``env``. A confirmation that names another environment is
+    refused even when the target is not protected.
     """
     name = environment.name
     details: dict[str, Any] = {"env": name, "protected": environment.protected}
+    mcp = surface == "mcp"
     if confirm_env is not None and confirm_env != name:
-        raise ValidationError(
-            f"--confirm-env does not match --env {name}; nothing was applied",
-            details=details,
+        message = (
+            f"confirm_env does not match env {name}; nothing was applied"
+            if mcp
+            else f"--confirm-env does not match --env {name}; nothing was applied"
         )
+        raise ValidationError(message, details=details)
     if not environment.protected:
         return
     if not env_on_command_line:
@@ -70,11 +78,15 @@ def check_apply_allowed(
             details=details,
         )
     if confirm_env is None:
-        raise ValidationError(
-            f"Environment {name} is protected; nothing was applied. To write, rerun "
-            f"`benchlingtk --env {name} changes apply PLAN_ID --confirm-env {name}`",
-            details=details,
+        message = (
+            f"Environment {name} is protected; nothing was applied. Ask the person to "
+            f"confirm the environment name, then call changes_apply again with "
+            f"confirm_env set to {name}"
+            if mcp
+            else f"Environment {name} is protected; nothing was applied. To write, rerun "
+            f"`benchlingtk --env {name} changes apply PLAN_ID --confirm-env {name}`"
         )
+        raise ValidationError(message, details=details)
 
 
 def write_private(path: Path, text: str) -> None:

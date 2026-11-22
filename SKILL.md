@@ -167,7 +167,7 @@ benchlingtk --env NAME export --kind assay-results --entry etr_example --schema 
 
 ## Preview, then apply
 
-One plan covers one existing-entry mutation, one entry creation, or one container operation. The families are `entry`, `document`, `table`, `fields`, `results`, and `containers`. For `entry`, pass `entry_template_id`, `folder_id`, and `name`; optional `schema_fields` are checked against the template's schema. Omit `--entry` for entry and container plans. Write the JSON specification to a file, then plan. `--spec -` reads that JSON from stdin. Do not combine `--spec` with `--csv`.
+One plan covers one existing-entry mutation, one entry creation, or one container operation. The families are `entry`, `document`, `table`, `fields`, `results`, and `containers`. For `entry`, pass `entry_template_id`, `folder_id`, and `name`; optional `schema_fields` are checked against the template's schema. Omit `--entry` for entry and container plans. Write the JSON specification to a file, then plan. `--spec -` reads that JSON from stdin, and `--spec-json TEXT` takes it inline. Pass only one of `--spec`, `--spec-json`, and `--csv`.
 
 ```console
 benchlingtk --env NAME changes plan --entry etr_example --family table --spec set-cells.json
@@ -351,18 +351,25 @@ The MCP server serves the same file as the read-only resource `skill://benchling
 
 If the benchlingtk MCP tools are already connected, call them with the same environment name. Do not put a client secret in the client config. The server reads the OS keychain.
 
+The MCP tools are the CLI commands, one to one, generated from the same declarations. `benchlingtk --env ENV entry resolve REF` is the tool call `entry_resolve {env: ENV, reference: REF}`, and both reply with the same envelope. The naming rule:
+
+- The tool name is the command path joined with `_`, with `-` also turned into `_`: `entry bulk-get` is `entry_bulk_get`, `changes apply` is `changes_apply`.
+- Each argument or option is an argument with the parameter name from `--help`: `--part-offset` is `part_offset`, `--confirm-env` is `confirm_env`, and the global `--env` is `env`.
+- Defaults, limits, and help text are the CLI's. Each tool description ends with its write class: reads only, writes a local file or plan, or writes to Benchling.
+- `auth login`, `auth logout`, `auth protect`, `auth unprotect`, `skill path`, `skill show`, and `mcp serve` have no tool. Options that only make sense in a terminal have no argument: `changes plan --spec` and `--spec-json` (the tool's `spec` is the JSON object itself) and `issue draft --spec` and `--file`.
+
 Reads, `export`, and `changes_plan` work when the server was started as:
 
 ```console
 benchlingtk mcp serve
 ```
 
-`changes_apply` works only for an environment named at startup. A protected environment is refused with a message that says so:
+`changes_apply` works only for an environment named at startup. A protected environment that was not named is refused with a message that says so. A protected environment that was named also needs `confirm_env` equal to `env`; set it only after the person has confirmed that environment name for this plan, never by copying `env`:
 
 ```console
 benchlingtk mcp serve --allow-writes ENV
 ```
 
-Do not add `--allow-writes` unless the person asked to allow writes for that environment. `export` takes `kind`, `output`, `format`, and optional `part_id`, `entry`, and `schema_id`. It returns the same summary as the CLI and writes a local file only. `changes_apply` for entry creation returns the new entry ID and `web_url`; for results uploads it returns `web_url` and `next_step`: relay it to the user so they can accept pending results. `changes_plan` takes `env`, an optional `entry`, `family` (`entry`, `document`, `table`, `fields`, `results`, or `containers`), and `specification` (the same JSON shapes as `--spec`, including table-specific result `batches`). Omit `entry` for entry and container plans. `changes_status` accepts `wait` and `timeout` to poll result tasks and does not need `--allow-writes`. `results_pending` and `results_verify` read pushed results back, including pending ones, and do not need `--allow-writes`.
+Do not add `--allow-writes` unless the person asked to allow writes for that environment. `export` takes `kind`, `output`, `format`, and optional `part_id`, `entry`, and `schema_id`. It returns the same summary as the CLI and writes a local file only. `changes_apply` for entry creation returns the new entry ID and `web_url`; for results uploads it returns `web_url` and `next_step`: relay it to the user so they can accept pending results. `changes_plan` takes `env`, an optional `entry`, `family` (`entry`, `document`, `table`, `fields`, `results`, or `containers`), and `spec` (a JSON object with the same shapes as the `--spec` file, including table-specific result `batches`). Omit `entry` for entry and container plans. `changes_status` accepts `wait` and `timeout` to poll result tasks and does not need `--allow-writes`. `results_pending` and `results_verify` read pushed results back, including pending ones, and do not need `--allow-writes`.
 
 Tools for this workflow: `auth_status`, `doctor`, `entry_list`, `schema_list`, `schema_find`, `entry_resolve`, `entry_inspect`, `entry_get`, `entry_bulk_get`, `folder_get`, `template_get`, `template_list`, `entry_fields_get`, `section_get`, `part_get`, `table_get`, `schema_get`, `container_get`, `container_find`, `container_schema_list`, `results_list`, `results_get`, `blob_get`, `results_tables`, `results_rows`, `results_pending`, `results_verify`, `export`, `changes_plan`, `changes_apply`, `changes_status`, `issue_draft`. `auth_status` and `issue_draft` take no environment.
