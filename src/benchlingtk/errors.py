@@ -84,6 +84,18 @@ class ConflictError(BenchlingAgentError):
     exit_code = ExitCode.CONFLICT
 
 
+class ChecksumMismatchError(ConflictError):
+    """Downloaded bytes do not match an expected checksum."""
+
+    code = "checksum_mismatch"
+
+
+class SizeMismatchError(ConflictError):
+    """Downloaded bytes do not match an expected size."""
+
+    code = "size_mismatch"
+
+
 class UnsupportedError(BenchlingAgentError):
     """The operation or content type is not supported, or is unavailable on this tenant."""
 

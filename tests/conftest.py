@@ -122,6 +122,7 @@ def runtime_for(fake: FakeBenchling, env: str = "sandbox") -> Runtime:
         env,
         auth_http=token_client(),
         async_http=httpx.AsyncClient(transport=httpx.MockTransport(fake.handler)),
+        download_transport=httpx.MockTransport(fake.handler),
     )
 
 

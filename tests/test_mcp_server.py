@@ -84,7 +84,13 @@ def writer(pool):
 
 async def test_tools_are_annotated_by_whether_they_can_write(client) -> None:
     tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-    assert READ_TOOLS | {"export", "changes_plan", "changes_apply", "issue_draft"} == set(tools)
+    assert READ_TOOLS | {
+        "blob_download",
+        "export",
+        "changes_plan",
+        "changes_apply",
+        "issue_draft",
+    } == set(tools)
     for name in READ_TOOLS:
         assert tools[name].annotations.read_only_hint is True, name
     assert tools["changes_apply"].annotations.destructive_hint is True
@@ -92,6 +98,8 @@ async def test_tools_are_annotated_by_whether_they_can_write(client) -> None:
     assert tools["changes_plan"].annotations.destructive_hint is False
     assert tools["export"].annotations.read_only_hint is False
     assert tools["export"].annotations.destructive_hint is False
+    assert tools["blob_download"].annotations.read_only_hint is False
+    assert tools["blob_download"].annotations.destructive_hint is False
     schema = tools["doctor"].output_schema
     assert schema["properties"]["schema_version"]["const"] == "1.0"
     assert "ok" in schema["required"]
@@ -120,6 +128,31 @@ async def test_get_blob_reads_metadata_without_writes(client, fake) -> None:
     payload = await call(client, "blob_get", env="sandbox", blob_id=blob_id)
     assert payload["ok"] is True
     assert payload["data"]["uploadStatus"] == "COMPLETE"
+    assert fake.writes() == []
+
+
+async def test_blob_download_tool(client, fake, tmp_path) -> None:
+    blob_id = "00000000-0000-4000-8000-000000000009"
+    fake.blobs[blob_id] = {
+        "id": blob_id,
+        "name": "sample.txt",
+        "type": "RAW_FILE",
+        "mimeType": "text/plain",
+        "uploadStatus": "COMPLETE",
+        "data": b"synthetic",
+    }
+    output = tmp_path / "output"
+    payload = await call(
+        client,
+        "blob_download",
+        env="sandbox",
+        blob_id=blob_id,
+        output=str(output),
+        expect_size=9,
+    )
+    assert payload["ok"] is True
+    assert payload["data"]["verified"] is True
+    assert output.read_bytes() == b"synthetic"
     assert fake.writes() == []
 
 
@@ -552,6 +585,28 @@ async def test_get_result_returns_record_or_not_found(client) -> None:
     ] == "result_2"
     missing = await call(client, "results_get", env="sandbox", result_id="result_zzz")
     assert missing["error"]["code"] == "not_found"
+
+
+async def test_results_tools_warn_when_a_table_cell_is_stale(client, fake) -> None:
+    fake.add_results_table()
+    fake.results_parts["docpart_rt1"]["columnDefinitions"][0]["fieldDefinitionApiId"] = "af_ct"
+    fake.results[0]["schemaFields"] = [
+        {"fieldDefinition": {"id": "af_ct"}, "value": {"__typename": "IntegerValue", "value": 15}}
+    ]
+    fake.parts.append(
+        {
+            "id": "docpart_rt1",
+            "__typename": "DocumentPartResultsTable",
+            "resultSchema": {"id": "assaysch_abc123"},
+        }
+    )
+    rows = (await call(client, "results_rows", env="sandbox", part_id="docpart_rt1"))["data"]
+    assert "Re-sync table" in rows["warnings"][0]
+    assert rows["items"][0]["stale_cells"][0]["table_value"] == 12
+    got = (await call(client, "results_get", env="sandbox", result_id="result_1"))["data"]
+    assert got["table_check"]["status"] == "stale"
+    assert "Re-sync table" in got["warnings"][0]
+    assert fake.writes() == []
 
 
 async def test_list_result_tables_pages_targets(client, fake) -> None:
@@ -1252,7 +1307,13 @@ async def test_every_cli_command_is_one_tool_named_after_its_path(client) -> Non
     expected = {"_".join(path).replace("-", "_") for path in declared}
     tools = {tool.name for tool in (await client.list_tools()).tools}
     assert tools == expected
-    assert tools == READ_TOOLS | {"export", "issue_draft", "changes_plan", "changes_apply"}
+    assert tools == READ_TOOLS | {
+        "blob_download",
+        "export",
+        "issue_draft",
+        "changes_plan",
+        "changes_apply",
+    }
 
 
 def _tool_text(text: str, command) -> str:
@@ -1352,7 +1413,9 @@ async def test_every_tool_description_ends_with_its_write_class(client) -> None:
 
     tools = {tool.name: tool for tool in (await client.list_tools()).tools}
     expected = {name: "read" for name in READ_TOOLS | {"issue_draft"}}
-    expected.update(export="local", changes_plan="local", changes_apply="benchling")
+    expected.update(
+        blob_download="local", export="local", changes_plan="local", changes_apply="benchling"
+    )
     assert set(expected) == set(tools)
     for name, tool in tools.items():
         note = tool.description.rsplit("\n\n", 1)[-1]

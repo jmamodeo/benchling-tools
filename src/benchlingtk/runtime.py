@@ -24,13 +24,16 @@ class Runtime:
         config: EnvironmentConfigStore | None = None,
         secrets: Mapping[str, str] | None = None,
         async_http: httpx.AsyncClient | None = None,
+        download_transport: httpx.AsyncBaseTransport | None = None,
         auth_http: httpx.Client | None = None,
     ) -> None:
         self.config = config or EnvironmentConfigStore()
         self.environment = self.config.resolve(env)
         self.secrets = secrets if secrets is not None else load_secrets(self.environment.name)
         self.auth = AuthManager(self.secrets, http=auth_http)
-        self.api = BenchlingAPI(self.environment, self.auth, http=async_http)
+        self.api = BenchlingAPI(
+            self.environment, self.auth, http=async_http, download_transport=download_transport
+        )
         self.service = BenchlingService(self.api)
         self.repository = PlanRepository(self.config)
         self.planner = ChangePlanner(self.service, self.api, self.repository)

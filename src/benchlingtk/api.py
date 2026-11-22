@@ -48,11 +48,13 @@ class BenchlingAPI:
         auth: AuthManager,
         *,
         http: httpx.AsyncClient | None = None,
+        download_transport: httpx.AsyncBaseTransport | None = None,
         max_read_attempts: int = 3,
     ) -> None:
         self.environment = environment
         self.auth = auth
         self.http = http or httpx.AsyncClient(timeout=30.0, verify=verified_context())
+        self.download_transport = download_transport
         self._owns_http = http is None
         self.max_read_attempts = max_read_attempts
 
