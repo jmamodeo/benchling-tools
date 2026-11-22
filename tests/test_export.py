@@ -1375,8 +1375,8 @@ def invoke(benchling_env, fake, monkeypatch):
     monkeypatch.setattr(cli, "Runtime", lambda environment: runtime_for(fake, environment))
 
     def run(*args: str, env: str | None = "sandbox"):
-        prefix = ["--env", env] if env else []
-        result = CliRunner().invoke(cli.app, [*prefix, *args])
+        suffix = ["--env", env] if env else []
+        result = CliRunner().invoke(cli.app, [*args, *suffix])
         payload = json.loads(result.stdout) if result.stdout.strip() else {}
         return result.exit_code, payload, result
 

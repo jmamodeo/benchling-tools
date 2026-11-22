@@ -40,7 +40,7 @@ benchlingtk auth login --env dev
 # Client ID: your-app-client-id
 # Client secret (not echoed):
 benchlingtk auth status
-benchlingtk --env dev doctor
+benchlingtk doctor --env dev
 ```
 
 The toolkit acts as the **app**, with the app's permissions and audit identity, not the signed-in browser user. Login without a terminal, environment names, `auth status --check`, and `auth logout` are in the [reference](docs/reference.md#configuration).
@@ -54,15 +54,15 @@ Linux servers and agent machines often have no unlocked Secret Service on the se
 There is no default environment: pass `--env NAME` (or `-e`) on every API command. Every command prints a versioned JSON envelope; diagnostics go to stderr.
 
 ```console
-benchlingtk --env dev entry resolve EXP-0001
-benchlingtk --env dev entry inspect etr_abc123
-benchlingtk --env dev entry list --project src_example --modified-after 2026-01-01
-benchlingtk --env dev results tables etr_abc123
-benchlingtk --env dev export --kind table --part docpart_table1 --format csv --output measurements.csv
+benchlingtk entry resolve EXP-0001 --env dev
+benchlingtk entry inspect etr_abc123 --env dev
+benchlingtk entry list --project src_example --modified-after 2026-01-01 --env dev
+benchlingtk results tables etr_abc123 --env dev
+benchlingtk export --kind table --part docpart_table1 --format csv --output measurements.csv --env dev
 
-benchlingtk --env dev changes plan --entry etr_abc123 --family table --spec examples/table-set-cells.json
-benchlingtk --env dev changes apply PLAN_ID
-benchlingtk --env dev changes status PLAN_ID
+benchlingtk changes plan --entry etr_abc123 --family table --spec examples/table-set-cells.json --env dev
+benchlingtk changes apply PLAN_ID --env dev
+benchlingtk changes status PLAN_ID --env dev
 ```
 
 Every command, the six change families, spec shapes, result uploads and attachments, pending results, and the canned examples are in the [CLI and MCP reference](docs/reference.md#cli-examples).

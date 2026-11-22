@@ -51,7 +51,7 @@ Adding the app to an organization gives it every project that all members of tha
 
 Folders inherit the project policy and can only be more open, so a Write project stays Write in every folder under it. Put the tight policy on the project.
 
-A 403 or a 404 on an object usually means the app is not a collaborator on that object's project. `benchlingtk --env NAME doctor` checks that the V3 and V2 entry-list routes accept the app. An empty page means the token worked. It does not prove the app was added to a particular project. Confirm one with `benchlingtk --env NAME entry list --project src_example` or `benchlingtk --env NAME entry resolve EXP-0001`, using an id from your tenant.
+A 403 or a 404 on an object usually means the app is not a collaborator on that object's project. `benchlingtk doctor --env NAME` checks that the V3 and V2 entry-list routes accept the app. An empty page means the token worked. It does not prove the app was added to a particular project. Confirm one with `benchlingtk entry list --project src_example --env NAME` or `benchlingtk entry resolve EXP-0001 --env NAME`, using an id from your tenant.
 
 ## Least privilege: a read environment and a write environment
 
@@ -88,8 +88,8 @@ Confirm the save, then the token, then a read:
 
 ```console
 benchlingtk auth status
-benchlingtk --env NAME auth status --check
-benchlingtk --env NAME doctor
+benchlingtk auth status --check --env NAME
+benchlingtk doctor --env NAME
 ```
 
 `auth status` lists each saved environment, its tenant URL without a trailing slash, and whether a keychain secret is present. It never prints the secret. `--check` requests a token and puts a failure in the top-level message. `doctor` is read-only: one page of V3 entries and one page of V2 entries. A failed check exits 3, the envelope is `ok: false`, and each failed check includes a hint.
@@ -134,8 +134,8 @@ The standard MCP SDK starts the stdio server with only `HOME`, `LOGNAME`, `PATH`
 Reads use the read environment:
 
 ```console
-benchlingtk --env read entry list --project src_example
-benchlingtk --env read doctor
+benchlingtk entry list --project src_example --env read
+benchlingtk doctor --env read
 ```
 
 A server that can apply plans only in the write environment:

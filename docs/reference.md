@@ -59,8 +59,8 @@ Environment names use lowercase letters and digits, start with a letter, and are
 ```console
 benchlingtk auth login --env test
 benchlingtk auth status
-benchlingtk --env dev auth status --check
-benchlingtk --env test doctor
+benchlingtk auth status --check --env dev
+benchlingtk doctor --env test
 benchlingtk auth logout --env dev
 ```
 
@@ -79,7 +79,7 @@ benchlingtk auth unprotect --env prod
 On a protected environment, `changes apply` is refused (exit 2) unless `--env` names it on the command line and `--confirm-env` repeats the same name. There is no default environment and no environment-variable override for either flag. A `--confirm-env` that names a different environment is refused for any environment. Reads, `changes plan` and `changes status` are unaffected. The MCP tool `changes_apply` needs a protected environment in `--allow-writes`, and its refusal says the environment is protected. Once it is listed, the call also needs `confirm_env` equal to `env`; an agent sets it only after the person confirms the name. A `confirm_env` that names a different environment is refused for any environment. `doctor`, `auth status` and the MCP tool `auth_status` report `protected`. `doctor` also prints a `protection` line naming the flags a write needs.
 
 ```console
-benchlingtk --env prod changes apply PLAN_ID --confirm-env prod
+benchlingtk changes apply PLAN_ID --confirm-env prod --env prod
 ```
 
 ## Headless Linux
@@ -141,37 +141,38 @@ In Benchling, grant each app access only to the specific projects it should see.
 Every command prints a versioned JSON envelope. Diagnostics go to stderr.
 
 ```console
-benchlingtk --env dev entry resolve EXP-0001
-benchlingtk --env dev entry get etr_abc123 --full
-benchlingtk --env dev entry bulk-get --id etr_abc123 --id etr_other
-benchlingtk --env dev entry inspect etr_abc123
-benchlingtk --env dev template get etpl_example
-benchlingtk --env dev template list --name "Example template"
-benchlingtk --env dev folder get lib_example
-benchlingtk --env dev section get etr_abc123 docpart_section1
-benchlingtk --env dev part get etr_abc123 docpart_text1
-benchlingtk --env dev table get docpart_table1
-benchlingtk --env dev schema get entsch_example
-benchlingtk --env dev schema list
-benchlingtk --env dev schema list --kind run --limit 50
-benchlingtk --env dev schema find "qPCR assay"
-benchlingtk --env dev entry fields get etr_abc123
-benchlingtk --env dev entry list --project src_example --modified-after 2026-01-01
-benchlingtk --env dev entry list --folder lib_example --name "Example entry"
-benchlingtk --env dev results list --entry etr_abc123
-benchlingtk --env dev results tables etr_abc123
-benchlingtk --env dev results rows docpart_example --limit 50
-benchlingtk --env dev results pending --plan PLAN_ID
-benchlingtk --env dev results pending --schema assaysch_example --created-after 2026-11-19T00:00:00Z
-benchlingtk --env dev results verify PLAN_ID --sample 20
-benchlingtk --env dev container get con_example
-benchlingtk --env dev container find --barcode VIAL-001
-benchlingtk --env dev container find --name "Sample vial"
-benchlingtk --env dev container schema list --limit 50
-benchlingtk --env dev export --kind table --part docpart_table1 --format csv --output measurements.csv
-benchlingtk --env dev export --kind results-table --part docpart_rt1 --format json --output results-table.json
-benchlingtk --env dev export --kind results-table --part strtbl_example --entry etr_abc123 --format csv --output listed-table.csv
-benchlingtk --env dev export --kind assay-results --entry etr_abc123 --schema assaysch_example --format csv --output assay.csv
+benchlingtk entry resolve EXP-0001 --env dev
+benchlingtk entry get etr_abc123 --full --env dev
+benchlingtk entry bulk-get --id etr_abc123 --id etr_other --env dev
+benchlingtk entry inspect etr_abc123 --env dev
+benchlingtk template get etpl_example --env dev
+benchlingtk template list --name "Example template" --env dev
+benchlingtk folder get lib_example --env dev
+benchlingtk section get etr_abc123 docpart_section1 --env dev
+benchlingtk part get etr_abc123 docpart_text1 --env dev
+benchlingtk table get docpart_table1 --env dev
+benchlingtk schema get entsch_example --env dev
+benchlingtk schema list --env dev
+benchlingtk schema list --kind run --limit 50 --env dev
+benchlingtk schema find "qPCR assay" --env dev
+benchlingtk entry fields get etr_abc123 --env dev
+benchlingtk entry list --project src_example --modified-after 2026-01-01 --env dev
+benchlingtk entry list --folder lib_example --name "Example entry" --env dev
+benchlingtk results list --entry etr_abc123 --env dev
+benchlingtk results tables etr_abc123 --env dev
+benchlingtk results rows docpart_example --limit 50 --env dev
+benchlingtk results rows strtbl_example --entry etr_abc123 --env dev
+benchlingtk results pending --plan PLAN_ID --env dev
+benchlingtk results pending --schema assaysch_example --created-after 2026-11-19T00:00:00Z --env dev
+benchlingtk results verify PLAN_ID --sample 20 --env dev
+benchlingtk container get con_example --env dev
+benchlingtk container find --barcode VIAL-001 --env dev
+benchlingtk container find --name "Sample vial" --env dev
+benchlingtk container schema list --limit 50 --env dev
+benchlingtk export --kind table --part docpart_table1 --format csv --output measurements.csv --env dev
+benchlingtk export --kind results-table --part docpart_rt1 --format json --output results-table.json --env dev
+benchlingtk export --kind results-table --part strtbl_example --entry etr_abc123 --format csv --output listed-table.csv --env dev
+benchlingtk export --kind assay-results --entry etr_abc123 --schema assaysch_example --format csv --output assay.csv --env dev
 ```
 
 Entry references may be canonical IDs, display IDs, or URLs for the selected tenant. Duplicate section titles must be addressed by part ID.
@@ -195,7 +196,7 @@ Every `entry list` filter is applied by Benchling. `routing.client_side` is alwa
 
 `results verify PLAN_ID` reads back an applied result upload plan and diffs it against the plan. Planned fields are compared field by field by system name (numbers by value, lists of strings without order). Planned rows are paired with fetched records by exact field match first, then in order, so the check does not depend on the order Benchling returns them. It reports `matched`, `mismatched` (with each differing field), `missing` (with a reason such as `task_running` or `submission_failed`), and `extra` rows, counts for each, and `ok` when nothing differs. Each list shows at most `--sample` rows (default 20, maximum 200). `needs_accept` and `next_step` name the rows and tables that still need the plug-icon accept. Both commands only read; they do not write to Benchling or to the plan journal.
 
-`results rows PART_ID` reads one page of a results table. It is read-only. The page size defaults to 50 and stops at 100. Pass `next_token` back with `--cursor`. The call is `GET /document-part-results-table/{id}/rows/items` with `pageSize` and `nextToken`. The part is read first, and its `rows` URL must be that path on this tenant. Cells use the same shape as `entry get --full`. `row_count` is the count on the part. `entry get --full` still reads every row of the part.
+`results rows PART_ID` reads one page of a results table. It is read-only. `PART_ID` is a `v3_document_part` id (`docpart_…`) from `entry inspect`. A `v2_structured_table` id (`strtbl_…`) from `results tables` needs `--entry ENTRY` (MCP `entry`): it is mapped to the entry's matching results-table part, the same match `export --kind results-table` uses, and the page adds `table_id`, `entry_id`, `id_namespace` and `listed_id_namespace`. A `strtbl_…` id with no entry, not on the entry, or matching no single part is a `validation_error` whose `details` name `id_namespace` and `expected_id_namespace`. The page size defaults to 50 and stops at 100. Pass `next_token` back with `--cursor`. The call is `GET /document-part-results-table/{id}/rows/items` with `pageSize` and `nextToken`. The part is read first, and its `rows` URL must be that path on this tenant. Cells use the same shape as `entry get --full`. `row_count` is the count on the part. `entry get --full` still reads every row of the part.
 
 `benchlingtk export` writes an unstructured table (`--kind table`), a results table (`--kind results-table`), or assay results (`--kind assay-results`) to a JSON or CSV file. `--format` is `json` or `csv`. `table` and `results-table` require `--part`. `assay-results` accepts `--entry` and `--schema`. The command reads every page itself: unstructured-table and results-table rows at `pageSize` 100, and assay results from `GET /result/items` at `pageSize` 100. The printed envelope is a summary only: `row_count`, `columns`, `path`, and `checksum` (SHA-256 of the file bytes). The rows stay in the file, so a large table does not enter an agent's context. A cell is the evaluation when Benchling returned one, otherwise the input. Duplicate column names get a `__2` suffix. An existing file is left unchanged unless `--overwrite` is set. Nothing is written to Benchling. The MCP tool `export` uses the same summary.
 
@@ -210,21 +211,22 @@ A results-table or unstructured-table cell is flattened the same way. A link or 
 A change spec covers one existing-entry mutation, one new-entry creation, or one container mutation. Previewing only reads Benchling and creates a local immutable plan:
 
 ```console
-benchlingtk --env dev changes plan \
+benchlingtk changes plan \
   --entry etr_abc123 \
   --family table \
-  --spec examples/table-set-cells.json
+  --spec examples/table-set-cells.json --env dev
 
-benchlingtk --env dev changes plan \
+benchlingtk changes plan \
   --entry etr_abc123 \
   --family results \
   --csv assay.csv \
   --id-column id \
   --map Ct=Ct \
-  --map Note=Note
+  --map Note=Note --env dev
 
-benchlingtk --env dev changes plan \
+benchlingtk changes plan \
   --family entry \
+  --env dev \
   --spec - <<'JSON'
 {
   "entry_template_id": "etpl_abc123",
@@ -236,13 +238,13 @@ benchlingtk --env dev changes plan \
 }
 JSON
 
-benchlingtk --env dev changes plan --entry etr_abc123 --family table \
-  --spec-json '{"operation": "append_rows", "table_part_id": "docpart_table1", "rows": [["D", "4"]]}'
+benchlingtk changes plan --entry etr_abc123 --family table \
+  --spec-json '{"operation": "append_rows", "table_part_id": "docpart_table1", "rows": [["D", "4"]]}' --env dev
 
-benchlingtk --env dev changes apply PLAN_ID
-benchlingtk --env prod changes apply PLAN_ID --confirm-env prod
-benchlingtk --env dev changes status PLAN_ID
-benchlingtk --env dev changes status PLAN_ID --wait --timeout 300
+benchlingtk changes apply PLAN_ID --env dev
+benchlingtk changes apply PLAN_ID --confirm-env prod --env prod
+benchlingtk changes status PLAN_ID --env dev
+benchlingtk changes status PLAN_ID --wait --timeout 300 --env dev
 ```
 
 `--confirm-env` is required only for a [protected environment](#protected-environments).
@@ -251,9 +253,9 @@ An entry spec uses `entry_template_id`, `folder_id`, and `name`, and may include
 Container creation and transfer use the same local preview and explicit apply lifecycle. Container plans do not take `--entry`:
 
 ```console
-benchlingtk --env dev changes plan --family containers --spec create-container.json
-benchlingtk --env dev changes plan --family containers --spec transfer-container.json
-benchlingtk --env dev changes apply PLAN_ID
+benchlingtk changes plan --family containers --spec create-container.json --env dev
+benchlingtk changes plan --family containers --spec transfer-container.json --env dev
+benchlingtk changes apply PLAN_ID --env dev
 ```
 
 Container create specs use `operation: "create"` and `schema_id`; transfer specs use `operation: "transfer"`, `source_container_id`, `destination_container_id`, and `destination_contents` (each item has an `entity_id`). Transfer previews read both containers and apply re-checks their modification timestamps before the one-time transfer. Create previews read the schema and apply re-checks its field definitions. As with other families, an uncertain write is never retried. MCP apply remains disabled unless the server was started with `--allow-writes ENV`.
@@ -294,7 +296,7 @@ Field inputs must use a schema field's V3 `systemName` or its field-definition I
 
 A result update reads a CSV file instead of inline records. `--id-column` is the column that holds the result id (`id` in an assay-result export). Each `--map CSV_COLUMN=FIELD` is required; columns are not guessed from the header. `FIELD` is the export display name, the system name, or the field-definition id. The preview resolves every mapped column to a field-definition id and shows only the values that would change. Unmapped columns, including `createdAt` and `modifiedAt`, are not written. A blank cell clears a value that is present. A blank cell on an empty field is not a change, so an unmodified export round-trips: export writes both null and an empty string as a blank cell. Unknown columns, ambiguous names, and bad rows are one error and nothing is written. Apply re-reads each result and sends `PATCH /result/{id}` with `schemaFields` keyed by field-definition id, and only when `modifiedAt` and the mapped values still match the plan. The CSV is not read again at apply time. The limit is 500 rows. The same spec (`operation`, `csv_path`, `id_column`, `column_map`) is what `changes_plan` accepts.
 
-A result attachment field (a V3 `AttachmentLinkFieldDefinition`) can take a local file. In a results upload, give the field the value `{"file": "plots/run-01.png"}`, optionally with `"blob_type": "VISUALIZATION"` (default `RAW_FILE`) and `"mime_type"` (default guessed from the file name). A relative path is resolved against the current directory. A multi-value attachment field takes a list that may mix file references and existing blob IDs. In a CSV update, an attachment cell `file:plots/run-01.png` does the same, relative to the CSV's folder, and any other text is a blob ID. The preview lists each file under `after.uploads` with its base name, size, SHA-256, MD5, MIME type and blob type; the path and contents are never in the plan or its output. Apply reads each file again and refuses the plan with a conflict if its size or SHA-256 changed. It then uploads it as a V2 blob: one `POST /blobs` up to 10,000,000 bytes, otherwise `POST /blobs:start-multipart-upload`, 10 MiB parts, and `:complete-upload`, with `:abort-upload` if a step fails. The blob ID is journaled before the result write that links it. Uploads are never retried; if the result write then fails, the blob stays in Benchling unlinked. Files over 100 MiB, more than 1 GiB in one plan, empty files, and files inside the toolkit state directory are refused. `benchlingtk blob get BLOB_ID` (MCP `blob_get`) reads a blob's metadata, not its contents.
+A result attachment field (a V3 `AttachmentLinkFieldDefinition`) can take a local file. In a results upload, give the field the value `{"file": "plots/run-01.png"}`, optionally with `"blob_type": "VISUALIZATION"` (default `RAW_FILE`) and `"mime_type"` (default guessed from the file name). A relative path is resolved against the current directory. A multi-value attachment field takes a list that may mix file references and existing blob IDs. In a CSV update, an attachment cell `file:plots/run-01.png` does the same, relative to the CSV's folder, and any other text is a blob ID. The preview lists each file under `after.uploads` with its base name, size, SHA-256, MD5, MIME type and blob type; the path and contents are never in the plan or its output. Apply reads each file again and refuses the plan with a conflict if its size or SHA-256 changed. It then uploads it as a V2 blob: one `POST /blobs` up to 10,000,000 bytes, otherwise `POST /blobs:start-multipart-upload`, 10 MiB parts, and `:complete-upload`, with `:abort-upload` if a step fails. The blob ID is journaled before the result write that links it. Uploads are never retried; if the result write then fails, the blob stays in Benchling unlinked. Files over 100 MiB, more than 1 GiB in one plan, empty files, and files inside the toolkit state directory are refused. `benchlingtk blob get BLOB_ID` (MCP `blob_get`) reads a blob's metadata, not its contents. `BLOB_ID` is the V2 blob UUID an attachment field holds, not an `attachment_…` id.
 
 Results land as pending: they do not appear in the notebook results table, and have no entry, until a person clicks the plug (integrate) icon in that table's toolbar in Benchling. After a results upload, `changes apply` returns `web_url` and a `next_step` naming the entry, its link, and the result table(s). Creating an entry from a template also returns the new entry's `web_url`. The accept control may insert every pending result that matches the table's schema, not only the ones just pushed. See [docs/api-limitations.md](api-limitations.md). A table write updates the named cells or appends rows, checked against the entry version, and resets table evaluation until Benchling's browser evaluates it again.
 Table upload plans use local correlation UUIDs; the tenant assigns the actual result IDs. Local UUIDs are not idempotency keys. Caller-supplied result IDs are rejected by the CLI because the tested tenant rejects them on this endpoint despite the public OpenAPI declaration. Each notebook table batch is limited to 500 records. The immediate apply result is `submission_pending`; task success is reported separately as `pending_integration`.
@@ -396,7 +398,7 @@ Drafting does not contact Benchling or GitHub. The MCP tool is draft-only: the p
 
 ## JSON envelope and exit codes
 
-Every command and MCP tool returns `{"schema_version": "1.0", "ok": ..., "data": ..., "error": ..., "meta": ...}`. Exit codes:
+Every command and MCP tool returns `{"schema_version": "1.0", "ok": ..., "data": ..., "error": ..., "meta": ...}`. A command line that does not parse also prints an envelope, with `error.code` `usage_error` and the command, usage line, and help command in `error.details`; only `--help` and `--version` print plain text. `--env NAME` is an option of each command, after the command name: `benchlingtk entry get REF --env NAME`. Exit codes:
 
 | Code | Meaning |
 |---:|---|
@@ -408,6 +410,7 @@ Every command and MCP tool returns `{"schema_version": "1.0", "ok": ..., "data":
 | 6 | Unsupported capability |
 | 7 | Upstream or transport failure |
 | 8 | Partial or unknown write completion |
+| 9 | Usage error: an unknown command or option, or a missing or invalid argument |
 
 ## Known limitations
 

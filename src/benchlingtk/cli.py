@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import getpass
+import inspect
 import io
 import json
 import os
 import sys
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Annotated, Any, NoReturn, TypeVar
 
 import typer
 from pydantic import WithJsonSchema
+from typer.core import TyperGroup
 
 from . import __version__
 from .change_spec import CHANGE_SPECIFICATION_SCHEMA, parse_change_specification
@@ -31,6 +33,7 @@ from .errors import (
     ExitCode,
     UnsupportedError,
     UpstreamError,
+    UsageError,
     ValidationError,
 )
 from .export import export_dataset
@@ -42,10 +45,69 @@ from .runtime import Runtime
 from .services import part_content
 from .skill import find_skill_md
 
+# Typer may vendor click, so take click's exception classes from one typer exports.
+_CLICK_USAGE_ERROR: Any = typer.BadParameter.__mro__[1]
+_CLICK_EXCEPTION: Any = _CLICK_USAGE_ERROR.__mro__[1]
+
+
+class RootGroup(TyperGroup):
+    """The root command. A click usage error prints a usage_error envelope on stdout.
+
+    An unknown command or option, a missing or invalid argument, and a missing
+    subcommand exit with ExitCode.USAGE, not the validation code. A bare
+    ``benchlingtk`` still prints the help, and exits with the same code.
+    """
+
+    def main(
+        self,
+        args: Sequence[str] | None = None,
+        prog_name: str | None = None,
+        complete_var: str | None = None,
+        standalone_mode: bool = True,
+        windows_expand_args: bool = True,
+        **extra: Any,
+    ) -> Any:
+        if not standalone_mode:
+            return super().main(args, prog_name, complete_var, False, windows_expand_args, **extra)
+        try:
+            code = super().main(args, prog_name, complete_var, False, windows_expand_args, **extra)
+        except _CLICK_USAGE_ERROR as exc:
+            code = _usage_failure(exc)
+        except _CLICK_EXCEPTION as exc:
+            exc.show()
+            code = exc.exit_code
+        except typer.Abort:
+            typer.echo("Aborted!", err=True)
+            code = 1
+        sys.exit(code if isinstance(code, int) else 0)
+
+
+def _usage_failure(exc: Any) -> int:
+    """Print the usage_error envelope for a click usage error and return its exit code."""
+    ctx = exc.ctx
+    if type(exc).__name__ == "NoArgsIsHelpError" and ctx is not None:
+        typer.echo(ctx.get_help())
+        return int(ExitCode.USAGE)
+    details: dict[str, Any] = {}
+    if ctx is not None:
+        details = {
+            "command": ctx.command_path,
+            "usage": ctx.get_usage(),
+            "help": f"{ctx.command_path} --help",
+        }
+        if ctx.parent is None and getattr(exc, "option_name", None) in ("--env", "-e"):
+            details["hint"] = "--env is a command option: benchlingtk entry get REF --env NAME"
+    error = UsageError(exc.format_message(), details=details)
+    _emit(Envelope.failure(error))
+    return int(error.exit_code)
+
+
 app = typer.Typer(
     name="benchlingtk",
+    cls=RootGroup,
     help="Safe, auditable tools for structured Benchling entry data.",
     no_args_is_help=True,
+    add_completion=False,
     pretty_exceptions_enable=False,
 )
 auth_app = typer.Typer(help="Log in, log out, and inspect saved environments.")
@@ -87,18 +149,6 @@ app.add_typer(issue_app, name="issue")
 app.add_typer(skill_app, name="skill")
 
 
-class State:
-    """Per-invocation state stored on the Typer context; env is the --env selection.
-
-    env_on_command_line is True only when --env was typed on the command line,
-    not filled from a default or an environment variable.
-    """
-
-    def __init__(self, env: str | None, *, env_on_command_line: bool = False) -> None:
-        self.env = env
-        self.env_on_command_line = env_on_command_line
-
-
 def _show_version(value: bool) -> None:
     if value:
         typer.echo(f"benchlingtk {__version__}")
@@ -107,16 +157,18 @@ def _show_version(value: bool) -> None:
 
 @app.callback()
 def root(
-    ctx: typer.Context,
-    env: str | None = typer.Option(None, "--env", "-e", help="Environment name."),
     version: bool = typer.Option(
         False, "--version", callback=_show_version, is_eager=True, help="Show version and exit."
     ),
 ) -> None:
     """Safe, auditable tools for structured Benchling entry data."""
+
+
+def _env_on_command_line(ctx: typer.Context, env: str | None) -> bool:
+    """True only when --env was typed, not filled from a default or a variable."""
     # Typer may vendor click, so compare the ParameterSource member by name.
     source = getattr(ctx.get_parameter_source("env"), "name", None)
-    ctx.obj = State(env, env_on_command_line=bool(env) and source == "COMMANDLINE")
+    return bool(env) and source == "COMMANDLINE"
 
 
 def _json(value: Any) -> str:
@@ -132,9 +184,9 @@ def _emit(envelope: Envelope[Any]) -> None:
 class CliCall(Call):
     """A command run from the command line. The runtime is built from --env."""
 
-    def __init__(self, state: State) -> None:
-        super().__init__(state.env)
-        self.state = state
+    def __init__(self, env: str | None, *, env_on_command_line: bool = False) -> None:
+        super().__init__(env)
+        self.env_on_command_line = env_on_command_line
 
     def _open(self) -> Runtime:
         return Runtime(self.env)
@@ -148,12 +200,12 @@ class CliCall(Call):
         environment = EnvironmentConfigStore().resolve(self.env)
         check_apply_allowed(
             environment,
-            env_on_command_line=self.state.env_on_command_line,
+            env_on_command_line=self.env_on_command_line,
             confirm_env=confirm_env,
         )
         check_apply_allowed(
             self.runtime.environment,
-            env_on_command_line=self.state.env_on_command_line,
+            env_on_command_line=self.env_on_command_line,
             confirm_env=confirm_env,
         )
 
@@ -185,6 +237,13 @@ def _execute(call: Call, declared: Command, arguments: dict[str, Any]) -> None:
 
 _F = TypeVar("_F", bound=Callable[..., Any])
 
+_ENV_PARAMETER = inspect.Parameter(
+    "env",
+    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+    annotation=str | None,
+    default=typer.Option(None, "--env", "-e", help="Environment name."),
+)
+
 
 def command(
     *,
@@ -214,9 +273,15 @@ def command(
         )
 
         def callback(ctx: typer.Context, **arguments: Any) -> None:
-            _execute(CliCall(ctx.obj), declared, arguments)
+            env = arguments.pop("env") if needs_env else None
+            call = CliCall(env, env_on_command_line=_env_on_command_line(ctx, env))
+            _execute(call, declared, arguments)
 
         signature = declared.cli_signature(typer.Context)
+        if needs_env:
+            params = list(signature.parameters.values())
+            params.insert(1, _ENV_PARAMETER)
+            signature = signature.replace(parameters=params)
         callback.__name__ = function.__name__
         callback.__qualname__ = function.__qualname__
         callback.__doc__ = surface_text(declared.doc, "cli")
@@ -390,7 +455,6 @@ def _blank_to_none(value: str | None) -> str | None:
 @auth_app.command("login")
 @cli_only("Reads a client secret; only a person at a terminal logs in.")
 def auth_login(
-    ctx: typer.Context,
     env: str | None = typer.Option(None, "--env", "-e", help="Environment name to save."),
     tenant_url: str | None = typer.Option(
         None,
@@ -419,10 +483,9 @@ def auth_login(
     The secret is never accepted as an argument. Nothing is saved unless a
     client-credentials token request succeeds.
     """
-    state: State = ctx.obj
     store = EnvironmentConfigStore()
     try:
-        name = _require_env_name(env or state.env, store)
+        name = _require_env_name(env, store)
         url = _blank_to_none(tenant_url)
         client = _blank_to_none(client_id)
         fix_url, fix_client = login_fix_values(store, name, url, client)
@@ -475,25 +538,22 @@ def auth_login(
 @auth_app.command("logout")
 @cli_only("Deletes a saved environment and its secret; a person decides that.")
 def auth_logout(
-    ctx: typer.Context,
     env: str | None = typer.Option(None, "--env", "-e", help="Environment name to remove."),
 ) -> None:
     """Remove an environment from environments.json and delete its keychain secret."""
-    state: State = ctx.obj
     store = EnvironmentConfigStore()
     try:
-        name = _require_env_name(env or state.env, store)
+        name = _require_env_name(env, store)
         logout(store, Keychain(), name)
     except BenchlingAgentError as exc:
         _auth_failure(exc)
     _emit(Envelope.success({"env": name, "removed": True}, env=name))
 
 
-def _set_protection(ctx: typer.Context, env: str | None, protected: bool) -> None:
-    state: State = ctx.obj
+def _set_protection(env: str | None, protected: bool) -> None:
     store = EnvironmentConfigStore()
     try:
-        name = _require_env_name(env or state.env, store)
+        name = _require_env_name(env, store)
         environment = store.set_protected(name, protected)
     except BenchlingAgentError as exc:
         _auth_failure(exc)
@@ -509,7 +569,6 @@ def _set_protection(ctx: typer.Context, env: str | None, protected: bool) -> Non
 @auth_app.command("protect")
 @cli_only("Protection is set by a person, never by the agent it restricts.")
 def auth_protect(
-    ctx: typer.Context,
     env: str | None = typer.Option(None, "--env", "-e", help="Environment name to protect."),
 ) -> None:
     """Mark a saved environment protected.
@@ -517,17 +576,16 @@ def auth_protect(
     `changes apply` then refuses it unless --env names it on the command line and
     --confirm-env repeats the name. Reads are unaffected. No secret is read.
     """
-    _set_protection(ctx, env, True)
+    _set_protection(env, True)
 
 
 @auth_app.command("unprotect")
 @cli_only("Protection is set by a person, never by the agent it restricts.")
 def auth_unprotect(
-    ctx: typer.Context,
     env: str | None = typer.Option(None, "--env", "-e", help="Environment name to unprotect."),
 ) -> None:
     """Remove the protected mark from a saved environment."""
-    _set_protection(ctx, env, False)
+    _set_protection(env, False)
 
 
 @auth_app.command("status")
@@ -552,9 +610,8 @@ async def auth_status(
     Each environment also reports writes_allowed: whether this server was started
     with --allow-writes for it.
     """
-    selected = env or call.env
     report = await asyncio.to_thread(
-        collect_status, EnvironmentConfigStore(), Keychain(), name=selected, check=check
+        collect_status, EnvironmentConfigStore(), Keychain(), name=env, check=check
     )
     writable = call.writable_envs
     if writable is not None:
@@ -572,8 +629,8 @@ async def auth_status(
             message,
             details={"environments": payload["environments"], "failed_envs": report.failed_envs},
         )
-    if selected and selected in report.environments:
-        call.meta.update(env=selected, tenant_url=report.environments[selected]["tenant_url"])
+    if env and env in report.environments:
+        call.meta.update(env=env, tenant_url=report.environments[env]["tenant_url"])
     return payload
 
 
@@ -601,9 +658,10 @@ async def doctor(call: Call) -> Any:
     return result
 
 
-_ENTRY_REF_HELP = "Entry ID, display ID, or same-tenant entry URL."
+_ENTRY_REF_HELP = "Entry ID (etr_…), display ID, or same-tenant entry URL."
 _CURSOR_HELP = "next_token from the previous page. Omit it to read the first page."
 _LIMIT_HELP = "Page size, from 1 to 100."
+_PART_ID_HELP = "v3_document_part id (docpart_…), as listed by entry inspect."
 
 
 def _pagination(offset: int, returned: int, total: int) -> dict[str, Any]:
@@ -704,7 +762,7 @@ async def entry_bulk_get(
     entry_ids: list[str] | None = typer.Option(
         None,
         "--id",
-        help="Entry ID. Repeat for several. Use this or --display-id, not both.",
+        help="Entry ID (etr_…). Repeat for several. Use this or --display-id, not both.",
     ),
     display_ids: list[str] | None = typer.Option(
         None,
@@ -724,14 +782,19 @@ async def entry_bulk_get(
 async def entry_inspect(
     call: Call, reference: str = typer.Argument(..., help=_ENTRY_REF_HELP)
 ) -> Any:
-    """Summarize an entry's sections, part IDs, schemas, and tables without full content."""
+    """Summarize an entry's sections, part IDs, schemas, and tables without full content.
+
+    Part IDs are v3_document_part ids (docpart_…), the ids section get, part get,
+    table get, and results rows take. They are not the v2_structured_table ids
+    (strtbl_…) that results tables returns.
+    """
     return await call.runtime.service.inspect_entry(reference)
 
 
 @template_app.command("get")
 @command(read_only=True)
 async def template_get(
-    call: Call, template_id: str = typer.Argument(..., help="Entry template ID.")
+    call: Call, template_id: str = typer.Argument(..., help="Entry template ID (tmpl_…).")
 ) -> Any:
     """Get an entry template and summarize its structure (from V2; V3 has metadata only)."""
     return await call.runtime.service.get_template(template_id)
@@ -751,8 +814,10 @@ async def template_list(
 
 @folder_app.command("get")
 @command(read_only=True)
-async def folder_get(call: Call, folder_id: str = typer.Argument(..., help="Folder ID.")) -> Any:
-    """Get a folder by ID."""
+async def folder_get(
+    call: Call, folder_id: str = typer.Argument(..., help="Folder ID (lib_…).")
+) -> Any:
+    """Get a folder by folder ID (lib_…)."""
     return await call.runtime.service.get_folder(folder_id)
 
 
@@ -761,12 +826,14 @@ async def folder_get(call: Call, folder_id: str = typer.Argument(..., help="Fold
 async def entry_list(
     call: Call,
     project: str | None = typer.Option(
-        None, "--project", help="Project ID. Omit to list entries from every readable project."
+        None,
+        "--project",
+        help="Project ID (src_…). Omit to list entries from every readable project.",
     ),
     folder: str | None = typer.Option(
         None,
         "--folder",
-        help="Folder ID. The whole query then uses V2, because V3 entry listing ignores folder.",
+        help="Folder ID (lib_…). The query then uses V2, because V3 entry listing ignores folder.",
     ),
     schema_id: str | None = typer.Option(
         None, "--schema", help="Entry schema ID. Omit to include every schema."
@@ -826,7 +893,7 @@ async def section_get(
     call: Call,
     reference: str = typer.Argument(..., help=_ENTRY_REF_HELP),
     section: str = typer.Argument(
-        ..., help="Stable document part ID, or a section title that is unique."
+        ..., help="Section part id (docpart_…) from entry inspect, or a unique section title."
     ),
     part_offset: int = typer.Option(
         0, "--part-offset", min=0, help="Parts in the section to skip. Zero is the first."
@@ -864,7 +931,7 @@ async def section_get(
 async def part_get(
     call: Call,
     reference: str = typer.Argument(..., help=_ENTRY_REF_HELP),
-    part_id: str = typer.Argument(..., help="Stable document part ID."),
+    part_id: str = typer.Argument(..., help=_PART_ID_HELP),
     row_offset: int = typer.Option(
         0, "--row-offset", min=0, help="Table rows to skip when the part is a table."
     ),
@@ -883,13 +950,19 @@ async def part_get(
 @command(read_only=True)
 async def table_get(
     call: Call,
-    part_id: str = typer.Argument(..., help="Document part ID of an unstructured table."),
+    part_id: str = typer.Argument(
+        ...,
+        help=(
+            "v3_document_part id (docpart_…) of an unstructured table, from entry inspect. "
+            "Not a strtbl_ id."
+        ),
+    ),
     row_offset: int = typer.Option(
         0, "--row-offset", min=0, help="Table rows to skip. Zero is the first row."
     ),
     row_limit: int = typer.Option(250, "--row-limit", min=1, help="Most table rows to return."),
 ) -> Any:
-    """Get a page of an unstructured table by its document part ID."""
+    """Get a page of an unstructured table by its v3_document_part id (docpart_…)."""
     table = await call.runtime.service.get_table(part_id)
     return _page_table(table, row_offset, row_limit)
 
@@ -898,7 +971,13 @@ async def table_get(
 @command(read_only=True)
 async def schema_get(
     call: Call,
-    schema_id: str = typer.Argument(..., help="Entry, entity, result, or run schema ID."),
+    schema_id: str = typer.Argument(
+        ...,
+        help=(
+            "Schema ID. es_… is read as an entity schema, assaysch_… as a result "
+            "schema, runsch_… as a run schema, and any other id as an entry schema."
+        ),
+    ),
     field_offset: int = typer.Option(
         0, "--field-offset", min=0, help="Field definitions to skip. Zero is the first."
     ),
@@ -949,9 +1028,9 @@ async def schema_list(
 @container_app.command("get")
 @command(read_only=True)
 async def container_get(
-    call: Call, container_id: str = typer.Argument(..., help="Inventory container ID.")
+    call: Call, container_id: str = typer.Argument(..., help="Inventory container ID (con_…).")
 ) -> Any:
-    """Get an inventory container by ID."""
+    """Get an inventory container by container ID (con_…)."""
     return await call.runtime.service.get_container(container_id)
 
 
@@ -986,17 +1065,26 @@ async def container_schema_list(
 async def results_list(
     call: Call,
     entry: str | None = typer.Option(
-        None, "--entry", help="Entry ID, display ID, or URL. Omit to list results from every entry."
+        None,
+        "--entry",
+        help="Entry ID (etr_…), display ID, or URL. Omit to list results from every entry.",
     ),
     schema_id: str | None = typer.Option(
-        None, "--schema", help="Result schema ID. Omit to include every result schema."
+        None,
+        "--schema",
+        help="Result schema ID (assaysch_…). Omit to include every result schema.",
     ),
     page_size: int = typer.Option(
         100, "--page-size", min=1, max=100, help="Result records per page, from 1 to 100."
     ),
     cursor: str | None = typer.Option(None, "--cursor", help=_CURSOR_HELP),
 ) -> Any:
-    """List one explicit page of result records, optionally filtered by entry or schema."""
+    """List one explicit page of result records, optionally filtered by entry or schema.
+
+    Records come from V3 GET /result/items. Each id is a V3 result id (result_…),
+    the id results get takes. results pending --id takes V2 assay result ids
+    (UUIDs) instead.
+    """
     return await call.runtime.service.list_results(
         entry=entry, schema_id=schema_id, page_size=page_size, cursor=cursor
     )
@@ -1005,9 +1093,15 @@ async def results_list(
 @results_app.command("get")
 @command(read_only=True)
 async def results_get(
-    call: Call, result_id: str = typer.Argument(..., help="Canonical result ID.")
+    call: Call,
+    result_id: str = typer.Argument(
+        ..., help="V3 result id (result_…), as results list returns. Not a V2 assay result UUID."
+    ),
 ) -> Any:
-    """Get one result record by canonical ID."""
+    """Get one result record by V3 result id (result_…) with V3 GET /result/{id}.
+
+    For V2 assay result ids (UUIDs), including pending results, use results pending --id.
+    """
     return await call.runtime.service.get_result(result_id)
 
 
@@ -1015,9 +1109,18 @@ async def results_get(
 @command(read_only=True)
 async def blob_get(
     call: Call,
-    blob_id: str = typer.Argument(..., help="Blob ID, the value an attachment result field holds."),
+    blob_id: str = typer.Argument(
+        ...,
+        help=(
+            "V2 blob ID, a UUID: the value an attachment result field holds. "
+            "Not an attachment_… id or a docpart_… attachment part id."
+        ),
+    ),
 ) -> Any:
-    """Get one blob's metadata: name, type, MIME type and upload status. Nothing is downloaded."""
+    """Get one blob's metadata: name, type, MIME type and upload status. Nothing is downloaded.
+
+    Reads V2 GET /blobs/{blob_id}, so the id is a blob UUID, not an attachment_… id.
+    """
     return await call.runtime.service.get_blob(blob_id)
 
 
@@ -1035,7 +1138,8 @@ async def results_tables(
 ) -> Any:
     """Discover explicit V2 result-table IDs and assigned schemas on one entry.
 
-    Each table_id is a v2_structured_table id (strtbl_…).
+    Each table_id is a v2_structured_table id (strtbl_…), not a v3_document_part
+    id (docpart_…). results rows maps it with --entry; table get does not take it.
 
     CLI: Export it with ``export --kind results-table --part TABLE_ID --entry ENTRY``.
 
@@ -1053,16 +1157,35 @@ async def results_tables(
 @command(read_only=True)
 async def results_rows(
     call: Call,
-    part_id: str = typer.Argument(..., help="Document part ID of a results table."),
+    part_id: str = typer.Argument(
+        ...,
+        help=(
+            "Results table id: a v3_document_part id (docpart_…) from entry inspect, "
+            "or a v2_structured_table id (strtbl_…) from results tables with --entry."
+        ),
+    ),
+    entry: str | None = typer.Option(
+        None,
+        "--entry",
+        help=(
+            "Entry ID (etr_…), display ID, or URL holding the table. "
+            "Required with a strtbl_ id; not used with a docpart_ id."
+        ),
+    ),
     limit: int = typer.Option(50, "--limit", min=1, max=100, help=_LIMIT_HELP),
     cursor: str | None = typer.Option(None, "--cursor", help=_CURSOR_HELP),
 ) -> Any:
     """Read one page of rows from a results table.
 
-    Rows come from GET /document-part-results-table/{id}/rows/items. Pass the
-    previous next_token with --cursor.
+    Rows come from GET /document-part-results-table/{id}/rows/items, which takes a
+    v3_document_part id (docpart_…). A strtbl_ id from results tables is mapped
+    to the matching part on the --entry entry, and the response adds table_id and
+    listed_id_namespace. It is a validation_error when --entry is missing or no
+    single part matches. Pass the previous next_token with --cursor.
     """
-    return await call.runtime.service.list_results_table_rows(part_id, limit=limit, cursor=cursor)
+    return await call.runtime.service.list_results_table_rows(
+        part_id, entry=entry, limit=limit, cursor=cursor
+    )
 
 
 @results_app.command("pending")
@@ -1073,10 +1196,15 @@ async def results_pending(
         None, "--plan", help="Applied result upload plan ID; its journal gives the record IDs."
     ),
     result_ids: list[str] | None = typer.Option(
-        None, "--id", help="V2 assay result ID, read 200 per request. Repeat to read several."
+        None,
+        "--id",
+        help=(
+            "V2 assay result ID (a UUID), read 200 per request. "
+            "Not a V3 result_… id. Repeat to read several."
+        ),
     ),
     schema_id: str | None = typer.Option(
-        None, "--schema", help="Result schema ID. Needs --created-after."
+        None, "--schema", help="Result schema ID (assaysch_…). Needs --created-after."
     ),
     created_after: str | None = typer.Option(
         None,
@@ -1152,12 +1280,12 @@ async def export_data(
         None,
         "--entry",
         help=(
-            "Entry ID, display ID, or URL. Assay-results filter. "
+            "Entry ID (etr_…), display ID, or URL. Assay-results filter. "
             "Also required with a strtbl_ id from results tables."
         ),
     ),
     schema_id: str | None = typer.Option(
-        None, "--schema", help="Result schema ID. Assay results only."
+        None, "--schema", help="Result schema ID (assaysch_…). Assay results only."
     ),
 ) -> Any:
     """Write a table, results table, or assay results to a local file and return a summary.
@@ -1280,7 +1408,9 @@ _SPECIFICATION = McpParam(
 async def changes_plan(
     call: Call,
     entry: str | None = typer.Option(
-        None, "--entry", help="Entry ID, display ID, or URL. Omit for entry or container plans."
+        None,
+        "--entry",
+        help="Entry ID (etr_…), display ID, or URL. Omit for entry or container plans.",
     ),
     family: PlanFamily = typer.Option(
         ...,
@@ -1301,7 +1431,7 @@ async def changes_plan(
     id_column: str | None = typer.Option(
         None,
         "--id-column",
-        help="CSV column that holds the result id. Required with --csv.",
+        help="CSV column that holds the V3 result id (result_…). Required with --csv.",
     ),
     column_map: list[str] = typer.Option(
         [],

@@ -68,8 +68,8 @@ These commands print no secret:
 
 ```console
 benchlingtk auth status
-benchlingtk --env NAME auth status --check
-benchlingtk --env NAME doctor
+benchlingtk auth status --check --env NAME
+benchlingtk doctor --env NAME
 ```
 
 The person can mark an environment protected in their own terminal:
@@ -85,7 +85,7 @@ If `benchlingtk` is not on `PATH`, run `uv run benchlingtk` from a checkout of t
 
 ## How to read a response
 
-Put `--env` before the subcommand. Stdout is one JSON object with `ok`, `data`, `error`, and `meta`. Stderr is diagnostics. A nonzero exit is a failure.
+Put `--env NAME` on the command, after its name: `benchlingtk entry get REF --env NAME`. Stdout is one JSON object with `ok`, `data`, `error`, and `meta`. Stderr is diagnostics. A nonzero exit is a failure.
 
 | Exit | Meaning |
 |---:|---|
@@ -97,6 +97,7 @@ Put `--env` before the subcommand. Stdout is one JSON object with `ok`, `data`, 
 | 6 | Unsupported capability |
 | 7 | Upstream or transport failure |
 | 8 | Partial or unknown write |
+| 9 | Usage error: the command line did not parse (`error.code` is `usage_error`) |
 
 Identifiers in the examples (`etr_example`, `docpart_example`, `docpart_table1`, `docpart_rt1`, `docpart_text1`, `docpart_section1`, `strtbl_example`, `src_example`, `lib_example`, `assaysch_example`, `EXP-0001`, `RESULT_ID`, `PLAN_ID`, `NEXT_TOKEN`) are placeholders. Substitute ids from the command you just ran. Do not invent a tenant URL or an organization name.
 
@@ -109,17 +110,17 @@ An entry reference may be a canonical id, a display id, or a URL on the selected
 Each list call returns one page. Pass `next_token` back as `--cursor`. A short page is not the whole result.
 
 ```console
-benchlingtk --env NAME entry list --project src_example --limit 50
-benchlingtk --env NAME entry list --folder lib_example --name "Example entry"
-benchlingtk --env NAME entry list --modified-after 2026-01-01 --cursor NEXT_TOKEN
-benchlingtk --env NAME schema list
-benchlingtk --env NAME schema list --kind result --limit 50
-benchlingtk --env NAME schema find "qPCR assay"
-benchlingtk --env NAME container get con_example
-benchlingtk --env NAME container find --barcode VIAL-001
-benchlingtk --env NAME container find --name "Sample vial"
-benchlingtk --env NAME container schema list --limit 50
-benchlingtk --env NAME results list --entry etr_example --page-size 100
+benchlingtk entry list --project src_example --limit 50 --env NAME
+benchlingtk entry list --folder lib_example --name "Example entry" --env NAME
+benchlingtk entry list --modified-after 2026-01-01 --cursor NEXT_TOKEN --env NAME
+benchlingtk schema list --env NAME
+benchlingtk schema list --kind result --limit 50 --env NAME
+benchlingtk schema find "qPCR assay" --env NAME
+benchlingtk container get con_example --env NAME
+benchlingtk container find --barcode VIAL-001 --env NAME
+benchlingtk container find --name "Sample vial" --env NAME
+benchlingtk container schema list --limit 50 --env NAME
+benchlingtk results list --entry etr_example --page-size 100 --env NAME
 ```
 
 `entry list` filters are applied by Benchling. `--name` is an exact match, not a substring. `--folder` uses the V2 entry list. `container find` requires exactly one exact `--barcode` or `--name`. `container find` and `container schema list` return one page, default 50 and maximum 100; pass `next_token` back with `--cursor`. Container schema results include their field definitions. `--modified-after` and `--modified-before` take `YYYY-MM-DD` or an RFC3339 timestamp that includes a time zone. `--limit` is 1 to 100 and defaults to 50 on `entry list` and `schema list`. `schema list --kind` is `entry`, `entity`, `result`, or `run`. Omit `--kind` to list all four. `schema find NAME` requires an exact, case-sensitive name and returns one schema with field definitions, types, required flags, and dropdown options. If the name is absent or ambiguous, the command returns an error; ambiguity candidates include only IDs and kinds. `results list` uses `--page-size` (default 100, maximum 100), plus optional `--schema` and `--cursor`.
@@ -133,38 +134,38 @@ benchlingtk --env NAME results list --entry etr_example --page-size 100
 Start with `inspect` for structure. Use `entry get --full` when you need the content. For a large table, export it instead of pulling every row into context.
 
 ```console
-benchlingtk --env NAME entry resolve EXP-0001
-benchlingtk --env NAME entry inspect etr_example
-benchlingtk --env NAME entry get etr_example --full
-benchlingtk --env NAME entry bulk-get --id etr_example --id etr_other
-benchlingtk --env NAME entry bulk-get --display-id EXP-0001 --display-id EXP-0002
-benchlingtk --env NAME template get etpl_example
-benchlingtk --env NAME template list --name "Example template"
-benchlingtk --env NAME folder get lib_example
-benchlingtk --env NAME entry fields get etr_example
-benchlingtk --env NAME section get etr_example docpart_section1
-benchlingtk --env NAME part get etr_example docpart_text1
-benchlingtk --env NAME table get docpart_table1
-benchlingtk --env NAME schema get assaysch_example
-benchlingtk --env NAME results get RESULT_ID
-benchlingtk --env NAME blob get BLOB_ID
-benchlingtk --env NAME results tables etr_example
-benchlingtk --env NAME results rows docpart_example --limit 50 --cursor NEXT_TOKEN
-benchlingtk --env NAME results pending --plan PLAN_ID
-benchlingtk --env NAME results verify PLAN_ID
+benchlingtk entry resolve EXP-0001 --env NAME
+benchlingtk entry inspect etr_example --env NAME
+benchlingtk entry get etr_example --full --env NAME
+benchlingtk entry bulk-get --id etr_example --id etr_other --env NAME
+benchlingtk entry bulk-get --display-id EXP-0001 --display-id EXP-0002 --env NAME
+benchlingtk template get etpl_example --env NAME
+benchlingtk template list --name "Example template" --env NAME
+benchlingtk folder get lib_example --env NAME
+benchlingtk entry fields get etr_example --env NAME
+benchlingtk section get etr_example docpart_section1 --env NAME
+benchlingtk part get etr_example docpart_text1 --env NAME
+benchlingtk table get docpart_table1 --env NAME
+benchlingtk schema get assaysch_example --env NAME
+benchlingtk results get RESULT_ID --env NAME
+benchlingtk blob get BLOB_ID --env NAME
+benchlingtk results tables etr_example --env NAME
+benchlingtk results rows docpart_example --limit 50 --cursor NEXT_TOKEN --env NAME
+benchlingtk results pending --plan PLAN_ID --env NAME
+benchlingtk results verify PLAN_ID --env NAME
 ```
 
-`table get` reads an unstructured table. Its argument is a `docpart_…` id from `entry inspect`. `results tables` returns `table_id` values that are `strtbl_…` ids. `results rows` reads one page of a results-table part (`docpart_…`) from that part's rows URL. `schema get` includes each dropdown field's options. `blob get` reads the metadata of the blob an attachment field links (name, type, MIME type, upload status); it does not download the file.
+`table get` reads an unstructured table. Its argument is a `docpart_…` id from `entry inspect`. `results tables` returns `table_id` values that are `strtbl_…` ids. `results rows` reads one page of a results-table part (`docpart_…`) from that part's rows URL; a `strtbl_…` id works only with `--entry ENTRY`, which maps it to that entry's part. `results list` returns V3 result ids (`result_…`), which `results get` takes; `results pending --id` takes V2 assay result UUIDs. `schema get` includes each dropdown field's options. `blob get` reads the metadata of the blob an attachment field links (name, type, MIME type, upload status); it takes that blob UUID, not an `attachment_…` id, and it does not download the file.
 
 ### Export
 
 Export reads every page and writes a local file. The envelope is a summary only: `row_count`, `columns`, `path`, and `checksum`. The rows stay in the file.
 
 ```console
-benchlingtk --env NAME export --kind table --part docpart_table1 --format csv --output measurements.csv
-benchlingtk --env NAME export --kind results-table --part docpart_rt1 --format json --output results-table.json
-benchlingtk --env NAME export --kind results-table --part strtbl_example --entry etr_example --format csv --output listed-table.csv
-benchlingtk --env NAME export --kind assay-results --entry etr_example --schema assaysch_example --format csv --output assay.csv
+benchlingtk export --kind table --part docpart_table1 --format csv --output measurements.csv --env NAME
+benchlingtk export --kind results-table --part docpart_rt1 --format json --output results-table.json --env NAME
+benchlingtk export --kind results-table --part strtbl_example --entry etr_example --format csv --output listed-table.csv --env NAME
+benchlingtk export --kind assay-results --entry etr_example --schema assaysch_example --format csv --output assay.csv --env NAME
 ```
 
 `--kind` is `table`, `results-table`, or `assay-results`. `--format` is `json` or `csv`. `--output` is required (`-o` is the short form). `table` and `results-table` need `--part`. A `docpart_…` id comes from `entry inspect`. A `strtbl_…` id from `results tables` needs `--kind results-table` and `--entry` for that same entry. `--kind table` rejects a `strtbl_…` id. `assay-results` takes `--entry` and `--schema`. Add `--overwrite` only when the person asked to replace that file.
@@ -174,13 +175,13 @@ benchlingtk --env NAME export --kind assay-results --entry etr_example --schema 
 One plan covers one existing-entry mutation, one entry creation, or one container operation. The families are `entry`, `document`, `table`, `fields`, `results`, and `containers`. For `entry`, pass `entry_template_id`, `folder_id`, and `name`; optional `schema_fields` are checked against the template's schema. Omit `--entry` for entry and container plans. Write the JSON spec to a file, then plan. `--spec -` reads that JSON from stdin, and `--spec-json TEXT` takes it inline. Pass only one of `--spec`, `--spec-json`, and `--csv`.
 
 ```console
-benchlingtk --env NAME changes plan --entry etr_example --family table --spec set-cells.json
-benchlingtk --env NAME changes plan --family containers --spec create-container.json
-benchlingtk --env NAME changes plan --family containers --spec transfer-container.json
-benchlingtk --env NAME changes apply PLAN_ID
-benchlingtk --env NAME changes apply PLAN_ID --confirm-env NAME
-benchlingtk --env NAME changes status PLAN_ID
-benchlingtk --env NAME changes status PLAN_ID --wait --timeout 300
+benchlingtk changes plan --entry etr_example --family table --spec set-cells.json --env NAME
+benchlingtk changes plan --family containers --spec create-container.json --env NAME
+benchlingtk changes plan --family containers --spec transfer-container.json --env NAME
+benchlingtk changes apply PLAN_ID --env NAME
+benchlingtk changes apply PLAN_ID --confirm-env NAME --env NAME
+benchlingtk changes status PLAN_ID --env NAME
+benchlingtk changes status PLAN_ID --wait --timeout 300 --env NAME
 ```
 
 After applying an entry plan, use the returned `entry_id` with `entry inspect` or `results tables`. Entry creates use the V3 `POST /entry` route and are never automatically retried; a plan cannot be replayed after an attempt.
@@ -284,7 +285,7 @@ Apply submits each table separately. If a batch fails, other batches are still a
 CSV update of existing results. `--id-column` names the result id. Each `--map` is `CSV_COLUMN=FIELD`. `FIELD` is the export display name, the system name, or the field-definition id. Unmapped columns are not written. In an attachment column, a cell `file:PATH` uploads that local file (relative to the CSV's folder) at apply; any other text is an existing blob ID.
 
 ```console
-benchlingtk --env NAME changes plan --entry etr_example --family results --csv assay.csv --id-column id --map Ct=Ct --map Note=Note
+benchlingtk changes plan --entry etr_example --family results --csv assay.csv --id-column id --map Ct=Ct --map Note=Note --env NAME
 ```
 
 ## Results land as pending
@@ -301,7 +302,7 @@ The accept control may insert every pending result that matches the table's sche
 
 Use the toolkit for every read, write, export and check. Use a browser only to see what a person sees and to do what the public API cannot, chiefly accepting pending results. The toolkit writes as the app; the browser acts as the signed-in user, so the signed-in user needs access to the entry and the app needs access to its folder.
 
-1. Get the entry's link. `benchlingtk --env NAME entry get ENTRY` returns a stable `web_url` field, taken from Benchling's `webUrl` ("the absolute URL of the entry in the Benchling web app", Get Entry by ID on docs.benchling.com). Check that its host is the tenant saved for NAME before you open it. If there is no `web_url`, search the tenant for the display ID.
+1. Get the entry's link. `benchlingtk entry get ENTRY --env NAME` returns a stable `web_url` field, taken from Benchling's `webUrl` ("the absolute URL of the entry in the Benchling web app", Get Entry by ID on docs.benchling.com). Check that its host is the tenant saved for NAME before you open it. If there is no `web_url`, search the tenant for the display ID.
 2. Before you push results, open the entry and confirm its title, sections and results tables match `entry get` and `entry inspect`.
 3. After `changes apply` for results, run `results pending --plan PLAN_ID`. Every row is `pending`.
 4. Accept them only if the person asked you to; otherwise relay `next_step` to them. Refresh the entry: a page opened before the push does not show the new pending rows. In each submitted results table, hover the plug (integrate) icon in the table toolbar. Its tooltip shows the number of pending rows. If the count is higher than you pushed, stop and ask, because the plug appends every pending result for that table's schema. Click the plug. The rows are appended to the bottom of the table, replacing blank trailing rows. If integrating would take the table past the notebook row maximum, Benchling refuses; split the results across tables. (Uploading Results to Benchling through the API, "Integrating the Results into the Table", and Creating a new Notebook Entry containing Results, on docs.benchling.com.)
@@ -355,10 +356,10 @@ The MCP server serves the same file as the read-only resource `skill://benchling
 
 If the benchlingtk MCP tools are already connected, call them with the same environment name. Do not put a client secret in the client config. The server reads the OS keychain.
 
-The MCP tools are the CLI commands, one to one, generated from the same declarations. `benchlingtk --env ENV entry resolve REF` is the tool call `entry_resolve {env: ENV, reference: REF}`, and both reply with the same envelope. The naming rule:
+The MCP tools are the CLI commands, one to one, generated from the same declarations. `benchlingtk entry resolve REF --env ENV` is the tool call `entry_resolve {env: ENV, reference: REF}`, and both reply with the same envelope. The naming rule:
 
 - The tool name is the command path joined with `_`, with `-` also turned into `_`: `entry bulk-get` is `entry_bulk_get`, `changes apply` is `changes_apply`.
-- Each argument or option is an argument with the parameter name from `--help`: `--part-offset` is `part_offset`, `--confirm-env` is `confirm_env`, and the global `--env` is `env`.
+- Each argument or option is an argument with the parameter name from `--help`: `--part-offset` is `part_offset`, `--confirm-env` is `confirm_env`, and `--env` is `env`.
 - Defaults, limits, and help text are the CLI's. Each tool description ends with its write class: reads only, writes a local file or plan, or writes to Benchling.
 - `auth login`, `auth logout`, `auth protect`, `auth unprotect`, `skill path`, `skill show`, and `mcp serve` have no tool. Options that only make sense in a terminal have no argument: `changes plan --spec` and `--spec-json` (the tool's `spec` is the JSON object itself) and `issue draft --spec` and `--file`.
 

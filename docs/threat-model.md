@@ -109,7 +109,7 @@ The app's Benchling policy is the other half of the scope. A read-only app canno
 
 ### What this does not do
 
-- The CLI apply command does not check an allow-list. Anyone who can run `benchlingtk --env write changes apply PLAN_ID` as this user can apply a pending plan for `write`.
+- The CLI apply command does not check an allow-list. Anyone who can run `benchlingtk changes apply PLAN_ID --env write` as this user can apply a pending plan for `write`.
 - Scope is one entry per plan, not one project and not a set of entries. Nothing in the planner stops a caller from creating many plans across many entries the app can see.
 - Result PATCH and entry-field PATCH are not limited by an entry version on the wire. The entry check is the local comparison described above.
 - Export's path is chosen by the caller. The tool will write any path the user may write, and overwrite will replace that path.

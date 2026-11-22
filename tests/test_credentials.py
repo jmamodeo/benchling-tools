@@ -96,10 +96,10 @@ def test_failed_token_request_saves_nothing_and_hides_the_response(monkeypatch, 
     result = CliRunner().invoke(
         cli.app,
         [
-            "--env",
-            "dev",
             "auth",
             "login",
+            "--env",
+            "dev",
             "--tenant-url",
             "https://your-tenant.benchling.com",
             "--client-id",
@@ -478,7 +478,7 @@ def test_status_check_failure_is_an_authentication_error_without_the_secret(monk
     fake.token_status = 401
     fake.token_body = {"error": SECRET}
     patch_token_client(monkeypatch, fake)
-    result = CliRunner().invoke(cli.app, ["--env", "dev", "auth", "status", "--check"])
+    result = CliRunner().invoke(cli.app, ["auth", "status", "--check", "--env", "dev"])
     assert result.exit_code == 3
     payload = json.loads(result.stdout)
     assert payload["error"]["details"]["failed_envs"] == ["dev"]
@@ -892,7 +892,7 @@ def test_login_command_requires_an_environment_name() -> None:
 def test_status_check_reports_a_missing_secret(monkeypatch) -> None:
     configure_env("dev", "https://your-tenant.benchling.com/", secret=None)
     patch_token_client(monkeypatch, FakeBenchling())
-    result = CliRunner().invoke(cli.app, ["--env", "dev", "auth", "status", "--check"])
+    result = CliRunner().invoke(cli.app, ["auth", "status", "--check", "--env", "dev"])
     assert result.exit_code == 3
     row = json.loads(result.stdout)["error"]["details"]["environments"]["dev"]
     assert row["secret_present"] is False
@@ -1017,7 +1017,7 @@ def test_http_tenant_url_is_rejected_separately_from_the_client_id() -> None:
 
 
 def test_invalid_environment_name_states_the_rule() -> None:
-    result = CliRunner().invoke(cli.app, ["--env", "Dev_1", "auth", "status"])
+    result = CliRunner().invoke(cli.app, ["auth", "status", "--env", "Dev_1"])
     assert result.exit_code == 2
     message = json.loads(result.stdout)["error"]["message"]
     assert "Invalid environment name" in message
@@ -1242,7 +1242,7 @@ def test_prompt_helpers_and_url_error_wording(monkeypatch) -> None:
         Environment.strip_url_path(HttpUrl())  # type: ignore[arg-type]
 
     assert _doctor_hint(RuntimeError("unexpected"), "dev").startswith(
-        "Run benchlingtk --env dev doctor"
+        "Run benchlingtk doctor --env dev"
     )
     summary = cli._doctor_failure_message({"checks": [{"ok": True}]})
     assert summary == "Doctor checks failed"

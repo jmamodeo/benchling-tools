@@ -136,25 +136,27 @@ def _demo() -> None:
     )
 
     print("# 1. Read an entry (envelope trimmed for readability)\n")
-    run("--env", "demo", "entry", "inspect", ENTRY_ID, keep=("version_id", "project_id"))
+    run("entry", "inspect", ENTRY_ID, "--env", "demo", keep=("version_id", "project_id"))
 
     print("# 2. Preview: reads Benchling, writes nothing remotely\n")
-    plan = ("--env", "demo", "changes", "plan", "--entry", ENTRY_ID, "--family", "table")
+    plan = ("changes", "plan", "--entry", ENTRY_ID, "--family", "table")
     first = run(
         *plan,
         "--spec",
         spec_a.name,
+        "--env",
+        "demo",
         keep=("id", "family", "env", "preconditions", "guarantees", "warnings"),
     )
-    second = capture(*plan, "--spec", spec_b.name)[1]
+    second = capture(*plan, "--spec", spec_b.name, "--env", "demo")[1]
     print(f"remote writes so far: {len(fake.writes())}\n")
 
     print("# 3. Apply the first plan\n")
-    run("--env", "demo", "changes", "apply", first["data"]["id"], brief_journal=True)
+    run("changes", "apply", first["data"]["id"], "--env", "demo", brief_journal=True)
     print("# 4. The second plan was previewed against the old entry version: apply is refused\n")
-    run("--env", "demo", "changes", "apply", second["data"]["id"])
+    run("changes", "apply", second["data"]["id"], "--env", "demo")
     print("# 5. A plan cannot be applied twice\n")
-    run("--env", "demo", "changes", "apply", first["data"]["id"])
+    run("changes", "apply", first["data"]["id"], "--env", "demo")
     print(f"remote writes in total: {len(fake.writes())}\n")
 
     print("# 6. MCP server: read-only unless --allow-writes ENV is passed\n")

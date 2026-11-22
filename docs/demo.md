@@ -8,7 +8,7 @@ The picture and the [asciinema cast](demo.cast) are a scripted playback of one r
 ```console
 # 1. Read an entry (envelope trimmed for readability)
 
-$ benchlingtk --env demo entry inspect etr_abc123
+$ benchlingtk entry inspect etr_abc123 --env demo
 {
   "ok": true,
   "data": {
@@ -20,7 +20,7 @@ $ benchlingtk --env demo entry inspect etr_abc123
 
 # 2. Preview: reads Benchling, writes nothing remotely
 
-$ benchlingtk --env demo changes plan --entry etr_abc123 --family table --spec set-cell-b2.json
+$ benchlingtk changes plan --entry etr_abc123 --family table --spec set-cell-b2.json --env demo
 {
   "ok": true,
   "data": {
@@ -45,7 +45,7 @@ remote writes so far: 0
 
 # 3. Apply the first plan
 
-$ benchlingtk --env demo changes apply b7a812bc920d407e9df9b23ef6ef749e
+$ benchlingtk changes apply b7a812bc920d407e9df9b23ef6ef749e --env demo
 {
   "ok": true,
   "data": {
@@ -72,7 +72,7 @@ $ benchlingtk --env demo changes apply b7a812bc920d407e9df9b23ef6ef749e
 
 # 4. The second plan was previewed against the old entry version: apply is refused
 
-$ benchlingtk --env demo changes apply c2eac4de90534faeabea68cac9cf2a05
+$ benchlingtk changes apply c2eac4de90534faeabea68cac9cf2a05 --env demo
 {
   "ok": false,
   "error": {
@@ -89,7 +89,7 @@ $ benchlingtk --env demo changes apply c2eac4de90534faeabea68cac9cf2a05
 
 # 5. A plan cannot be applied twice
 
-$ benchlingtk --env demo changes apply b7a812bc920d407e9df9b23ef6ef749e
+$ benchlingtk changes apply b7a812bc920d407e9df9b23ef6ef749e --env demo
 {
   "ok": false,
   "error": {
