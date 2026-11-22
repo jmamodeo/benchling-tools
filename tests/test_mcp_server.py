@@ -587,6 +587,28 @@ async def test_get_result_returns_record_or_not_found(client) -> None:
     assert missing["error"]["code"] == "not_found"
 
 
+async def test_results_tools_warn_when_a_table_cell_is_stale(client, fake) -> None:
+    fake.add_results_table()
+    fake.results_parts["docpart_rt1"]["columnDefinitions"][0]["fieldDefinitionApiId"] = "af_ct"
+    fake.results[0]["schemaFields"] = [
+        {"fieldDefinition": {"id": "af_ct"}, "value": {"__typename": "IntegerValue", "value": 15}}
+    ]
+    fake.parts.append(
+        {
+            "id": "docpart_rt1",
+            "__typename": "DocumentPartResultsTable",
+            "resultSchema": {"id": "assaysch_abc123"},
+        }
+    )
+    rows = (await call(client, "results_rows", env="sandbox", part_id="docpart_rt1"))["data"]
+    assert "Re-sync table" in rows["warnings"][0]
+    assert rows["items"][0]["stale_cells"][0]["table_value"] == 12
+    got = (await call(client, "results_get", env="sandbox", result_id="result_1"))["data"]
+    assert got["table_check"]["status"] == "stale"
+    assert "Re-sync table" in got["warnings"][0]
+    assert fake.writes() == []
+
+
 async def test_list_result_tables_pages_targets(client, fake) -> None:
     data = (await call(client, "results_tables", env="sandbox", reference=ENTRY_ID))["data"]
     assert data["items"][0]["table_id"] == "strtbl_example"

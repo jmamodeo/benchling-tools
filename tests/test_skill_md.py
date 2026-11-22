@@ -160,6 +160,19 @@ def test_skill_pairs_the_toolkit_with_a_browser_without_driving_one() -> None:
     ) in alongside
 
 
+def test_after_a_results_update_the_skill_says_re_sync_table_not_the_plug() -> None:
+    alongside = SKILL.split("## Working alongside the browser", 1)[1].split("\n## ", 1)[0]
+    step = next(line for line in alongside.splitlines() if line.startswith("6. "))
+    assert "After a results update" in step
+    assert "**Re-sync table**" in step
+    assert "Do not click the plug for this" in step
+    assert "`table_check`" in step and "`stale_cells`" in step
+    assert "UI-only" in step
+    assert "accept it the same way" not in SKILL
+    accept = next(line for line in alongside.splitlines() if line.startswith("4. "))
+    assert "plug" in accept and "pending" in accept
+
+
 def test_skill_urls_are_the_repository_and_benchling_docs_only() -> None:
     hosts = set()
     for url in _URL.findall(SKILL):

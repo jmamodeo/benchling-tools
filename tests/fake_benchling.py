@@ -288,6 +288,20 @@ def _result_entry_id(item: dict[str, Any]) -> str | None:
     return None
 
 
+def _v3_view(item: dict[str, Any]) -> dict[str, Any]:
+    """The V3 ``Result`` for a V2 assay result: id is ``v3Id``; no V2 UUID is included."""
+    entry_id = item.get("entryId")
+    return {
+        "__typename": "Result",
+        "id": item["v3Id"],
+        "archived": bool(item.get("archiveRecord")),
+        "createdAt": item.get("createdAt"),
+        "entry": {"__typename": "DocumentLikeRef", "id": entry_id} if entry_id else None,
+        "schema": {"__typename": "ResultSchemaRef", "id": (item.get("schema") or {}).get("id")},
+        "schemaFields": [],
+    }
+
+
 def _result_schema_id(item: dict[str, Any]) -> str | None:
     """V2 ``schemaId`` or the V3 ``schema`` ref."""
     schema_id = item.get("schemaId")
@@ -1546,6 +1560,8 @@ class FakeBenchling:
         requested = [item for item in call.params.get("assayResultIds", "").split(",") if item]
         if not requested or len(requested) > 200:
             return 400, {"error": {"message": "assayResultIds must list 1 to 200 IDs"}}
+        if any(item.startswith("result_") for item in requested):
+            return 400, {"error": {"message": "One or more provided assayResultIds were invalid"}}
         found = [deepcopy(item) for item in self.assay_results if item["id"] in requested]
         return 200, {"assayResults": found}
 
@@ -1553,18 +1569,29 @@ class FakeBenchling:
         if "entry.eq" in call.params or "entryId" in call.params:
             return 400, {"error": {"message": "unsupported filter"}}
         items = self.assay_results
+        if call.params.get("archiveReason") != "ANY_ARCHIVED_OR_NOT_ARCHIVED":
+            items = [r for r in items if not r.get("archiveRecord")]
         if "schemaId" in call.params:
             items = [
                 r for r in items if (r.get("schema") or {}).get("id") == call.params["schemaId"]
             ]
         if "createdAt.gte" in call.params:
             items = [r for r in items if r["createdAt"] >= call.params["createdAt.gte"]]
+        if "createdAt.lte" in call.params:
+            items = [r for r in items if r["createdAt"] <= call.params["createdAt.lte"]]
         size = self.assay_result_page_size or int(call.params.get("pageSize") or 50)
         return self._page(deepcopy(items), call, size, key="assayResults")
 
     # ---- results -----------------------------------------------------
+    def _v3_results(self) -> list[dict[str, Any]]:
+        """V3 results: ``self.results`` plus the V3 view of each V2 result with a ``v3Id``."""
+        return [*self.results, *(_v3_view(item) for item in self.assay_results if item.get("v3Id"))]
+
     def _list_results(self, call: Call) -> tuple[int, dict[str, Any]]:
-        items = self.results
+        items = self._v3_results()
+        if "id.anyOf" in call.params:
+            wanted = call.params["id.anyOf"].split(",")
+            items = [r for r in items if r["id"] in wanted]
         if "entry.eq" in call.params:
             items = [r for r in items if _result_entry_id(r) == call.params["entry.eq"]]
         if "schema.eq" in call.params:
@@ -1572,7 +1599,7 @@ class FakeBenchling:
         return self._page(deepcopy(items), call, self.results_page_size)
 
     def _get_result(self, call: Call, result_id: str) -> tuple[int, dict[str, Any]]:
-        for item in self.results:
+        for item in self._v3_results():
             if item["id"] == result_id:
                 return 200, deepcopy(item)
         return 404, {"error": {"message": "result not found"}}
