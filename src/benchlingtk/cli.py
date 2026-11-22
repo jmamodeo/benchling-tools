@@ -658,9 +658,10 @@ async def doctor(call: Call) -> Any:
     return result
 
 
-_ENTRY_REF_HELP = "Entry ID, display ID, or same-tenant entry URL."
+_ENTRY_REF_HELP = "Entry ID (etr_…), display ID, or same-tenant entry URL."
 _CURSOR_HELP = "next_token from the previous page. Omit it to read the first page."
 _LIMIT_HELP = "Page size, from 1 to 100."
+_PART_ID_HELP = "v3_document_part id (docpart_…), as listed by entry inspect."
 
 
 def _pagination(offset: int, returned: int, total: int) -> dict[str, Any]:
@@ -761,7 +762,7 @@ async def entry_bulk_get(
     entry_ids: list[str] | None = typer.Option(
         None,
         "--id",
-        help="Entry ID. Repeat for several. Use this or --display-id, not both.",
+        help="Entry ID (etr_…). Repeat for several. Use this or --display-id, not both.",
     ),
     display_ids: list[str] | None = typer.Option(
         None,
@@ -781,14 +782,19 @@ async def entry_bulk_get(
 async def entry_inspect(
     call: Call, reference: str = typer.Argument(..., help=_ENTRY_REF_HELP)
 ) -> Any:
-    """Summarize an entry's sections, part IDs, schemas, and tables without full content."""
+    """Summarize an entry's sections, part IDs, schemas, and tables without full content.
+
+    Part IDs are v3_document_part ids (docpart_…), the ids section get, part get,
+    table get, and results rows take. They are not the v2_structured_table ids
+    (strtbl_…) that results tables returns.
+    """
     return await call.runtime.service.inspect_entry(reference)
 
 
 @template_app.command("get")
 @command(read_only=True)
 async def template_get(
-    call: Call, template_id: str = typer.Argument(..., help="Entry template ID.")
+    call: Call, template_id: str = typer.Argument(..., help="Entry template ID (tmpl_…).")
 ) -> Any:
     """Get an entry template and summarize its structure (from V2; V3 has metadata only)."""
     return await call.runtime.service.get_template(template_id)
@@ -808,8 +814,10 @@ async def template_list(
 
 @folder_app.command("get")
 @command(read_only=True)
-async def folder_get(call: Call, folder_id: str = typer.Argument(..., help="Folder ID.")) -> Any:
-    """Get a folder by ID."""
+async def folder_get(
+    call: Call, folder_id: str = typer.Argument(..., help="Folder ID (lib_…).")
+) -> Any:
+    """Get a folder by folder ID (lib_…)."""
     return await call.runtime.service.get_folder(folder_id)
 
 
@@ -818,12 +826,14 @@ async def folder_get(call: Call, folder_id: str = typer.Argument(..., help="Fold
 async def entry_list(
     call: Call,
     project: str | None = typer.Option(
-        None, "--project", help="Project ID. Omit to list entries from every readable project."
+        None,
+        "--project",
+        help="Project ID (src_…). Omit to list entries from every readable project.",
     ),
     folder: str | None = typer.Option(
         None,
         "--folder",
-        help="Folder ID. The whole query then uses V2, because V3 entry listing ignores folder.",
+        help="Folder ID (lib_…). The query then uses V2, because V3 entry listing ignores folder.",
     ),
     schema_id: str | None = typer.Option(
         None, "--schema", help="Entry schema ID. Omit to include every schema."
@@ -883,7 +893,7 @@ async def section_get(
     call: Call,
     reference: str = typer.Argument(..., help=_ENTRY_REF_HELP),
     section: str = typer.Argument(
-        ..., help="Stable document part ID, or a section title that is unique."
+        ..., help="Section part id (docpart_…) from entry inspect, or a unique section title."
     ),
     part_offset: int = typer.Option(
         0, "--part-offset", min=0, help="Parts in the section to skip. Zero is the first."
@@ -921,7 +931,7 @@ async def section_get(
 async def part_get(
     call: Call,
     reference: str = typer.Argument(..., help=_ENTRY_REF_HELP),
-    part_id: str = typer.Argument(..., help="Stable document part ID."),
+    part_id: str = typer.Argument(..., help=_PART_ID_HELP),
     row_offset: int = typer.Option(
         0, "--row-offset", min=0, help="Table rows to skip when the part is a table."
     ),
@@ -940,13 +950,19 @@ async def part_get(
 @command(read_only=True)
 async def table_get(
     call: Call,
-    part_id: str = typer.Argument(..., help="Document part ID of an unstructured table."),
+    part_id: str = typer.Argument(
+        ...,
+        help=(
+            "v3_document_part id (docpart_…) of an unstructured table, from entry inspect. "
+            "Not a strtbl_ id."
+        ),
+    ),
     row_offset: int = typer.Option(
         0, "--row-offset", min=0, help="Table rows to skip. Zero is the first row."
     ),
     row_limit: int = typer.Option(250, "--row-limit", min=1, help="Most table rows to return."),
 ) -> Any:
-    """Get a page of an unstructured table by its document part ID."""
+    """Get a page of an unstructured table by its v3_document_part id (docpart_…)."""
     table = await call.runtime.service.get_table(part_id)
     return _page_table(table, row_offset, row_limit)
 
@@ -955,7 +971,13 @@ async def table_get(
 @command(read_only=True)
 async def schema_get(
     call: Call,
-    schema_id: str = typer.Argument(..., help="Entry, entity, result, or run schema ID."),
+    schema_id: str = typer.Argument(
+        ...,
+        help=(
+            "Schema ID. es_… is read as an entity schema, assaysch_… as a result "
+            "schema, runsch_… as a run schema, and any other id as an entry schema."
+        ),
+    ),
     field_offset: int = typer.Option(
         0, "--field-offset", min=0, help="Field definitions to skip. Zero is the first."
     ),
@@ -1006,9 +1028,9 @@ async def schema_list(
 @container_app.command("get")
 @command(read_only=True)
 async def container_get(
-    call: Call, container_id: str = typer.Argument(..., help="Inventory container ID.")
+    call: Call, container_id: str = typer.Argument(..., help="Inventory container ID (con_…).")
 ) -> Any:
-    """Get an inventory container by ID."""
+    """Get an inventory container by container ID (con_…)."""
     return await call.runtime.service.get_container(container_id)
 
 
@@ -1043,17 +1065,26 @@ async def container_schema_list(
 async def results_list(
     call: Call,
     entry: str | None = typer.Option(
-        None, "--entry", help="Entry ID, display ID, or URL. Omit to list results from every entry."
+        None,
+        "--entry",
+        help="Entry ID (etr_…), display ID, or URL. Omit to list results from every entry.",
     ),
     schema_id: str | None = typer.Option(
-        None, "--schema", help="Result schema ID. Omit to include every result schema."
+        None,
+        "--schema",
+        help="Result schema ID (assaysch_…). Omit to include every result schema.",
     ),
     page_size: int = typer.Option(
         100, "--page-size", min=1, max=100, help="Result records per page, from 1 to 100."
     ),
     cursor: str | None = typer.Option(None, "--cursor", help=_CURSOR_HELP),
 ) -> Any:
-    """List one explicit page of result records, optionally filtered by entry or schema."""
+    """List one explicit page of result records, optionally filtered by entry or schema.
+
+    Records come from V3 GET /result/items. Each id is a V3 result id (result_…),
+    the id results get takes. results pending --id takes V2 assay result ids
+    (UUIDs) instead.
+    """
     return await call.runtime.service.list_results(
         entry=entry, schema_id=schema_id, page_size=page_size, cursor=cursor
     )
@@ -1062,9 +1093,15 @@ async def results_list(
 @results_app.command("get")
 @command(read_only=True)
 async def results_get(
-    call: Call, result_id: str = typer.Argument(..., help="Canonical result ID.")
+    call: Call,
+    result_id: str = typer.Argument(
+        ..., help="V3 result id (result_…), as results list returns. Not a V2 assay result UUID."
+    ),
 ) -> Any:
-    """Get one result record by canonical ID."""
+    """Get one result record by V3 result id (result_…) with V3 GET /result/{id}.
+
+    For V2 assay result ids (UUIDs), including pending results, use results pending --id.
+    """
     return await call.runtime.service.get_result(result_id)
 
 
@@ -1072,9 +1109,18 @@ async def results_get(
 @command(read_only=True)
 async def blob_get(
     call: Call,
-    blob_id: str = typer.Argument(..., help="Blob ID, the value an attachment result field holds."),
+    blob_id: str = typer.Argument(
+        ...,
+        help=(
+            "V2 blob ID, a UUID: the value an attachment result field holds. "
+            "Not an attachment_… id or a docpart_… attachment part id."
+        ),
+    ),
 ) -> Any:
-    """Get one blob's metadata: name, type, MIME type and upload status. Nothing is downloaded."""
+    """Get one blob's metadata: name, type, MIME type and upload status. Nothing is downloaded.
+
+    Reads V2 GET /blobs/{blob_id}, so the id is a blob UUID, not an attachment_… id.
+    """
     return await call.runtime.service.get_blob(blob_id)
 
 
@@ -1092,7 +1138,8 @@ async def results_tables(
 ) -> Any:
     """Discover explicit V2 result-table IDs and assigned schemas on one entry.
 
-    Each table_id is a v2_structured_table id (strtbl_…).
+    Each table_id is a v2_structured_table id (strtbl_…), not a v3_document_part
+    id (docpart_…). results rows maps it with --entry; table get does not take it.
 
     CLI: Export it with ``export --kind results-table --part TABLE_ID --entry ENTRY``.
 
@@ -1110,16 +1157,35 @@ async def results_tables(
 @command(read_only=True)
 async def results_rows(
     call: Call,
-    part_id: str = typer.Argument(..., help="Document part ID of a results table."),
+    part_id: str = typer.Argument(
+        ...,
+        help=(
+            "Results table id: a v3_document_part id (docpart_…) from entry inspect, "
+            "or a v2_structured_table id (strtbl_…) from results tables with --entry."
+        ),
+    ),
+    entry: str | None = typer.Option(
+        None,
+        "--entry",
+        help=(
+            "Entry ID (etr_…), display ID, or URL holding the table. "
+            "Required with a strtbl_ id; not used with a docpart_ id."
+        ),
+    ),
     limit: int = typer.Option(50, "--limit", min=1, max=100, help=_LIMIT_HELP),
     cursor: str | None = typer.Option(None, "--cursor", help=_CURSOR_HELP),
 ) -> Any:
     """Read one page of rows from a results table.
 
-    Rows come from GET /document-part-results-table/{id}/rows/items. Pass the
-    previous next_token with --cursor.
+    Rows come from GET /document-part-results-table/{id}/rows/items, which takes a
+    v3_document_part id (docpart_…). A strtbl_ id from results tables is mapped
+    to the matching part on the --entry entry, and the response adds table_id and
+    listed_id_namespace. It is a validation_error when --entry is missing or no
+    single part matches. Pass the previous next_token with --cursor.
     """
-    return await call.runtime.service.list_results_table_rows(part_id, limit=limit, cursor=cursor)
+    return await call.runtime.service.list_results_table_rows(
+        part_id, entry=entry, limit=limit, cursor=cursor
+    )
 
 
 @results_app.command("pending")
@@ -1130,10 +1196,15 @@ async def results_pending(
         None, "--plan", help="Applied result upload plan ID; its journal gives the record IDs."
     ),
     result_ids: list[str] | None = typer.Option(
-        None, "--id", help="V2 assay result ID, read 200 per request. Repeat to read several."
+        None,
+        "--id",
+        help=(
+            "V2 assay result ID (a UUID), read 200 per request. "
+            "Not a V3 result_… id. Repeat to read several."
+        ),
     ),
     schema_id: str | None = typer.Option(
-        None, "--schema", help="Result schema ID. Needs --created-after."
+        None, "--schema", help="Result schema ID (assaysch_…). Needs --created-after."
     ),
     created_after: str | None = typer.Option(
         None,
@@ -1209,12 +1280,12 @@ async def export_data(
         None,
         "--entry",
         help=(
-            "Entry ID, display ID, or URL. Assay-results filter. "
+            "Entry ID (etr_…), display ID, or URL. Assay-results filter. "
             "Also required with a strtbl_ id from results tables."
         ),
     ),
     schema_id: str | None = typer.Option(
-        None, "--schema", help="Result schema ID. Assay results only."
+        None, "--schema", help="Result schema ID (assaysch_…). Assay results only."
     ),
 ) -> Any:
     """Write a table, results table, or assay results to a local file and return a summary.
@@ -1337,7 +1408,9 @@ _SPECIFICATION = McpParam(
 async def changes_plan(
     call: Call,
     entry: str | None = typer.Option(
-        None, "--entry", help="Entry ID, display ID, or URL. Omit for entry or container plans."
+        None,
+        "--entry",
+        help="Entry ID (etr_…), display ID, or URL. Omit for entry or container plans.",
     ),
     family: PlanFamily = typer.Option(
         ...,
@@ -1358,7 +1431,7 @@ async def changes_plan(
     id_column: str | None = typer.Option(
         None,
         "--id-column",
-        help="CSV column that holds the result id. Required with --csv.",
+        help="CSV column that holds the V3 result id (result_…). Required with --csv.",
     ),
     column_map: list[str] = typer.Option(
         [],

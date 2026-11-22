@@ -754,6 +754,45 @@ async def test_list_results_table_rows_is_read_only_and_paged(client, fake) -> N
     assert fake.writes() == []
 
 
+async def test_results_rows_tool_maps_a_listed_table_id(client, fake) -> None:
+    fake.add_results_table()
+    fake.parts.append(
+        {
+            "id": "docpart_rt1",
+            "__typename": "DocumentPartResultsTable",
+            "name": "Plate",
+            "resultSchema": {"__typename": "ResultSchemaRef", "id": "assaysch_abc123"},
+        }
+    )
+    mapped = await call(
+        client, "results_rows", env="sandbox", part_id="strtbl_example", entry=ENTRY_ID
+    )
+    assert mapped["data"]["id"] == "docpart_rt1"
+    assert mapped["data"]["table_id"] == "strtbl_example"
+    refused = await call(client, "results_rows", env="sandbox", part_id="strtbl_example")
+    assert refused["ok"] is False
+    assert refused["error"]["code"] == "validation_error"
+    assert refused["error"]["details"]["expected_id_namespace"] == "v3_document_part"
+    assert fake.writes() == []
+
+
+async def test_tool_descriptions_name_id_namespaces(client) -> None:
+    tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+    expected = {
+        "results_get": ["result_", "UUID"],
+        "results_list": ["result_"],
+        "results_tables": ["strtbl_", "docpart_"],
+        "results_rows": ["docpart_", "strtbl_"],
+        "blob_get": ["UUID", "attachment_"],
+    }
+    for name, tokens in expected.items():
+        text = json.dumps(
+            {"description": tools[name].description, "schema": tools[name].input_schema}
+        )
+        for token in tokens:
+            assert token in text, (name, token)
+
+
 async def test_read_back_and_verify_results_without_allow_writes(client, pool, fake) -> None:
     runtime = pool.get("sandbox")
     planned = await runtime.planner.plan(

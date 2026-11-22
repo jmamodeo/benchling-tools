@@ -880,6 +880,64 @@ def test_entry_read_help_mentions_web_url() -> None:
         assert "web_url" in help_text, command
 
 
+ID_NAMESPACE_HELP = {
+    ("results", "list"): ["result_", "etr_", "assaysch_", "next_token", "UUID"],
+    ("results", "get"): ["result_", "UUID"],
+    ("results", "pending"): ["UUID", "result_", "assaysch_"],
+    ("results", "tables"): ["strtbl_", "v2_structured_table", "docpart_"],
+    ("results", "rows"): ["docpart_", "v3_document_part", "strtbl_", "--entry"],
+    ("blob", "get"): ["UUID", "attachment_"],
+    ("entry", "inspect"): ["docpart_", "strtbl_"],
+    ("entry", "bulk-get"): ["etr_"],
+    ("table", "get"): ["docpart_", "strtbl_"],
+    ("part", "get"): ["docpart_"],
+    ("section", "get"): ["docpart_"],
+    ("schema", "get"): ["es_", "assaysch_", "runsch_"],
+    ("template", "get"): ["tmpl_"],
+    ("folder", "get"): ["lib_"],
+    ("container", "get"): ["con_"],
+}
+
+
+def test_id_taking_commands_name_their_id_namespace() -> None:
+    for path, tokens in ID_NAMESPACE_HELP.items():
+        help_text = plain_stdout([*path, "--help"])
+        for token in tokens:
+            assert token in help_text, (path, token)
+
+
+def test_results_list_filters_have_help() -> None:
+    import typer
+
+    command = typer.main.get_command(cli.app).commands["results"].commands["list"]
+    helps = {param.name: getattr(param, "help", None) for param in command.params}
+    for name in ("entry", "schema_id", "cursor"):
+        assert helps[name] and helps[name].strip(), name
+
+
+def test_cli_results_rows_maps_a_listed_table_id(invoke, fake) -> None:
+    fake.add_results_table()
+    fake.parts.append(
+        {
+            "id": "docpart_rt1",
+            "__typename": "DocumentPartResultsTable",
+            "name": "Plate",
+            "resultSchema": {"__typename": "ResultSchemaRef", "id": "assaysch_abc123"},
+        }
+    )
+    code, payload, _ = invoke("results", "rows", "strtbl_example", "--entry", ENTRY_ID)
+    assert code == 0
+    assert payload["data"]["id"] == "docpart_rt1"
+    assert payload["data"]["table_id"] == "strtbl_example"
+    assert payload["data"]["listed_id_namespace"] == "v2_structured_table"
+
+    code, payload, _ = invoke("results", "rows", "strtbl_example")
+    assert code == 2
+    assert payload["error"]["code"] == "validation_error"
+    assert payload["error"]["details"]["id_namespace"] == "v2_structured_table"
+    assert payload["error"]["details"]["expected_id_namespace"] == "v3_document_part"
+
+
 def test_cli_pages_like_the_mcp_tools(invoke, fake) -> None:
     fake.table_page_size = 2
     code, table, _ = invoke("table", "get", TABLE_PART, "--row-offset", "2", "--row-limit", "5")
