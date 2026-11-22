@@ -89,11 +89,14 @@ async def test_tools_are_annotated_by_whether_they_can_write(client) -> None:
         "export",
         "changes_plan",
         "changes_apply",
+        "changes_export",
         "issue_draft",
     } == set(tools)
     for name in READ_TOOLS:
         assert tools[name].annotations.read_only_hint is True, name
     assert tools["changes_apply"].annotations.destructive_hint is True
+    assert tools["changes_export"].annotations.read_only_hint is False
+    assert tools["changes_export"].annotations.destructive_hint is False
     assert tools["changes_plan"].annotations.read_only_hint is False
     assert tools["changes_plan"].annotations.destructive_hint is False
     assert tools["export"].annotations.read_only_hint is False
@@ -660,6 +663,32 @@ async def test_plan_and_status_work_but_apply_is_blocked_by_default(client, fake
     status = (await call(client, "changes_status", env="sandbox", plan_id=plan_id))["data"]
     assert status["journal"]["status"] == "pending"
     assert status["plan"]["family"] == "document"
+
+
+async def test_changes_export_tool_writes_a_portable_bundle(client, tmp_path) -> None:
+    planned = await call(
+        client,
+        "changes_plan",
+        env="sandbox",
+        entry=ENTRY_ID,
+        family="document",
+        spec={"operation": "delete", "from_part_id": TEXT_PART},
+    )
+    output = tmp_path / "portable-plan.json"
+
+    exported = await call(
+        client,
+        "changes_export",
+        env="sandbox",
+        plan_id=planned["data"]["id"],
+        output=str(output),
+    )
+
+    assert exported["data"]["plan_id"] == planned["data"]["id"]
+    bundle = json.loads(output.read_text())
+    assert bundle["plan"]["id"] == planned["data"]["id"]
+    assert bundle["checksum"] == bundle["plan"]["checksum"]
+    assert bundle["journal"]["plan_id"] == planned["data"]["id"]
 
 
 async def test_plan_validation_errors_are_enveloped(client, fake) -> None:
@@ -1313,6 +1342,7 @@ async def test_every_cli_command_is_one_tool_named_after_its_path(client) -> Non
         "issue_draft",
         "changes_plan",
         "changes_apply",
+        "changes_export",
     }
 
 
@@ -1414,7 +1444,11 @@ async def test_every_tool_description_ends_with_its_write_class(client) -> None:
     tools = {tool.name: tool for tool in (await client.list_tools()).tools}
     expected = {name: "read" for name in READ_TOOLS | {"issue_draft"}}
     expected.update(
-        blob_download="local", export="local", changes_plan="local", changes_apply="benchling"
+        blob_download="local",
+        export="local",
+        changes_plan="local",
+        changes_export="local",
+        changes_apply="benchling",
     )
     assert set(expected) == set(tools)
     for name, tool in tools.items():
@@ -1422,5 +1456,6 @@ async def test_every_tool_description_ends_with_its_write_class(client) -> None:
         assert note == WRITE_CLASS_NOTES[expected[name]], name
     assert "reads only" in tools["entry_get"].description
     assert "writes a local file or plan" in tools["export"].description
+    assert "writes a local file or plan" in tools["changes_export"].description
     assert "writes to Benchling" in tools["changes_apply"].description
     assert "--allow-writes for env" in tools["changes_apply"].description

@@ -9,7 +9,7 @@ All notable changes to this project are documented here. The format is based on
 ### Added
 
 - `blob download` (MCP `blob_download`) streams a blob UUID or `attachment_…` ID to a local file and reports size, SHA-256 and MD5. Optional expected hashes, size, or a reference file verify the download before it replaces the destination; without expectations the summary says `verified: false`. Existing files require `--force` to replace.
-- `results pending --plan` accepts a plan ID in the current home or a plan JSON file, and `results verify` accepts a plan ID or file path. For cross-home read-back, copy the applied journal beside the plan as `<plan-id>.journal.json`; the active environment must match. See `SKILL.md`.
+- `changes export PLAN_ID --output FILE` writes a self-contained JSON bundle of a plan, its checksum, and journal. `results pending --plan`, `results verify`, and `changes status` accept that bundle; a plain plan file still works with its applied sibling journal. The active environment must match.
 - `results list --id` (MCP `results_list` `result_ids`) lists results by id, up to 100, as V3 `id.anyOf`. Each id may be a V3 result id (`result_…`) or a V2 assay result UUID; a UUID that cannot be mapped is listed in `not_found` with `id_namespace` and `lookup`.
 
 - CLI paging options that only the MCP tools had: `entry get --full` takes `--part-offset`, `--part-limit`, `--result-offset`, `--result-limit`, `--table-row-offset` and `--table-row-limit`; `section get` takes the part and table-row options; `part get` and `table get` take `--row-offset` and `--row-limit`; `schema get` takes `--field-offset` and `--field-limit`; and `results tables` takes `--offset` and `--limit`. Paged output has a `pagination` object.

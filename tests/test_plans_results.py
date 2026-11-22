@@ -263,6 +263,8 @@ async def test_apply_posts_normalized_records_once(runtime, fake) -> None:
     assert applied["journal"]["result"]["http_status"] == 202
     assert applied["journal"]["result"]["task_id"] == "task_abc123"
     assert applied["journal"]["result"]["state"] == "submission_pending"
+    stages = [event["stage"] for event in applied["journal"]["events"]]
+    assert "create_results" in stages and "submit_results" not in stages
     assert applied["journal"]["result"]["record_ids"] == []
     assert applied["journal"]["result"]["client_record_ids"] == planned.after["client_record_ids"]
     assert all("id" not in record for record in payload["assayResults"])

@@ -320,7 +320,7 @@ class ChangePlanner(
         raise wrapped from exc
 
     async def status(
-        self, plan_id: str, *, wait: bool = False, timeout: float = 300.0
+        self, plan_reference: str, *, wait: bool = False, timeout: float = 300.0
     ) -> dict[str, Any]:
         """Return the plan and journal; for submitted results, also reconcile the remote task.
 
@@ -335,9 +335,8 @@ class ChangePlanner(
             or timeout > 3600
         ):
             raise ValidationError("timeout must be greater than 0 and at most 3600 seconds")
-        plan = self.repository.load_plan(plan_id)
+        plan, journal = self._load_plan_and_journal(plan_reference)
         self._check_plan_scope(plan)
-        journal = self.repository.load_journal(plan_id)
         status: dict[str, Any] = {
             "plan": plan.model_dump(mode="json"),
             "journal": journal.model_dump(mode="json"),
@@ -363,12 +362,15 @@ class ChangePlanner(
             status.update(self._row_errors_by_table(results))
             if updates:
                 lock = FileLock(
-                    str(self.repository.config.locks_dir / f"plan-{plan_id}.apply.lock"),
+                    str(self.repository.config.locks_dir / f"plan-{plan.id}.apply.lock"),
                     thread_local=False,
                 )
                 await asyncio.to_thread(lock.acquire, timeout=30)
                 try:
-                    latest = self.repository.load_journal(plan_id)
+                    journal_path = self.repository.config.journals_dir / f"{plan.id}.json"
+                    latest = (
+                        self.repository.load_journal(plan.id) if journal_path.is_file() else journal
+                    )
                     if latest.result is None:
                         latest.result = {}
                     known = latest.result.get("batches")
@@ -410,19 +412,30 @@ class ChangePlanner(
                     lock.release()
         return status
 
-    def _readback_plan(self, plan_reference: str) -> tuple[ChangePlan, ChangeJournal]:
-        """Load an applied result upload plan for read-back in the active environment."""
+    def _load_plan_and_journal(self, plan_reference: str) -> tuple[ChangePlan, ChangeJournal]:
+        """Load a plan ID or portable plan file and its journal."""
         plan_file = Path(plan_reference)
         if (
             plan_file.is_file()
             or plan_file.suffix.casefold() == ".json"
             or plan_file.parent != Path(".")
         ):
-            plan = self.repository.load_plan_file(plan_file)
-            journal = self.repository.load_journal(plan.id, plan_file=plan_file)
+            plan, bundled_journal = self.repository.load_plan_document(plan_file)
+            journal = self.repository.find_plan_file_journal(plan.id, plan_file, bundled_journal)
+            if journal is None:
+                raise ValidationError(
+                    "The plan file's applied journal is missing. Export it with "
+                    "`changes export PLAN_ID --output FILE` from the source home.",
+                    details={"plan_id": plan.id},
+                )
         else:
             plan = self.repository.load_plan(plan_reference)
             journal = self.repository.load_journal(plan.id)
+        return plan, journal
+
+    def _readback_plan(self, plan_reference: str) -> tuple[ChangePlan, ChangeJournal]:
+        """Load an applied result upload plan for read-back in the active environment."""
+        plan, journal = self._load_plan_and_journal(plan_reference)
         self._check_plan_scope(plan)
         if plan.family != PlanFamily.RESULTS or plan.preconditions.get("operation") == "update":
             raise ValidationError(

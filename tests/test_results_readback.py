@@ -14,6 +14,7 @@ from benchlingtk import cli
 from benchlingtk.config import ConfigStore
 from benchlingtk.errors import ValidationError
 from benchlingtk.plans import readback
+from benchlingtk.plans.repository import checksum_for
 
 TABLE = "strtbl_example"
 
@@ -484,12 +485,15 @@ def test_cli_pending_and_verify_accept_portable_plan_file(
     fake.complete_upload()
     portable_dir = tmp_path / "portable-cli"
     portable_dir.mkdir()
-    plan_file = portable_dir / "portable-plan.json"
-    shutil.copyfile(ConfigStore().plans_dir / f"{plan_id}.json", plan_file)
-    shutil.copyfile(
-        ConfigStore().journals_dir / f"{plan_id}.json",
-        portable_dir / f"{plan_id}.journal.json",
-    )
+    bundle_file = portable_dir / "portable-plan.json"
+    code, exported = invoke("changes", "export", plan_id, "--output", str(bundle_file))
+    assert code == 0, exported
+    content = bundle_file.read_text()
+    bundle = json.loads(content)
+    assert "client_secret" not in content and "access_token" not in content
+    assert str(ConfigStore().root) not in content
+    assert bundle["checksum"] == bundle["plan"]["checksum"]
+    assert bundle["journal"]["plan_id"] == plan_id
     fresh_home = tmp_path / "cli-home"
     runtime_factory = cli.Runtime
 
@@ -500,12 +504,131 @@ def test_cli_pending_and_verify_accept_portable_plan_file(
 
     monkeypatch.setattr(cli, "Runtime", runtime_with_fresh_home)
 
-    pending_code, pending = invoke("results", "pending", "--plan", str(plan_file))
-    verify_code, verified = invoke("results", "verify", str(plan_file))
+    status_code, status = invoke("changes", "status", str(bundle_file))
+    pending_code, pending = invoke("results", "pending", "--plan", str(bundle_file))
+    verify_code, verified = invoke("results", "verify", str(bundle_file))
 
-    assert pending_code == verify_code == 0
+    assert status_code == pending_code == verify_code == 0
+    assert status["data"]["tasks"][0]["task_status"] == "SUCCEEDED"
     assert pending["data"]["counts"]["pending"] == 2
     assert verified["data"]["ok"] is True and verified["data"]["counts"]["matched"] == 2
+
+
+def test_changes_export_refuses_to_overwrite_unless_forced(invoke, tmp_path) -> None:
+    spec = tmp_path / "export-results.json"
+    spec.write_text(json.dumps({"table_id": TABLE, "assay_results": [record()]}))
+    code, planned = invoke(
+        "changes", "plan", "--entry", ENTRY_ID, "--family", "results", "--spec", str(spec)
+    )
+    assert code == 0, planned
+    output = tmp_path / "bundle.json"
+
+    code, first = invoke("changes", "export", planned["data"]["id"], "--output", str(output))
+    assert code == 0, first
+    original = output.read_text()
+    code, refused = invoke("changes", "export", planned["data"]["id"], "--output", str(output))
+    assert code == 2 and "without --force" in refused["error"]["message"]
+    assert output.read_text() == original
+    code, forced = invoke(
+        "changes",
+        "export",
+        planned["data"]["id"],
+        "--output",
+        str(output),
+        "--force",
+    )
+    assert code == 0, forced
+
+
+def test_tampered_plan_bundle_is_rejected(invoke, tmp_path) -> None:
+    spec = tmp_path / "tampered-results.json"
+    spec.write_text(json.dumps({"table_id": TABLE, "assay_results": [record()]}))
+    code, planned = invoke(
+        "changes", "plan", "--entry", ENTRY_ID, "--family", "results", "--spec", str(spec)
+    )
+    assert code == 0, planned
+    output = tmp_path / "tampered-bundle.json"
+    code, exported = invoke("changes", "export", planned["data"]["id"], "--output", str(output))
+    assert code == 0, exported
+    bundle = json.loads(output.read_text())
+    bundle["plan"]["after"]["client_record_ids"] = ["tampered"]
+    output.write_text(json.dumps(bundle))
+
+    code, response = invoke("results", "verify", str(output))
+
+    assert code == 2
+    assert response["error"]["code"] == "validation_error"
+    assert "checksum does not match" in response["error"]["message"]
+
+
+def test_plan_file_without_journal_explains_how_to_export(invoke, tmp_path) -> None:
+    spec = tmp_path / "missing-journal-results.json"
+    spec.write_text(json.dumps({"table_id": TABLE, "assay_results": [record()]}))
+    code, planned = invoke(
+        "changes", "plan", "--entry", ENTRY_ID, "--family", "results", "--spec", str(spec)
+    )
+    assert code == 0, planned
+    plan_file = tmp_path / "plan-without-journal.json"
+    shutil.copyfile(ConfigStore().plans_dir / f"{planned['data']['id']}.json", plan_file)
+
+    code, response = invoke("results", "pending", "--plan", str(plan_file))
+
+    assert code == 2
+    assert "journal is missing" in response["error"]["message"]
+    assert "changes export" in response["error"]["message"]
+
+
+async def test_plan_bundle_rejects_invalid_structure_and_checksums(runtime, tmp_path) -> None:
+    planned = await runtime.planner.plan(
+        ENTRY_ID, "results", {"table_id": TABLE, "assay_results": [record()]}
+    )
+    bundle_file = tmp_path / "bundle.json"
+    plain_plan = tmp_path / "plain-plan.json"
+    shutil.copyfile(runtime.repository.config.plans_dir / f"{planned.id}.json", plain_plan)
+    assert runtime.repository.load_plan_file(plain_plan).id == planned.id
+    runtime.repository.export_plan_bundle(planned.id, str(bundle_file))
+    original = json.loads(bundle_file.read_text())
+
+    invalid_documents = [
+        [],
+        {"bundle_version": "2.0"},
+        {"bundle_version": "1.0", "plan": {}, "journal": {}},
+    ]
+    bad_bundle_checksum = json.loads(json.dumps(original))
+    bad_bundle_checksum["checksum"] = "0" * 64
+    invalid_documents.append(bad_bundle_checksum)
+    bad_journal = json.loads(json.dumps(original))
+    bad_journal["journal"]["plan_id"] = "0" * 32
+    invalid_documents.append(bad_journal)
+    bad_plan_id = json.loads(json.dumps(original))
+    bad_plan_id["plan"]["id"] = "invalid"
+    bad_plan_id["plan"]["checksum"] = checksum_for(bad_plan_id["plan"])
+    bad_plan_id["checksum"] = bad_plan_id["plan"]["checksum"]
+    invalid_documents.append(bad_plan_id)
+
+    for document in invalid_documents:
+        bundle_file.write_text(json.dumps(document))
+        with pytest.raises(ValidationError):
+            runtime.repository.load_plan_document(bundle_file)
+
+    with pytest.raises(ValidationError, match="Unknown change plan file"):
+        runtime.repository.load_plan_document(tmp_path / "missing.json")
+
+
+async def test_plan_bundle_export_validates_destination_options(runtime, tmp_path) -> None:
+    planned = await runtime.planner.plan(
+        ENTRY_ID, "results", {"table_id": TABLE, "assay_results": [record()]}
+    )
+    with pytest.raises(ValidationError, match="Plan ID already exists"):
+        runtime.repository.save_plan(planned)
+    for output, force, message in (
+        (" ", False, "non-empty path"),
+        (str(tmp_path / "missing" / "bundle.json"), False, "directory does not exist"),
+        (str(tmp_path), False, "not a file"),
+        (str(tmp_path / "bundle.json"), 1, "force must be true or false"),
+    ):
+        with pytest.raises(ValidationError, match=message):
+            runtime.repository.export_plan_bundle(planned.id, output, force=force)
 
 
 async def test_task_lookup_failure_and_unconfirmed_uploads_are_reported(runtime, fake) -> None:
