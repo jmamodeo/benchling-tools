@@ -21,14 +21,14 @@ A scripted playback of the offline fixture demo (no credentials, no network). Th
 
 ## Install
 
-Python 3.11 or newer and [`uv`](https://docs.astral.sh/uv/) are required. The distribution, the import package, and the command are all named `benchlingtk`, published on [PyPI](https://pypi.org/project/benchlingtk/).
+Python 3.11 or newer and [`uv`](https://docs.astral.sh/uv/) are required. The distribution and the command are both named `benchlingtk`, published on [PyPI](https://pypi.org/project/benchlingtk/). Install it with `uv tool install`, or run it without installing with `uvx benchlingtk`.
 
 ```console
 uv tool install benchlingtk
 benchlingtk --help
 ```
 
-`pip install benchlingtk` works too. From a checkout, use `uv tool install .`, or `uv run benchlingtk` after `uv sync` (add `--extra dev` for the test and lint tools); `uv sync` does not put `benchlingtk` on PATH.
+From a checkout, use `uv tool install .`, or `uv run benchlingtk` after `uv sync` (add `--extra dev` for the test and lint tools); `uv sync` does not put `benchlingtk` on PATH.
 
 ## Log in
 

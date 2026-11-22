@@ -4,7 +4,7 @@ The detailed reference for the `benchlingtk` CLI and its MCP server. The [README
 
 ## Install
 
-The distribution, the import package, and the command are all named `benchlingtk`. Python 3.11 or newer and [`uv`](https://docs.astral.sh/uv/) are required.
+The distribution and the command are both named `benchlingtk`. Python 3.11 or newer and [`uv`](https://docs.astral.sh/uv/) are required.
 
 `benchlingtk` is on [PyPI](https://pypi.org/project/benchlingtk/). Install the CLI and start the MCP server with:
 
@@ -15,7 +15,7 @@ benchlingtk --help
 uvx benchlingtk mcp serve
 ```
 
-`pip install benchlingtk` works too. `uv tool install benchlingtk` puts `benchlingtk` on PATH. `uvx benchlingtk mcp serve` runs the server from that package without a separate install; the MCP client config below is that same command.
+`uv tool install benchlingtk` puts `benchlingtk` on PATH. `uvx benchlingtk mcp serve` runs the server from that package without a separate install; the MCP client config below is that same command.
 
 To work on the toolkit itself, run the same commands against a checkout of this repository:
 
@@ -428,7 +428,7 @@ See the [setup guide](setup.md) before the first login, and [API limitations](ap
 
 ## The agent skill file
 
-[`SKILL.md`](../SKILL.md) is the Agent Skills file for this repository. Its frontmatter keeps `name`, `description`, `license`, `compatibility`, and a `metadata` map of strings (`summary`, `version`, `docs_url`). Tags, keywords, and use cases are lists in [`agensi/listing.yaml`](../agensi/listing.yaml). The pip package installs it as `share/benchlingtk/SKILL.md` under the environment prefix (`sys.prefix`), next to the JSON schemas and contracts. Use `benchlingtk skill path` to print the installed file's absolute path and `benchlingtk skill show` to print its contents. Both look under `sys.prefix`, `sys.base_prefix`, and the user install scheme, then fall back to the repository's `SKILL.md` for editable and development installs. If the file is not found, they print a `not_found` envelope. They never contact Benchling. The MCP server also serves the file as the read-only resource `skill://benchlingtk/SKILL.md`.
+[`SKILL.md`](../SKILL.md) is the Agent Skills file for this repository. Its frontmatter keeps `name`, `description`, `license`, `compatibility`, and a `metadata` map of strings (`summary`, `version`, `docs_url`). Tags, keywords, and use cases are lists in [`agensi/listing.yaml`](../agensi/listing.yaml). The package installs it as `share/benchlingtk/SKILL.md` under the environment prefix (`sys.prefix`), next to the JSON schemas and contracts. Use `benchlingtk skill path` to print the installed file's absolute path and `benchlingtk skill show` to print its contents. Both look under `sys.prefix`, `sys.base_prefix`, and the user install scheme, then fall back to the repository's `SKILL.md` for editable and development installs. If the file is not found, they print a `not_found` envelope. They never contact Benchling. The MCP server also serves the file as the read-only resource `skill://benchlingtk/SKILL.md`.
 
 ```console
 benchlingtk skill path
