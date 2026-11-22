@@ -1505,7 +1505,7 @@ async def test_mcp_export_returns_a_summary_and_does_not_write_remotely(
         {
             "env": "sandbox",
             "kind": "assay-results",
-            "path": str(path),
+            "output": str(path),
             "format": "json",
             "entry": ENTRY_ID,
         },
@@ -1522,7 +1522,7 @@ async def test_mcp_export_returns_a_summary_and_does_not_write_remotely(
 
     blocked = await session.call_tool(
         "export",
-        {"env": "sandbox", "kind": "nope", "path": str(tmp_path / "no.json"), "format": "json"},
+        {"env": "sandbox", "kind": "nope", "output": str(tmp_path / "no.json"), "format": "json"},
     )
     assert blocked.is_error is False
     assert blocked.structured_content["error"]["code"] == "validation_error"
@@ -1533,7 +1533,7 @@ async def test_mcp_export_returns_a_summary_and_does_not_write_remotely(
         {
             "env": "sandbox",
             "kind": "assay-results",
-            "path": str(path),
+            "output": str(path),
             "format": "json",
         },
     )

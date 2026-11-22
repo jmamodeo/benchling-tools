@@ -23,9 +23,11 @@ flowchart TD
     auth --> keychain["OS keychain: client secret"]
 ```
 
-`plan_changes` does not pass through the write gate. It is allowed on a read-only MCP server because the remote calls it makes are reads. The plan file is local. `apply_changes` checks `writable_envs` before `ChangePlanner.apply`. The CLI has no equivalent flag: `benchlingtk changes apply` is the operator's command.
+Each CLI command is declared once in `cli.py` with `@command`. Typer builds the CLI from it, and `build_mcp_server` walks the same command tree and registers one tool per command, named after its path (`changes apply` is `changes_apply`). A tool runs the same function as the command; only the `Call` differs, which supplies the runtime and the apply check for that surface.
 
-MCP `plan_changes` validates the specification with `parse_change_specification` before any remote read. A shape that does not match the typed union returns `validation_error` and does not create a plan. The CLI accepts the same JSON, or a CSV result update, and the family planner validates it.
+`changes_plan` does not pass through the write gate. It is allowed on a read-only MCP server because the remote calls it makes are reads. The plan file is local. `changes_apply` calls `Call.authorize_apply` before `ChangePlanner.apply`; on MCP that checks `writable_envs`. The CLI has no equivalent flag: `benchlingtk changes apply` is the operator's command.
+
+MCP `changes_plan` validates the specification with `parse_change_specification` before any remote read. A shape that does not match the typed union returns `validation_error` and does not create a plan. The CLI accepts the same JSON, or a CSV result update, and the family planner validates it.
 
 ## Plan
 
@@ -62,12 +64,12 @@ Warnings are part of the plan. They are how the preview says that a table edit c
 ```mermaid
 sequenceDiagram
     actor Caller
-    participant Gate as MCP apply_changes
+    participant Gate as MCP changes_apply
     participant Planner as ChangePlanner.apply
     participant Repo as PlanRepository
     participant API as BenchlingAPI
 
-    Caller->>Gate: apply_changes(env, plan_id)
+    Caller->>Gate: changes_apply(env, plan_id)
     alt env is not on the MCP allow-writes list
         Gate-->>Caller: unsupported_capability
     else CLI, or MCP started with allow-writes for this env

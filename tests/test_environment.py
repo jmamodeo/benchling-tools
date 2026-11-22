@@ -285,7 +285,7 @@ async def test_mcp_uses_saved_app_identity(monkeypatch):
     pool = RuntimePool(runtimes={"dev": runtime})
     try:
         async with Client(build_mcp_server(pool)) as client:
-            result = await client.call_tool("get_capabilities", {"env": "dev"})
+            result = await client.call_tool("doctor", {"env": "dev"})
             rendered = json.dumps(result.structured_content)
             assert result.structured_content["ok"] is True
             assert result.structured_content["data"]["auth_method"] == "client_credentials"
@@ -322,8 +322,12 @@ async def test_mcp_routes_each_call_to_its_env():
     )
     try:
         async with Client(build_mcp_server(pool, writable_envs={"dev"})) as client:
-            listed = await client.call_tool("list_environments", {})
-            assert listed.structured_content["data"]["environments"] == {
+            listed = await client.call_tool("auth_status", {})
+            environments = listed.structured_content["data"]["environments"]
+            assert {
+                name: {key: row[key] for key in ("tenant_url", "protected", "writes_allowed")}
+                for name, row in environments.items()
+            } == {
                 "dev": {
                     "tenant_url": "https://your-tenant.benchling.com",
                     "protected": False,
@@ -335,17 +339,18 @@ async def test_mcp_routes_each_call_to_its_env():
                     "writes_allowed": False,
                 },
             }
+            assert SECRET not in json.dumps(environments)
             for env, host in (
                 ("test", "other-tenant.benchling.com"),
                 ("dev", "your-tenant.benchling.com"),
             ):
                 hosts.clear()
-                result = await client.call_tool("get_capabilities", {"env": env})
+                result = await client.call_tool("doctor", {"env": env})
                 assert result.structured_content["meta"]["env"] == env
                 assert hosts and set(hosts) == {host}
-            blocked = await client.call_tool("apply_changes", {"env": "test", "plan_id": "a" * 32})
+            blocked = await client.call_tool("changes_apply", {"env": "test", "plan_id": "a" * 32})
             assert blocked.structured_content["error"]["code"] == "unsupported_capability"
-            unknown = await client.call_tool("get_capabilities", {"env": "prod"})
+            unknown = await client.call_tool("doctor", {"env": "prod"})
             assert unknown.structured_content["error"]["details"]["available_envs"] == [
                 "dev",
                 "test",

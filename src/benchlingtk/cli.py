@@ -10,11 +10,14 @@ import os
 import sys
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Annotated, Any, NoReturn, TypeVar
 
 import typer
+from pydantic import WithJsonSchema
 
 from . import __version__
+from .change_spec import CHANGE_SPECIFICATION_SCHEMA, parse_change_specification
+from .commands import CLI_ONLY_ATTR, TOOL_ATTR, Call, Command, McpParam, declare, surface_text
 from .credentials import build_environment, collect_status, login, login_fix_values, logout
 from .environment import (
     ENV_NAME,
@@ -33,9 +36,10 @@ from .errors import (
 from .export import export_dataset
 from .issues import REPOSITORY, build_issue_draft
 from .keychain import Keychain, bind_login_fix
-from .models import Envelope, Environment, PlanFamily
+from .models import Envelope, PlanFamily
 from .redact import redact_text
 from .runtime import Runtime
+from .services import part_content
 from .skill import find_skill_md
 
 app = typer.Typer(
@@ -125,33 +129,115 @@ def _emit(envelope: Envelope[Any]) -> None:
     typer.echo(_json(envelope))
 
 
-async def _run_with_runtime(
-    env: str | None, call: Callable[[Runtime], Awaitable[Any]]
-) -> tuple[Any, Environment]:
-    runtime = Runtime(env)
-    try:
-        return await call(runtime), runtime.environment
-    finally:
-        await runtime.close()
+class CliCall(Call):
+    """A command run from the command line. The runtime is built from --env."""
 
+    def __init__(self, state: State) -> None:
+        super().__init__(state.env)
+        self.state = state
 
-def _execute(env: str | None, call: Callable[[Runtime], Awaitable[Any]]) -> None:
-    try:
-        result, runtime_env = asyncio.run(_run_with_runtime(env, call))
-        _emit(
-            Envelope.success(
-                result,
-                env=runtime_env.name,
-                tenant_url=runtime_env.base_url,
-            )
+    def _open(self) -> Runtime:
+        return Runtime(self.env)
+
+    def authorize_apply(self, confirm_env: str | None) -> None:
+        """Refuse a protected env unless --env and --confirm-env both name it.
+
+        The saved environment is checked before the keychain or the network is
+        touched, then the runtime's environment is checked again.
+        """
+        environment = EnvironmentConfigStore().resolve(self.env)
+        check_apply_allowed(
+            environment,
+            env_on_command_line=self.state.env_on_command_line,
+            confirm_env=confirm_env,
         )
+        check_apply_allowed(
+            self.runtime.environment,
+            env_on_command_line=self.state.env_on_command_line,
+            confirm_env=confirm_env,
+        )
+
+    async def close(self) -> None:
+        if self._runtime is not None:
+            await self._runtime.close()
+
+
+def _execute(call: Call, declared: Command, arguments: dict[str, Any]) -> None:
+    """Run a declared command and print its envelope; failures exit with their code."""
+
+    async def run() -> Any:
+        try:
+            return await declared.function(call, **arguments)
+        finally:
+            await call.close()
+
+    try:
+        result = asyncio.run(run())
     except BenchlingAgentError as exc:
-        _emit(Envelope.failure(exc))
+        _emit(Envelope.failure(exc, **call.envelope_meta()))
         raise typer.Exit(int(exc.exit_code)) from None
     except Exception as exc:
         error = UpstreamError("Unexpected local failure", details={"type": type(exc).__name__})
-        _emit(Envelope.failure(error))
+        _emit(Envelope.failure(error, **call.envelope_meta()))
         raise typer.Exit(int(ExitCode.UPSTREAM)) from None
+    _emit(Envelope.success(result, **call.envelope_meta()))
+
+
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+
+def command(
+    *,
+    read_only: bool,
+    destructive: bool = False,
+    needs_env: bool = True,
+    cli_only: tuple[str, ...] = (),
+    mcp_params: dict[str, McpParam] | None = None,
+) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., None]]:
+    """Declare a command once for the CLI and its MCP tool.
+
+    The decorated function is async and takes a Call first. Typer gets a sync
+    callback with the same options; the MCP server reads the declaration.
+    read_only and destructive become the tool's hints. needs_env adds the
+    required MCP env argument. cli_only parameters are not offered as tool
+    arguments, and mcp_params present a parameter differently to MCP.
+    """
+
+    def decorate(function: Callable[..., Awaitable[Any]]) -> Callable[..., None]:
+        declared = declare(
+            function,
+            read_only=read_only,
+            destructive=destructive,
+            needs_env=needs_env,
+            cli_only=cli_only,
+            mcp_params=mcp_params,
+        )
+
+        def callback(ctx: typer.Context, **arguments: Any) -> None:
+            _execute(CliCall(ctx.obj), declared, arguments)
+
+        signature = declared.cli_signature(typer.Context)
+        callback.__name__ = function.__name__
+        callback.__qualname__ = function.__qualname__
+        callback.__doc__ = surface_text(declared.doc, "cli")
+        callback.__annotations__ = {
+            name: param.annotation for name, param in signature.parameters.items()
+        }
+        callback.__signature__ = signature  # type: ignore[attr-defined]
+        setattr(callback, TOOL_ATTR, declared)
+        return callback
+
+    return decorate
+
+
+def cli_only(reason: str) -> Callable[[_F], _F]:
+    """Mark a command that has no MCP tool, with the reason."""
+
+    def mark(function: _F) -> _F:
+        setattr(function, CLI_ONLY_ATTR, reason)
+        return function
+
+    return mark
 
 
 def _prompt(label: str, *, tty: bool) -> str:
@@ -302,6 +388,7 @@ def _blank_to_none(value: str | None) -> str | None:
 
 
 @auth_app.command("login")
+@cli_only("Reads a client secret; only a person at a terminal logs in.")
 def auth_login(
     ctx: typer.Context,
     env: str | None = typer.Option(None, "--env", "-e", help="Environment name to save."),
@@ -386,6 +473,7 @@ def auth_login(
 
 
 @auth_app.command("logout")
+@cli_only("Deletes a saved environment and its secret; a person decides that.")
 def auth_logout(
     ctx: typer.Context,
     env: str | None = typer.Option(None, "--env", "-e", help="Environment name to remove."),
@@ -419,6 +507,7 @@ def _set_protection(ctx: typer.Context, env: str | None, protected: bool) -> Non
 
 
 @auth_app.command("protect")
+@cli_only("Protection is set by a person, never by the agent it restricts.")
 def auth_protect(
     ctx: typer.Context,
     env: str | None = typer.Option(None, "--env", "-e", help="Environment name to protect."),
@@ -432,6 +521,7 @@ def auth_protect(
 
 
 @auth_app.command("unprotect")
+@cli_only("Protection is set by a person, never by the agent it restricts.")
 def auth_unprotect(
     ctx: typer.Context,
     env: str | None = typer.Option(None, "--env", "-e", help="Environment name to unprotect."),
@@ -441,8 +531,9 @@ def auth_unprotect(
 
 
 @auth_app.command("status")
-def auth_status(
-    ctx: typer.Context,
+@command(read_only=True, needs_env=False)
+async def auth_status(
+    call: Call,
     env: str | None = typer.Option(
         None, "--env", "-e", help="Limit the report to one environment."
     ),
@@ -451,25 +542,24 @@ def auth_status(
         "--check",
         help="Request an access token and report the result. The token is not printed or saved.",
     ),
-) -> None:
+) -> dict[str, Any]:
     """Show configured environments and whether a keychain secret is present.
 
     The secret is never printed. Without --env, every saved environment is listed.
     --check performs a live token request and does not print or save the token.
+
+    MCP: Call this first to see the environment names every other tool takes.
+    Each environment also reports writes_allowed: whether this server was started
+    with --allow-writes for it.
     """
-    state: State = ctx.obj
-    selected = env or state.env
-    store = EnvironmentConfigStore()
-    try:
-        report = collect_status(store, Keychain(), name=selected, check=check)
-    except BenchlingAgentError as exc:
-        _auth_failure(exc)
-    meta: dict[str, Any] = {}
-    if selected and selected in report.environments:
-        meta = {
-            "env": selected,
-            "tenant_url": report.environments[selected]["tenant_url"],
-        }
+    selected = env or call.env
+    report = await asyncio.to_thread(
+        collect_status, EnvironmentConfigStore(), Keychain(), name=selected, check=check
+    )
+    writable = call.writable_envs
+    if writable is not None:
+        for name, row in report.environments.items():
+            row["writes_allowed"] = name in writable
     payload = {"environments": report.environments}
     if report.failed_envs:
         messages = [
@@ -478,16 +568,13 @@ def auth_status(
         message = (
             messages[0] if len(messages) == 1 else "Token check failed: " + "; ".join(messages)
         )
-        _auth_failure(
-            AuthenticationError(
-                message,
-                details={
-                    "environments": payload["environments"],
-                    "failed_envs": report.failed_envs,
-                },
-            )
+        raise AuthenticationError(
+            message,
+            details={"environments": payload["environments"], "failed_envs": report.failed_envs},
         )
-    _emit(Envelope.success(payload, **meta))
+    if selected and selected in report.environments:
+        call.meta.update(env=selected, tenant_url=report.environments[selected]["tenant_url"])
+    return payload
 
 
 def _doctor_failure_message(result: dict[str, Any]) -> str:
@@ -502,336 +589,491 @@ def _doctor_failure_message(result: dict[str, Any]) -> str:
 
 
 @app.command()
-def doctor(ctx: typer.Context) -> None:
-    """Check configuration, authentication and API connectivity for the environment."""
-    state: State = ctx.obj
-    try:
-        result, runtime_env = asyncio.run(
-            _run_with_runtime(state.env, lambda runtime: runtime.service.doctor())
-        )
-    except BenchlingAgentError as exc:
-        _emit(Envelope.failure(exc))
-        raise typer.Exit(int(exc.exit_code)) from None
-    except Exception as exc:
-        error = UpstreamError("Unexpected local failure", details={"type": type(exc).__name__})
-        _emit(Envelope.failure(error))
-        raise typer.Exit(int(ExitCode.UPSTREAM)) from None
-    meta = {"env": runtime_env.name, "tenant_url": runtime_env.base_url}
+@command(read_only=True)
+async def doctor(call: Call) -> Any:
+    """Check configuration, authentication, API connectivity, and supported edit types.
+
+    A failed check is an authentication_error whose details hold every check.
+    """
+    result = await call.runtime.service.doctor()
     if isinstance(result, dict) and result.get("ok") is False:
-        _emit(
-            Envelope.failure(
-                AuthenticationError(_doctor_failure_message(result), details=result),
-                **meta,
-            )
-        )
-        raise typer.Exit(int(ExitCode.AUTHENTICATION)) from None
-    _emit(Envelope.success(result, **meta))
+        raise AuthenticationError(_doctor_failure_message(result), details=result)
+    return result
+
+
+_ENTRY_REF_HELP = "Entry ID, display ID, or same-tenant entry URL."
+_CURSOR_HELP = "next_token from the previous page. Omit it to read the first page."
+_LIMIT_HELP = "Page size, from 1 to 100."
+
+
+def _pagination(offset: int, returned: int, total: int) -> dict[str, Any]:
+    end = offset + returned
+    return {
+        "offset": offset,
+        "returned": returned,
+        "total": total,
+        "next_offset": end if end < total else None,
+    }
+
+
+def _page_table(table: dict[str, Any], row_offset: int, row_limit: int) -> dict[str, Any]:
+    content = part_content(table)
+    rows = content.get("rows", [])
+    page = rows[row_offset : row_offset + row_limit]
+    content["rows"] = page
+    table["pagination"] = _pagination(row_offset, len(page), len(rows))
+    return table
 
 
 @entry_app.command("resolve")
-def entry_resolve(ctx: typer.Context, reference: str) -> None:
-    """Resolve an entry ID, display ID or URL to its canonical entry and web_url."""
-    state: State = ctx.obj
-    _execute(state.env, lambda runtime: runtime.service.resolve_entry(reference))
+@command(read_only=True)
+async def entry_resolve(
+    call: Call, reference: str = typer.Argument(..., help=_ENTRY_REF_HELP)
+) -> Any:
+    """Resolve an entry ID, display ID, or same-tenant URL to its canonical entry.
+
+    web_url is the entry's link in the Benchling web app, or null when Benchling
+    returns none.
+    """
+    return await call.runtime.service.resolve_entry(reference)
 
 
 @entry_app.command("get")
-def entry_get(
-    ctx: typer.Context,
-    reference: str,
-    full: bool = typer.Option(False, help="Retrieve all available structured content."),
-) -> None:
-    """Fetch an entry snapshot; --full retrieves all available structured content.
+@command(read_only=True)
+async def entry_get(
+    call: Call,
+    reference: str = typer.Argument(..., help=_ENTRY_REF_HELP),
+    full: bool = typer.Option(
+        False,
+        "--full",
+        help=(
+            "Return a paged snapshot of parts, tables, and results. "
+            "Without it, return entry metadata only."
+        ),
+    ),
+    part_offset: int = typer.Option(
+        0, "--part-offset", min=0, help="Document parts to skip with --full. Zero is the first."
+    ),
+    part_limit: int = typer.Option(
+        100, "--part-limit", min=1, help="Most document parts to return with --full."
+    ),
+    result_offset: int = typer.Option(
+        0, "--result-offset", min=0, help="Result records to skip with --full. Zero is the first."
+    ),
+    result_limit: int = typer.Option(
+        100, "--result-limit", min=1, help="Most result records to return with --full."
+    ),
+    table_row_offset: int = typer.Option(
+        0, "--table-row-offset", min=0, help="Rows to skip in each unstructured table on the page."
+    ),
+    table_row_limit: int = typer.Option(
+        250, "--table-row-limit", min=1, help="Most rows to return from each unstructured table."
+    ),
+) -> Any:
+    """Fetch entry metadata, or with --full a paged snapshot of its structured content.
 
-    The output includes web_url, the entry's Benchling web-app link, or null if none.
+    web_url is the entry's link in the Benchling web app (V3 webUrl), or null.
     """
-    state: State = ctx.obj
-    _execute(state.env, lambda runtime: runtime.service.get_entry(reference, full=full))
+    data = await call.runtime.service.get_entry(reference, full=full)
+    if not full:
+        return data
+    all_parts = data["parts"]
+    all_results = data["results"]
+    parts = all_parts[part_offset : part_offset + part_limit]
+    results = all_results[result_offset : result_offset + result_limit]
+    part_ids = {part.get("id") for part in parts}
+    data["parts"] = parts
+    data["tables"] = {
+        key: _page_table(value, table_row_offset, table_row_limit)
+        for key, value in data["tables"].items()
+        if key in part_ids
+    }
+    data["results"] = results
+    data["pagination"] = {
+        "parts": _pagination(part_offset, len(parts), len(all_parts)),
+        "results": _pagination(result_offset, len(results), len(all_results)),
+        "table_rows": {"offset": table_row_offset, "limit_per_table": table_row_limit},
+    }
+    return data
 
 
 @entry_app.command("bulk-get")
-def entry_bulk_get(
-    ctx: typer.Context,
+@command(read_only=True)
+async def entry_bulk_get(
+    call: Call,
     entry_ids: list[str] | None = typer.Option(
-        None, "--id", help="Entry ID. Repeat to request multiple entries."
+        None,
+        "--id",
+        help="Entry ID. Repeat for several. Use this or --display-id, not both.",
     ),
     display_ids: list[str] | None = typer.Option(
-        None, "--display-id", help="Entry display ID. Repeat to request multiple entries."
+        None,
+        "--display-id",
+        help="Entry display ID. Repeat for several. Use this or --id, not both.",
     ),
-) -> None:
-    """Fetch multiple entries by ID or display ID; each item includes web_url."""
-    state: State = ctx.obj
-    _execute(
-        state.env,
-        lambda runtime: runtime.service.get_entries(
-            entry_ids=entry_ids,
-            display_ids=display_ids,
-        ),
-    )
+) -> Any:
+    """Fetch entries by ID or display ID, chunking requests at 100 identifiers.
+
+    Each item adds web_url, the entry's Benchling web-app link (V2 webURL), or null.
+    """
+    return await call.runtime.service.get_entries(entry_ids=entry_ids, display_ids=display_ids)
 
 
 @entry_app.command("inspect")
-def entry_inspect(ctx: typer.Context, reference: str) -> None:
-    """Summarize an entry's structure (sections, parts, tables, schemas) without full content."""
-    state: State = ctx.obj
-    _execute(state.env, lambda runtime: runtime.service.inspect_entry(reference))
+@command(read_only=True)
+async def entry_inspect(
+    call: Call, reference: str = typer.Argument(..., help=_ENTRY_REF_HELP)
+) -> Any:
+    """Summarize an entry's sections, part IDs, schemas, and tables without full content."""
+    return await call.runtime.service.inspect_entry(reference)
 
 
 @template_app.command("get")
-def template_get(ctx: typer.Context, template_id: str) -> None:
-    """Get an entry template and summarize its structure."""
-    state: State = ctx.obj
-    _execute(state.env, lambda runtime: runtime.service.get_template(template_id))
+@command(read_only=True)
+async def template_get(
+    call: Call, template_id: str = typer.Argument(..., help="Entry template ID.")
+) -> Any:
+    """Get an entry template and summarize its structure (from V2; V3 has metadata only)."""
+    return await call.runtime.service.get_template(template_id)
 
 
 @template_app.command("list")
-def template_list(
-    ctx: typer.Context,
+@command(read_only=True)
+async def template_list(
+    call: Call,
     name: str | None = typer.Option(None, "--name", help="Exact entry-template name."),
-    limit: int = typer.Option(50, "--limit", min=1, max=100, help="Page size, from 1 to 100."),
-    cursor: str | None = typer.Option(None, "--cursor", help="next_token from the previous page."),
-) -> None:
-    """List one page of entry templates."""
-    state: State = ctx.obj
-    _execute(
-        state.env,
-        lambda runtime: runtime.service.list_templates(name=name, limit=limit, cursor=cursor),
-    )
+    limit: int = typer.Option(50, "--limit", min=1, max=100, help=_LIMIT_HELP),
+    cursor: str | None = typer.Option(None, "--cursor", help=_CURSOR_HELP),
+) -> Any:
+    """List one page of entry templates. Pass next_token as --cursor to continue."""
+    return await call.runtime.service.list_templates(name=name, limit=limit, cursor=cursor)
 
 
 @folder_app.command("get")
-def folder_get(ctx: typer.Context, folder_id: str) -> None:
+@command(read_only=True)
+async def folder_get(call: Call, folder_id: str = typer.Argument(..., help="Folder ID.")) -> Any:
     """Get a folder by ID."""
-    state: State = ctx.obj
-    _execute(state.env, lambda runtime: runtime.service.get_folder(folder_id))
+    return await call.runtime.service.get_folder(folder_id)
 
 
 @entry_app.command("list")
-def entry_list(
-    ctx: typer.Context,
-    project: str | None = typer.Option(None, "--project", help="Project ID."),
-    folder: str | None = typer.Option(None, "--folder", help="Folder ID. Uses the V2 entry list."),
-    schema: str | None = typer.Option(None, "--schema", help="Entry schema ID."),
+@command(read_only=True)
+async def entry_list(
+    call: Call,
+    project: str | None = typer.Option(
+        None, "--project", help="Project ID. Omit to list entries from every readable project."
+    ),
+    folder: str | None = typer.Option(
+        None,
+        "--folder",
+        help="Folder ID. The whole query then uses V2, because V3 entry listing ignores folder.",
+    ),
+    schema_id: str | None = typer.Option(
+        None, "--schema", help="Entry schema ID. Omit to include every schema."
+    ),
     name: str | None = typer.Option(
         None,
         "--name",
-        help="Exact entry name. A comma in the name uses the V2 name parameter.",
+        help="Exact entry name, not a substring. A comma in the name uses the V2 name parameter.",
     ),
     modified_after: str | None = typer.Option(
         None,
         "--modified-after",
-        help="Inclusive lower bound: YYYY-MM-DD or an RFC3339 timestamp with a time zone.",
+        help=(
+            "Inclusive lower bound. A bare YYYY-MM-DD is the start of that UTC day; "
+            "a timestamp must include a time zone."
+        ),
     ),
     modified_before: str | None = typer.Option(
         None,
         "--modified-before",
-        help="Inclusive upper bound: YYYY-MM-DD or an RFC3339 timestamp with a time zone.",
+        help=(
+            "Inclusive upper bound. A bare YYYY-MM-DD is the end of that UTC day; "
+            "a timestamp must include a time zone."
+        ),
     ),
-    limit: int = typer.Option(50, "--limit", min=1, max=100, help="Page size, from 1 to 100."),
-    cursor: str | None = typer.Option(None, "--cursor", help="next_token from the previous page."),
-) -> None:
-    """List entries. A folder filter is applied by V2; the other filters are server-side too.
+    limit: int = typer.Option(50, "--limit", min=1, max=100, help=_LIMIT_HELP),
+    cursor: str | None = typer.Option(None, "--cursor", help=_CURSOR_HELP),
+) -> Any:
+    """List one page of entries. --folder uses V2; every filter is applied by the server.
 
     Each row includes web_url, the entry's Benchling web-app link, or null if none.
     """
-    state: State = ctx.obj
-    _execute(
-        state.env,
-        lambda runtime: runtime.service.list_entries(
-            project=project,
-            folder=folder,
-            schema_id=schema,
-            name=name,
-            modified_after=modified_after,
-            modified_before=modified_before,
-            limit=limit,
-            cursor=cursor,
-        ),
+    return await call.runtime.service.list_entries(
+        project=project,
+        folder=folder,
+        schema_id=schema_id,
+        name=name,
+        modified_after=modified_after,
+        modified_before=modified_before,
+        limit=limit,
+        cursor=cursor,
     )
 
 
 @entry_fields_app.command("get")
-def entry_fields_get(ctx: typer.Context, reference: str) -> None:
-    """Get the schema field values of an entry."""
-    state: State = ctx.obj
-    _execute(state.env, lambda runtime: runtime.service.get_entry_fields(reference))
+@command(read_only=True)
+async def entry_fields_get(
+    call: Call, reference: str = typer.Argument(..., help=_ENTRY_REF_HELP)
+) -> Any:
+    """Get the schema field values of an entry, by system name."""
+    return await call.runtime.service.get_entry_fields(reference)
 
 
 @section_app.command("get")
-def section_get(ctx: typer.Context, reference: str, section: str) -> None:
-    """Get one section of an entry."""
-    state: State = ctx.obj
-    _execute(state.env, lambda runtime: runtime.service.get_section(reference, section))
+@command(read_only=True)
+async def section_get(
+    call: Call,
+    reference: str = typer.Argument(..., help=_ENTRY_REF_HELP),
+    section: str = typer.Argument(
+        ..., help="Stable document part ID, or a section title that is unique."
+    ),
+    part_offset: int = typer.Option(
+        0, "--part-offset", min=0, help="Parts in the section to skip. Zero is the first."
+    ),
+    part_limit: int = typer.Option(
+        100, "--part-limit", min=1, help="Most parts in the section to return."
+    ),
+    table_row_offset: int = typer.Option(
+        0, "--table-row-offset", min=0, help="Rows to skip in each table in the section."
+    ),
+    table_row_limit: int = typer.Option(
+        250, "--table-row-limit", min=1, help="Most rows to return from each table in the section."
+    ),
+) -> Any:
+    """Get one section of an entry by stable part ID or a unique section title, paged."""
+    data = await call.runtime.service.get_section(reference, section)
+    parts = data["parts"]
+    page = parts[part_offset : part_offset + part_limit]
+    part_ids = {part.get("id") for part in page}
+    data["parts"] = page
+    data["tables"] = {
+        key: _page_table(value, table_row_offset, table_row_limit)
+        for key, value in data["tables"].items()
+        if key in part_ids
+    }
+    data["pagination"] = {
+        "parts": _pagination(part_offset, len(page), len(parts)),
+        "table_rows": {"offset": table_row_offset, "limit_per_table": table_row_limit},
+    }
+    return data
 
 
 @part_app.command("get")
-def part_get(ctx: typer.Context, reference: str, part_id: str) -> None:
-    """Get one document part of an entry by part ID."""
-    state: State = ctx.obj
-    _execute(state.env, lambda runtime: runtime.service.get_part(reference, part_id))
+@command(read_only=True)
+async def part_get(
+    call: Call,
+    reference: str = typer.Argument(..., help=_ENTRY_REF_HELP),
+    part_id: str = typer.Argument(..., help="Stable document part ID."),
+    row_offset: int = typer.Option(
+        0, "--row-offset", min=0, help="Table rows to skip when the part is a table."
+    ),
+    row_limit: int = typer.Option(
+        250, "--row-limit", min=1, help="Most table rows to return when the part is a table."
+    ),
+) -> Any:
+    """Get one document part of an entry by part ID, with its available detail."""
+    data = await call.runtime.service.get_part(reference, part_id)
+    if data.get("detail"):
+        data["detail"] = _page_table(data["detail"], row_offset, row_limit)
+    return data
 
 
 @table_app.command("get")
-def table_get(ctx: typer.Context, part_id: str) -> None:
-    """Get an unstructured table by its part ID."""
-    state: State = ctx.obj
-    _execute(state.env, lambda runtime: runtime.service.get_table(part_id))
+@command(read_only=True)
+async def table_get(
+    call: Call,
+    part_id: str = typer.Argument(..., help="Document part ID of an unstructured table."),
+    row_offset: int = typer.Option(
+        0, "--row-offset", min=0, help="Table rows to skip. Zero is the first row."
+    ),
+    row_limit: int = typer.Option(250, "--row-limit", min=1, help="Most table rows to return."),
+) -> Any:
+    """Get a page of an unstructured table by its document part ID."""
+    table = await call.runtime.service.get_table(part_id)
+    return _page_table(table, row_offset, row_limit)
 
 
 @schema_app.command("get")
-def schema_get(ctx: typer.Context, schema_id: str) -> None:
-    """Get an entry, entity, result, or run schema by ID, including dropdown options."""
-    state: State = ctx.obj
-    _execute(state.env, lambda runtime: runtime.service.get_schema(schema_id))
+@command(read_only=True)
+async def schema_get(
+    call: Call,
+    schema_id: str = typer.Argument(..., help="Entry, entity, result, or run schema ID."),
+    field_offset: int = typer.Option(
+        0, "--field-offset", min=0, help="Field definitions to skip. Zero is the first."
+    ),
+    field_limit: int = typer.Option(
+        250, "--field-limit", min=1, help="Most field definitions to return."
+    ),
+) -> Any:
+    """Get an entry, entity, result, or run schema and a page of its field definitions.
+
+    Dropdown fields include the dropdown and its options.
+    """
+    data = await call.runtime.service.get_schema(schema_id)
+    fields = data["field_definitions"]
+    page = fields[field_offset : field_offset + field_limit]
+    data["field_definitions"] = page
+    data["pagination"] = _pagination(field_offset, len(page), len(fields))
+    return data
 
 
 @schema_app.command("find")
-def schema_find(
-    ctx: typer.Context,
-    name: str,
+@command(read_only=True)
+async def schema_find(
+    call: Call,
+    name: str = typer.Argument(..., help="Exact, case-sensitive schema name."),
     kind: str | None = typer.Option(
         None, "--kind", help="entry, entity, result, or run. Omit to search all kinds."
     ),
-) -> None:
-    """Find a schema by exact, case-sensitive name."""
-    state: State = ctx.obj
-    _execute(state.env, lambda runtime: runtime.service.find_schema(name, kind=kind))
+) -> Any:
+    """Find one schema by exact name and return its field definitions and options."""
+    return await call.runtime.service.find_schema(name, kind=kind)
 
 
 @schema_app.command("list")
-def schema_list(
-    ctx: typer.Context,
+@command(read_only=True)
+async def schema_list(
+    call: Call,
     kind: str | None = typer.Option(
-        None, "--kind", help="entry, entity, result, or run. Omit to list all four."
+        None, "--kind", help="entry, entity, result, or run. Omit to list all four, in that order."
     ),
     name: str | None = typer.Option(None, "--name", help="Exact, case-sensitive schema name."),
-    limit: int = typer.Option(50, "--limit", min=1, max=100, help="Page size, from 1 to 100."),
-    cursor: str | None = typer.Option(None, "--cursor", help="next_token from the previous page."),
-) -> None:
-    """List schemas, optionally matching an exact name, following upstream pages up to the limit."""
-    state: State = ctx.obj
-    _execute(
-        state.env,
-        lambda runtime: runtime.service.list_schemas(
-            kind=kind, name=name, limit=limit, cursor=cursor
-        ),
-    )
+    limit: int = typer.Option(50, "--limit", min=1, max=100, help=_LIMIT_HELP),
+    cursor: str | None = typer.Option(None, "--cursor", help=_CURSOR_HELP),
+) -> Any:
+    """List entry, entity, result, or run schemas. Follow next_token to see the rest."""
+    return await call.runtime.service.list_schemas(kind=kind, name=name, limit=limit, cursor=cursor)
 
 
 @container_app.command("get")
-def container_get(ctx: typer.Context, container_id: str) -> None:
+@command(read_only=True)
+async def container_get(
+    call: Call, container_id: str = typer.Argument(..., help="Inventory container ID.")
+) -> Any:
     """Get an inventory container by ID."""
-    state: State = ctx.obj
-    _execute(state.env, lambda runtime: runtime.service.get_container(container_id))
+    return await call.runtime.service.get_container(container_id)
 
 
 @container_app.command("find")
-def container_find(
-    ctx: typer.Context,
+@command(read_only=True)
+async def container_find(
+    call: Call,
     barcode: str | None = typer.Option(None, "--barcode", help="Exact container barcode."),
     name: str | None = typer.Option(None, "--name", help="Exact container name."),
-    limit: int = typer.Option(50, "--limit", min=1, max=100, help="Page size, from 1 to 100."),
-    cursor: str | None = typer.Option(None, "--cursor", help="next_token from the previous page."),
-) -> None:
+    limit: int = typer.Option(50, "--limit", min=1, max=100, help=_LIMIT_HELP),
+    cursor: str | None = typer.Option(None, "--cursor", help=_CURSOR_HELP),
+) -> Any:
     """Find one page of containers by exact barcode or exact name."""
-    state: State = ctx.obj
-    _execute(
-        state.env,
-        lambda runtime: runtime.service.find_containers(
-            barcode=barcode, name=name, limit=limit, cursor=cursor
-        ),
+    return await call.runtime.service.find_containers(
+        barcode=barcode, name=name, limit=limit, cursor=cursor
     )
 
 
 @container_schema_app.command("list")
-def container_schema_list(
-    ctx: typer.Context,
-    limit: int = typer.Option(50, "--limit", min=1, max=100, help="Page size, from 1 to 100."),
-    cursor: str | None = typer.Option(None, "--cursor", help="next_token from the previous page."),
-) -> None:
+@command(read_only=True)
+async def container_schema_list(
+    call: Call,
+    limit: int = typer.Option(50, "--limit", min=1, max=100, help=_LIMIT_HELP),
+    cursor: str | None = typer.Option(None, "--cursor", help=_CURSOR_HELP),
+) -> Any:
     """List one page of container schemas and their field definitions."""
-    state: State = ctx.obj
-    _execute(
-        state.env,
-        lambda runtime: runtime.service.list_container_schemas(limit=limit, cursor=cursor),
-    )
+    return await call.runtime.service.list_container_schemas(limit=limit, cursor=cursor)
 
 
 @results_app.command("list")
-def results_list(
-    ctx: typer.Context,
-    entry: str | None = typer.Option(None),
-    schema_id: str | None = typer.Option(None, "--schema"),
-    page_size: int = typer.Option(100, min=1, max=100),
-    cursor: str | None = typer.Option(None),
-) -> None:
-    """List result records, optionally filtered by entry, schema, or linked entity."""
-    state: State = ctx.obj
-    _execute(
-        state.env,
-        lambda runtime: runtime.service.list_results(
-            entry=entry,
-            schema_id=schema_id,
-            page_size=page_size,
-            cursor=cursor,
-        ),
+@command(read_only=True)
+async def results_list(
+    call: Call,
+    entry: str | None = typer.Option(
+        None, "--entry", help="Entry ID, display ID, or URL. Omit to list results from every entry."
+    ),
+    schema_id: str | None = typer.Option(
+        None, "--schema", help="Result schema ID. Omit to include every result schema."
+    ),
+    page_size: int = typer.Option(
+        100, "--page-size", min=1, max=100, help="Result records per page, from 1 to 100."
+    ),
+    cursor: str | None = typer.Option(None, "--cursor", help=_CURSOR_HELP),
+) -> Any:
+    """List one explicit page of result records, optionally filtered by entry or schema."""
+    return await call.runtime.service.list_results(
+        entry=entry, schema_id=schema_id, page_size=page_size, cursor=cursor
     )
 
 
 @results_app.command("get")
-def results_get(ctx: typer.Context, result_id: str) -> None:
-    """Get one result record by ID."""
-    state: State = ctx.obj
-    _execute(state.env, lambda runtime: runtime.service.get_result(result_id))
+@command(read_only=True)
+async def results_get(
+    call: Call, result_id: str = typer.Argument(..., help="Canonical result ID.")
+) -> Any:
+    """Get one result record by canonical ID."""
+    return await call.runtime.service.get_result(result_id)
 
 
 @blob_app.command("get")
-def blob_get(ctx: typer.Context, blob_id: str) -> None:
+@command(read_only=True)
+async def blob_get(
+    call: Call,
+    blob_id: str = typer.Argument(..., help="Blob ID, the value an attachment result field holds."),
+) -> Any:
     """Get one blob's metadata: name, type, MIME type and upload status. Nothing is downloaded."""
-    state: State = ctx.obj
-    _execute(state.env, lambda runtime: runtime.service.get_blob(blob_id))
+    return await call.runtime.service.get_blob(blob_id)
 
 
 @results_app.command("tables")
-def results_tables(ctx: typer.Context, reference: str) -> None:
+@command(read_only=True)
+async def results_tables(
+    call: Call,
+    reference: str = typer.Argument(..., help=_ENTRY_REF_HELP),
+    offset: int = typer.Option(
+        0, "--offset", min=0, help="Result tables to skip. Zero is the first."
+    ),
+    limit: int = typer.Option(
+        100, "--limit", min=1, max=100, help="Most result tables to return, from 1 to 100."
+    ),
+) -> Any:
     """Discover explicit V2 result-table IDs and assigned schemas on one entry.
 
-    Each table_id is a v2_structured_table id (strtbl_…). Export it with
-    ``export --kind results-table --part TABLE_ID --entry ENTRY``.
+    Each table_id is a v2_structured_table id (strtbl_…).
+
+    CLI: Export it with ``export --kind results-table --part TABLE_ID --entry ENTRY``.
+
+    MCP: Export it with the export tool: kind results-table, part_id TABLE_ID, and entry.
     """
-    state: State = ctx.obj
-    _execute(state.env, lambda runtime: runtime.service.list_result_tables(reference))
+    result = await call.runtime.service.list_result_tables(reference)
+    items = result["items"]
+    page = items[offset : offset + limit]
+    result["items"] = page
+    result["pagination"] = _pagination(offset, len(page), len(items))
+    return result
 
 
 @results_app.command("rows")
-def results_rows(
-    ctx: typer.Context,
-    part_id: str,
-    limit: int = typer.Option(50, "--limit", min=1, max=100, help="Page size, from 1 to 100."),
-    cursor: str | None = typer.Option(None, "--cursor", help="next_token from the previous page."),
-) -> None:
+@command(read_only=True)
+async def results_rows(
+    call: Call,
+    part_id: str = typer.Argument(..., help="Document part ID of a results table."),
+    limit: int = typer.Option(50, "--limit", min=1, max=100, help=_LIMIT_HELP),
+    cursor: str | None = typer.Option(None, "--cursor", help=_CURSOR_HELP),
+) -> Any:
     """Read one page of rows from a results table.
 
-    Calls GET /document-part-results-table/{id}/rows/items. Pass the previous
-    next_token with --cursor.
+    Rows come from GET /document-part-results-table/{id}/rows/items. Pass the
+    previous next_token with --cursor.
     """
-    state: State = ctx.obj
-    _execute(
-        state.env,
-        lambda runtime: runtime.service.list_results_table_rows(
-            part_id, limit=limit, cursor=cursor
-        ),
-    )
+    return await call.runtime.service.list_results_table_rows(part_id, limit=limit, cursor=cursor)
 
 
 @results_app.command("pending")
-def results_pending(
-    ctx: typer.Context,
+@command(read_only=True)
+async def results_pending(
+    call: Call,
     plan_id: str | None = typer.Option(
-        None, "--plan", help="Result upload plan ID; reads the record IDs from its journal."
+        None, "--plan", help="Applied result upload plan ID; its journal gives the record IDs."
     ),
     result_ids: list[str] | None = typer.Option(
-        None, "--id", help="V2 assay result ID. Repeat to read several."
+        None, "--id", help="V2 assay result ID, read 200 per request. Repeat to read several."
     ),
     schema_id: str | None = typer.Option(
         None, "--schema", help="Result schema ID. Needs --created-after."
@@ -839,59 +1081,61 @@ def results_pending(
     created_after: str | None = typer.Option(
         None,
         "--created-after",
-        help="RFC 3339 time, e.g. 2026-11-19T00:00:00Z. Used with --schema.",
+        help="RFC 3339 time, e.g. 2026-11-19T00:00:00Z; results created at or after it. Used with --schema.",
     ),
     limit: int = typer.Option(50, "--limit", min=1, max=100, help="Rows to list, from 1 to 100."),
     cursor: str | None = typer.Option(
         None, "--cursor", help="next_token from the previous page (--schema only)."
     ),
-) -> None:
-    """Read back results, including pending ones, and mark each pending or accepted.
+) -> Any:
+    """Read back results, including pending ones, and mark each pending, accepted, or archived.
 
     Pending results have no entry until a person accepts them with the plug icon
-    in the results table, so `results list --entry` does not find them. Pass one
-    of --plan, --id, or --schema with --created-after. Reads only.
+    in the results table, so listing results by entry does not find them. Pass
+    exactly one of --plan, --id, or --schema with --created-after. Relay
+    next_step. Reads only.
     """
-    state: State = ctx.obj
-    _execute(
-        state.env,
-        lambda runtime: runtime.planner.read_back_results(
-            plan_id=plan_id,
-            result_ids=result_ids or None,
-            schema_id=schema_id,
-            created_after=created_after,
-            limit=limit,
-            cursor=cursor,
-        ),
+    return await call.runtime.planner.read_back_results(
+        plan_id=plan_id,
+        result_ids=result_ids or None,
+        schema_id=schema_id,
+        created_after=created_after,
+        limit=limit,
+        cursor=cursor,
     )
 
 
 @results_app.command("verify")
-def results_verify(
-    ctx: typer.Context,
-    plan_id: str,
+@command(read_only=True)
+async def results_verify(
+    call: Call,
+    plan_id: str = typer.Argument(..., help="Applied result upload plan ID in this environment."),
     sample: int = typer.Option(
         20, "--sample", min=1, max=200, help="Rows to list per category, from 1 to 200."
     ),
-) -> None:
+) -> Any:
     """Diff a result upload plan against the records Benchling created.
 
     Compares planned fields by system name and reports matched, mismatched,
     missing, and extra rows, and which rows still need the plug-icon accept. Reads only.
     """
-    state: State = ctx.obj
-    _execute(
-        state.env,
-        lambda runtime: runtime.planner.verify_results(plan_id, sample=sample),
-    )
+    return await call.runtime.planner.verify_results(plan_id, sample=sample)
 
 
 @app.command("export")
-def export_data(
-    ctx: typer.Context,
-    kind: str = typer.Option(..., "--kind", help="table, results-table, or assay-results."),
-    output: str = typer.Option(..., "--output", "-o", help="File path to write."),
-    file_format: str = typer.Option(..., "--format", help="json or csv."),
+@command(read_only=False)
+async def export_data(
+    call: Call,
+    kind: str = typer.Option(
+        ..., "--kind", help="What to export: table, results-table, or assay-results."
+    ),
+    output: str = typer.Option(
+        ...,
+        "--output",
+        "-o",
+        help="Local file path to write. An existing file is kept unless --overwrite is set.",
+    ),
+    format: str = typer.Option(..., "--format", help="File format: json or csv."),
     overwrite: bool = typer.Option(
         False, "--overwrite", help="Replace the file if it already exists."
     ),
@@ -899,9 +1143,9 @@ def export_data(
         None,
         "--part",
         help=(
-            "Table id. A v3_document_part id (docpart_…) comes from `entry inspect`. "
-            "A v2_structured_table id (strtbl_…) comes from `results tables ENTRY` "
-            "and needs `--entry ENTRY` with `--kind results-table`."
+            "Table id. A v3_document_part id (docpart_…) comes from entry inspect. "
+            "A v2_structured_table id (strtbl_…) comes from results tables "
+            "and needs --entry with --kind results-table."
         ),
     ),
     entry: str | None = typer.Option(
@@ -909,32 +1153,29 @@ def export_data(
         "--entry",
         help=(
             "Entry ID, display ID, or URL. Assay-results filter. "
-            "Also required with a strtbl_ id from `results tables`."
+            "Also required with a strtbl_ id from results tables."
         ),
     ),
     schema_id: str | None = typer.Option(
         None, "--schema", help="Result schema ID. Assay results only."
     ),
-) -> None:
-    """Write a table or assay results to a file and print a summary only.
+) -> Any:
+    """Write a table, results table, or assay results to a local file and return a summary.
 
     Pages are read internally. The response is the row count, columns, path,
-    and SHA-256 checksum, not the rows. An existing file is kept unless
+    and SHA-256 checksum, not the rows. Link and entity values are written as
+    ids. An unset assay field is empty. An existing file is kept unless
     --overwrite is set. Benchling is only read.
     """
-    state: State = ctx.obj
-    _execute(
-        state.env,
-        lambda runtime: export_dataset(
-            runtime.service,
-            kind=kind,
-            path=output,
-            file_format=file_format,
-            overwrite=overwrite,
-            part_id=part_id,
-            entry=entry,
-            schema_id=schema_id,
-        ),
+    return await export_dataset(
+        call.runtime.service,
+        kind=kind,
+        path=output,
+        file_format=format,
+        overwrite=overwrite,
+        part_id=part_id,
+        entry=entry,
+        schema_id=schema_id,
     )
 
 
@@ -944,11 +1185,11 @@ def _read_spec(path: str) -> dict[str, Any]:
         parsed = json.loads(raw)
     except (OSError, json.JSONDecodeError) as exc:
         raise ValidationError(
-            "Could not read change specification",
+            "Could not read change spec",
             details={"path": path, "reason": redact_text(str(exc))},
         ) from exc
     if not isinstance(parsed, dict):
-        raise ValidationError("Change specification must be a JSON object")
+        raise ValidationError("Change spec must be a JSON object")
     return parsed
 
 
@@ -972,16 +1213,32 @@ def _parse_column_maps(column_map: list[str]) -> dict[str, str]:
     return mapped
 
 
+def _parse_spec_json(text: str) -> dict[str, Any]:
+    """Parse an inline --spec-json change spec."""
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValidationError(
+            "Could not parse --spec-json", details={"reason": redact_text(str(exc))}
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise ValidationError("Change spec must be a JSON object")
+    return parsed
+
+
 def _plan_request(
     family: PlanFamily,
-    spec: str | None,
+    spec: str | dict[str, Any] | None,
     csv_path: str | None,
     id_column: str | None,
     column_map: list[str],
+    spec_json: str | None = None,
 ) -> dict[str, Any]:
-    """Choose the JSON spec or the CSV result-update flags."""
-    if csv_path is not None and spec is not None:
-        raise ValidationError("Pass either --spec or --csv, not both")
+    """Choose the spec (a file path, inline JSON, or an MCP object) or the CSV flags."""
+    if sum(value is not None for value in (spec, spec_json, csv_path)) > 1:
+        raise ValidationError("Pass only one of --spec, --spec-json, or --csv")
+    if spec_json is not None:
+        spec = _parse_spec_json(spec_json)
     if csv_path is not None:
         if family != PlanFamily.RESULTS:
             raise ValidationError("CSV result updates require the results family")
@@ -994,18 +1251,48 @@ def _plan_request(
     if column_map or id_column is not None:
         raise ValidationError("--id-column and --map require --csv")
     if spec is None:
-        raise ValidationError("A change plan needs --spec, or --csv with --id-column and --map")
-    return _read_spec(spec)
+        raise ValidationError(
+            "A change plan needs --spec or --spec-json, or --csv with --id-column and --map"
+        )
+    return spec if isinstance(spec, dict) else _read_spec(spec)
+
+
+def _mcp_specification(value: Any) -> dict[str, Any] | None:
+    """Check an inline MCP change specification before anything remote is read."""
+    return None if value is None else parse_change_specification(value)
+
+
+_SPECIFICATION = McpParam(
+    annotation=Annotated[Any, WithJsonSchema(CHANGE_SPECIFICATION_SCHEMA)],
+    description=(
+        "Typed change for family, as a JSON object. Document and table changes set "
+        "operation. Field changes set schema_fields. Result uploads set table_id and "
+        'assay_results; an attachment field value may be {"file": PATH} to upload a '
+        "local file as a blob at apply. Result updates set operation to update and pass "
+        "csv_path, id_column, and column_map. Omit it only when csv_path is set."
+    ),
+    convert=_mcp_specification,
+)
 
 
 @changes_app.command("plan")
-def changes_plan(
-    ctx: typer.Context,
+@command(read_only=False, cli_only=("spec_json",), mcp_params={"spec": _SPECIFICATION})
+async def changes_plan(
+    call: Call,
     entry: str | None = typer.Option(
         None, "--entry", help="Entry ID, display ID, or URL. Omit for entry or container plans."
     ),
-    family: PlanFamily = typer.Option(..., case_sensitive=False),
+    family: PlanFamily = typer.Option(
+        ...,
+        case_sensitive=False,
+        help="Change family: entry, document, table, fields, results, or containers.",
+    ),
     spec: str | None = typer.Option(None, "--spec", help="JSON file path, or '-' for stdin."),
+    spec_json: str | None = typer.Option(
+        None,
+        "--spec-json",
+        help="The change spec as inline JSON text, instead of --spec or --csv.",
+    ),
     csv_path: str | None = typer.Option(
         None,
         "--csv",
@@ -1021,86 +1308,89 @@ def changes_plan(
         "--map",
         help="CSV column mapped to a field, as CSV_COLUMN=FIELD. Repeat for each field.",
     ),
-) -> None:
-    """Create a change plan; nothing is written until it is applied.
+) -> Any:
+    """Create an immutable local preview of a change; nothing is written until it is applied.
 
-    ``--spec`` is a JSON change specification. Result updates can instead read a
-    CSV file: ``--id-column`` names the result id, and each ``--map`` names a
-    field by display name, system name, or field-definition id.
+    CLI: Pass the spec as a file with --spec, or inline with --spec-json.
+
+    MCP: spec is the change spec as a JSON object.
+
+    The spec is a typed change, checked before any remote read; an
+    invalid one is a validation_error and nothing is written. Result updates can
+    instead read a CSV file: --id-column names the result id, and each --map
+    names a field by display name, system name, or field-definition id.
+
+    Inline result uploads pass table_id and assay_results, or batches containing
+    table_id and assay_results for each table, up to 500 records per table.
+    Created results land pending until accepted in each table. On a result
+    attachment field, a value of {"file": PATH} (or a CSV cell file:PATH) uploads
+    that local file as a blob at apply and links its blob ID. The preview shows
+    the file's base name, size, SHA-256 and MD5, never its path or contents.
+    Files over 100 MiB are refused.
+
+    Container plans support operation "create" with schema_id, or "transfer" with
+    source_container_id, destination_container_id, and destination_contents.
+    Entry plans omit --entry and pass entry_template_id, folder_id, and name;
+    optional schema_fields are checked against the template schema. Other entry
+    families require --entry.
     """
-    state: State = ctx.obj
-    try:
-        if family == PlanFamily.ENTRY and entry is not None:
-            raise ValidationError("Entry creation plans must not specify --entry")
-        if family not in (PlanFamily.ENTRY, PlanFamily.CONTAINERS) and entry is None:
-            raise ValidationError("This change family requires --entry")
-        request = _plan_request(family, spec, csv_path, id_column, column_map)
-    except BenchlingAgentError as exc:
-        _emit(Envelope.failure(exc))
-        raise typer.Exit(int(exc.exit_code)) from None
-    _execute(
-        state.env,
-        lambda runtime: runtime.planner.plan(entry, family, request),
-    )
+    if family == PlanFamily.ENTRY and entry is not None:
+        raise ValidationError("Entry creation plans must not specify --entry")
+    if family not in (PlanFamily.ENTRY, PlanFamily.CONTAINERS) and entry is None:
+        raise ValidationError("This change family requires --entry")
+    request = _plan_request(family, spec, csv_path, id_column, column_map, spec_json)
+    return await call.runtime.planner.plan(entry, family, request)
 
 
 @changes_app.command("apply")
-def changes_apply(
-    ctx: typer.Context,
-    plan_id: str,
+@command(read_only=False, destructive=True)
+async def changes_apply(
+    call: Call,
+    plan_id: str = typer.Argument(..., help="ID of a plan created in this environment."),
     confirm_env: str | None = typer.Option(
         None,
         "--confirm-env",
-        help="Repeat the --env name. Required to apply to a protected environment.",
+        help=(
+            "Repeat the --env name. Required to apply to a protected environment; "
+            "set it only after the person has confirmed that environment name."
+        ),
     ),
-) -> None:
-    """Apply a previously created plan, re-checking its preconditions first.
+) -> Any:
+    """Apply a previously previewed plan, re-checking its preconditions first.
 
-    A protected environment is refused unless --env names it on the command line
-    and --confirm-env repeats the same name.
+    CLI: A protected environment is refused unless --env names it on the command
+    line and --confirm-env repeats the same name.
+
+    MCP: Writes need env in the server's --allow-writes list; a protected env
+    that is not listed is refused with a message saying so, and only a restart
+    can enable it. A protected env also needs confirm_env equal to env. Set
+    confirm_env only after the person has confirmed that environment name for
+    this plan; never guess it or copy it from env.
+
+    Entry creation returns the new entry ID and web_url (its Benchling web-app
+    link, or null). A results upload also returns the entry's web_url; relay
+    next_step, which links the entry, to have the person accept the pending
+    results in the named table. Planned local files are uploaded as blobs first,
+    once each with no retry; their blob IDs are in the journal.
     """
-    state: State = ctx.obj
-    try:
-        # Refuse before the keychain or the network is touched.
-        environment = EnvironmentConfigStore().resolve(state.env)
-        check_apply_allowed(
-            environment,
-            env_on_command_line=state.env_on_command_line,
-            confirm_env=confirm_env,
-        )
-    except BenchlingAgentError as exc:
-        _emit(Envelope.failure(exc))
-        raise typer.Exit(int(exc.exit_code)) from None
-
-    async def call(runtime: Runtime) -> dict[str, Any]:
-        check_apply_allowed(
-            runtime.environment,
-            env_on_command_line=state.env_on_command_line,
-            confirm_env=confirm_env,
-        )
-        return await runtime.planner.apply(plan_id)
-
-    _execute(state.env, call)
+    call.authorize_apply(confirm_env)
+    return await call.runtime.planner.apply(plan_id)
 
 
 @changes_app.command("status")
-def changes_status(
-    ctx: typer.Context,
-    plan_id: str,
+@command(read_only=True)
+async def changes_status(
+    call: Call,
+    plan_id: str = typer.Argument(..., help="ID of a plan created in this environment."),
     wait: bool = typer.Option(
         False, "--wait", help="Poll result tasks until completion or timeout."
     ),
     timeout: float = typer.Option(
         300.0, "--timeout", min=0.1, max=3600, help="Maximum wait, in seconds (0.1-3600)."
     ),
-) -> None:
-    """Show a plan journal; optionally wait for submitted result tasks."""
-    state: State = ctx.obj
-
-    async def call(runtime: Runtime) -> dict[str, Any]:
-        return await runtime.planner.status(plan_id, wait=wait, timeout=timeout)
-
-    _execute(state.env, call)
+) -> Any:
+    """Show a plan journal and task status; optionally wait for submitted result tasks."""
+    return await call.runtime.planner.status(plan_id, wait=wait, timeout=timeout)
 
 
 def _issue_spec(
@@ -1156,32 +1446,47 @@ def _file_with_gh(draft: dict[str, Any]) -> dict[str, Any]:
 
 
 @issue_app.command("draft")
-def issue_draft(
+@command(read_only=True, needs_env=False, cli_only=("spec", "file"))
+async def issue_draft(
+    call: Call,
     spec: str | None = typer.Option(
         None, "--spec", help="JSON file with the draft fields, or '-' for stdin."
     ),
     kind: str | None = typer.Option(None, "--kind", help="bug or feature."),
-    summary: str | None = typer.Option(None, "--summary", help="One-line issue title."),
+    summary: str | None = typer.Option(
+        None, "--summary", help="One-line issue title, 8 to 120 characters."
+    ),
     attempted: str | None = typer.Option(
-        None, "--attempted", help="What the user asked the agent to do."
+        None, "--attempted", help="What the user asked the agent to do, in plain words."
     ),
     expected: str | None = typer.Option(None, "--expected", help="What should have happened."),
-    actual: str | None = typer.Option(None, "--actual", help="What the toolkit did instead."),
-    interface: str | None = typer.Option(None, "--interface", help="cli or mcp."),
+    actual: str | None = typer.Option(
+        None, "--actual", help="What the toolkit did or returned instead."
+    ),
+    interface: str | None = typer.Option(
+        None, "--interface", help="cli or mcp. The MCP tool defaults to mcp."
+    ),
     command_or_tool: str | None = typer.Option(
         None, "--command", help="The benchlingtk command or MCP tool that was used."
     ),
     description: str | None = typer.Option(
-        None, "--description", help="Detailed description of the limitation."
+        None, "--description", help="Detailed description of the limitation and its impact."
     ),
-    solution: str | None = typer.Option(None, "--solution", help="Proposed solution."),
+    solution: str | None = typer.Option(
+        None, "--solution", help="How the toolkit could support this, step by step."
+    ),
     cite_url: list[str] = typer.Option(
         [],
         "--cite-url",
-        help="Benchling docs URL that supports the solution. Repeat with --cite-quote.",
+        help=(
+            "https link on docs.benchling.com, help.benchling.com, or the API reference "
+            "that supports the solution. Repeat with --cite-quote, in matching order."
+        ),
     ),
     cite_quote: list[str] = typer.Option(
-        [], "--cite-quote", help="The quoted line from the matching --cite-url page."
+        [],
+        "--cite-quote",
+        help="The exact line on the matching --cite-url page that shows the fix is possible.",
     ),
     file: bool = typer.Option(
         False,
@@ -1191,13 +1496,18 @@ def issue_draft(
             "said yes to this exact draft."
         ),
     ),
-) -> None:
+) -> Any:
     """Build a ready-to-file issue for something the toolkit cannot do.
 
-    Prints the title, body, labels, and a prefilled GitHub new-issue URL. Nothing
-    is sent unless --file is passed. The proposed solution must cite official
-    Benchling docs, and drafts that look like they hold tenant URLs, record IDs,
-    secrets, or email addresses are refused. Benchling is not contacted.
+    Call this only after you explained the limitation and the user said yes to
+    logging it. Prints the title, body, labels, and a prefilled GitHub new-issue
+    URL. The proposed solution must cite official Benchling docs, and drafts that
+    look like they hold tenant URLs, record IDs, secrets, or email addresses are
+    refused. Benchling is not contacted.
+
+    CLI: Nothing is sent unless --file is passed.
+
+    MCP: Nothing is filed. Show the user the draft; they open new_issue_url to file it.
     """
     options = {
         "kind": kind,
@@ -1205,19 +1515,21 @@ def issue_draft(
         "attempted_action": attempted,
         "expected": expected,
         "actual": actual,
-        "interface": interface,
+        "interface": "mcp" if interface is None and call.surface == "mcp" else interface,
         "command_or_tool": command_or_tool,
         "description": description,
         "proposed_solution": solution,
     }
-    try:
-        draft = build_issue_draft(_issue_spec(spec, options, cite_url, cite_quote))
-        if file:
-            draft = _file_with_gh(draft)
-    except BenchlingAgentError as exc:
-        _emit(Envelope.failure(exc))
-        raise typer.Exit(int(exc.exit_code)) from None
-    _emit(Envelope.success(draft, repository=REPOSITORY))
+    draft = build_issue_draft(_issue_spec(spec, options, cite_url, cite_quote))
+    if file:
+        draft = _file_with_gh(draft)
+    if call.surface == "mcp":
+        draft["next_step"] = (
+            "Show the user this title and body. They file it by opening new_issue_url; "
+            "this tool never files an issue."
+        )
+    call.meta["repository"] = REPOSITORY
+    return draft
 
 
 def _skill_path() -> Path:
@@ -1229,6 +1541,7 @@ def _skill_path() -> Path:
 
 
 @skill_app.command("path")
+@cli_only("The MCP server publishes SKILL.md as the skill://benchlingtk/SKILL.md resource.")
 def skill_path() -> None:
     """Print the absolute path of the installed SKILL.md as plain text.
 
@@ -1239,6 +1552,7 @@ def skill_path() -> None:
 
 
 @skill_app.command("show")
+@cli_only("The MCP server publishes SKILL.md as the skill://benchlingtk/SKILL.md resource.")
 def skill_show() -> None:
     """Print the contents of the installed SKILL.md as Markdown. Read-only and offline."""
     typer.echo(_skill_path().read_text(encoding="utf-8"), nl=False)
@@ -1251,12 +1565,13 @@ def _write_stderr_envelope(envelope: Envelope[Any]) -> None:
 
 
 @mcp_app.command("serve")
+@cli_only("Starts the MCP server itself.")
 def mcp_serve(
     allow_writes: list[str] = typer.Option(
         [],
         "--allow-writes",
         metavar="ENV",
-        help="Allow apply_changes in this environment; repeatable.",
+        help="Allow changes_apply in this environment; repeatable.",
     ),
     verbose: bool = typer.Option(
         False,

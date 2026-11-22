@@ -262,7 +262,7 @@ class _Terminal:
 def _color_of(line: str) -> str:
     if line.startswith("# "):
         return "comment"
-    if line.startswith("$ ") or line.startswith("apply_changes("):
+    if line.startswith("$ ") or line.startswith("changes_apply("):
         return "prompt"
     if line.startswith("[exit 0]"):
         return "ok"

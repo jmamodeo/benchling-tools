@@ -40,7 +40,7 @@ body:
     id: command
     attributes:
       label: Command or MCP tool
-      placeholder: benchlingtk changes apply / apply_changes
+      placeholder: benchlingtk changes apply / changes_apply
     validations:
       required: true
   - type: textarea

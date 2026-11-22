@@ -128,7 +128,7 @@ remote writes in total: 1
 
 # 6. MCP server: read-only unless --allow-writes ENV is passed
 
-apply_changes(env="demo", plan_id=...) ->
+changes_apply(env="demo", plan_id=...) ->
 {
   "code": "unsupported_capability",
   "message": "MCP writes are disabled for demo; restart with `benchlingtk mcp serve --allow-writes demo`",
@@ -212,7 +212,7 @@ benchlingtk auth protect --env prod
 benchlingtk auth unprotect --env prod
 ```
 
-On a protected environment, `changes apply` is refused (exit 2) unless `--env` names it on the command line and `--confirm-env` repeats the same name. There is no default environment and no environment-variable override for either flag. A `--confirm-env` that names a different environment is refused for any environment. Reads, `changes plan` and `changes status` are unaffected. The MCP tool `apply_changes` needs a protected environment in `--allow-writes`, and its refusal says the environment is protected. `doctor`, `auth status` and the MCP tool `list_environments` report `protected`. `doctor` also prints a `protection` line naming the flags a write needs.
+On a protected environment, `changes apply` is refused (exit 2) unless `--env` names it on the command line and `--confirm-env` repeats the same name. There is no default environment and no environment-variable override for either flag. A `--confirm-env` that names a different environment is refused for any environment. Reads, `changes plan` and `changes status` are unaffected. The MCP tool `changes_apply` needs a protected environment in `--allow-writes`, and its refusal says the environment is protected. Once it is listed, the call also needs `confirm_env` equal to `env`; an agent sets it only after the person confirms the name. A `confirm_env` that names a different environment is refused for any environment. `doctor`, `auth status` and the MCP tool `auth_status` report `protected`. `doctor` also prints a `protection` line naming the flags a write needs.
 
 ```console
 benchlingtk --env prod changes apply PLAN_ID --confirm-env prod
@@ -355,7 +355,7 @@ A results-table or unstructured-table cell is flattened the same way. A link or 
 
 ### Preview and apply changes
 
-A change specification covers one existing-entry mutation, one new-entry creation, or one container mutation. Previewing only reads Benchling and creates a local immutable plan:
+A change spec covers one existing-entry mutation, one new-entry creation, or one container mutation. Previewing only reads Benchling and creates a local immutable plan:
 
 ```console
 benchlingtk --env dev changes plan \
@@ -384,6 +384,9 @@ benchlingtk --env dev changes plan \
 }
 JSON
 
+benchlingtk --env dev changes plan --entry etr_abc123 --family table \
+  --spec-json '{"operation": "append_rows", "table_part_id": "docpart_table1", "rows": [["D", "4"]]}'
+
 benchlingtk --env dev changes apply PLAN_ID
 benchlingtk --env prod changes apply PLAN_ID --confirm-env prod
 benchlingtk --env dev changes status PLAN_ID
@@ -392,7 +395,7 @@ benchlingtk --env dev changes status PLAN_ID --wait --timeout 300
 
 `--confirm-env` is required only for a [protected environment](#protected-environments).
 
-An entry specification uses `entry_template_id`, `folder_id`, and `name`, and may include `schema_fields` when the template has a schema. Preview reads V3 template metadata and folder data, refuses missing or archived resources, and shows their names and IDs. Use `template get` for the template's note structure; V3 `EntryTemplate.Get` returns metadata only. Apply creates the entry once and returns its ID; use that ID with `entry inspect` or `results tables`. The V3 `Entry.Create` route supports `entryTemplateId` to instantiate a template ([Benchling API docs](https://docs.benchling.com/docs/api/benchling-api/entry/create)); template and folder reads use [EntryTemplate.Get](https://docs.benchling.com/docs/api/benchling-api/entry-template/get) and [Folder.Get](https://docs.benchling.com/docs/api/benchling-api/folder/get).
+An entry spec uses `entry_template_id`, `folder_id`, and `name`, and may include `schema_fields` when the template has a schema. Preview reads V3 template metadata and folder data, refuses missing or archived resources, and shows their names and IDs. Use `template get` for the template's note structure; V3 `EntryTemplate.Get` returns metadata only. Apply creates the entry once and returns its ID; use that ID with `entry inspect` or `results tables`. The V3 `Entry.Create` route supports `entryTemplateId` to instantiate a template ([Benchling API docs](https://docs.benchling.com/docs/api/benchling-api/entry/create)); template and folder reads use [EntryTemplate.Get](https://docs.benchling.com/docs/api/benchling-api/entry-template/get) and [Folder.Get](https://docs.benchling.com/docs/api/benchling-api/folder/get).
 Container creation and transfer use the same local preview and explicit apply lifecycle. Container plans do not take `--entry`:
 
 ```console
@@ -401,9 +404,9 @@ benchlingtk --env dev changes plan --family containers --spec transfer-container
 benchlingtk --env dev changes apply PLAN_ID
 ```
 
-Container create specifications use `operation: "create"` and `schema_id`; transfer specifications use `operation: "transfer"`, `source_container_id`, `destination_container_id`, and `destination_contents` (each item has an `entity_id`). Transfer previews read both containers and apply re-checks their modification timestamps before the one-time transfer. Create previews read the schema and apply re-checks its field definitions. As with other families, an uncertain write is never retried. MCP apply remains disabled unless the server was started with `--allow-writes ENV`.
+Container create specs use `operation: "create"` and `schema_id`; transfer specs use `operation: "transfer"`, `source_container_id`, `destination_container_id`, and `destination_contents` (each item has an `entity_id`). Transfer previews read both containers and apply re-checks their modification timestamps before the one-time transfer. Create previews read the schema and apply re-checks its field definitions. As with other families, an uncertain write is never retried. MCP apply remains disabled unless the server was started with `--allow-writes ENV`.
 
-Example create specification:
+Example create spec:
 
 ```json
 {
@@ -414,7 +417,7 @@ Example create specification:
 }
 ```
 
-Example transfer specification:
+Example transfer spec:
 
 ```json
 {
@@ -426,7 +429,7 @@ Example transfer specification:
 }
 ```
 
-Supported specifications are documented in [schemas/change-spec.schema.json](schemas/change-spec.schema.json). The six families are:
+Supported specs are documented in [schemas/change-spec.schema.json](schemas/change-spec.schema.json). The six families are:
 
 - `entry`: create an entry from a template in a folder; optional schema fields are validated against the template's schema and sent by field-definition ID;
 - `document`: insert, delete, move, or replace a text part;
@@ -437,13 +440,13 @@ Supported specifications are documented in [schemas/change-spec.schema.json](sch
 
 Field inputs must use a schema field's V3 `systemName` or its field-definition ID and have the shape `{"value": ...}`. Plans show both identifiers, send the field-definition ID, validate value types and constraints, and re-check the affected definitions and values immediately before applying. Result uploads also verify that the table belongs to the selected entry, that every record uses the table's result schema, and that any supplied project IDs are readable. Result upload field keys stay system names.
 
-A result update reads a CSV file instead of inline records. `--id-column` is the column that holds the result id (`id` in an assay-result export). Each `--map CSV_COLUMN=FIELD` is required; columns are not guessed from the header. `FIELD` is the export display name, the system name, or the field-definition id. The preview resolves every mapped column to a field-definition id and shows only the values that would change. Unmapped columns, including `createdAt` and `modifiedAt`, are not written. A blank cell clears a value that is present. A blank cell on an empty field is not a change, so an unmodified export round-trips: export writes both null and an empty string as a blank cell. Unknown columns, ambiguous names, and bad rows are one error and nothing is written. Apply re-reads each result and sends `PATCH /result/{id}` with `schemaFields` keyed by field-definition id, and only when `modifiedAt` and the mapped values still match the plan. The CSV is not read again at apply time. The limit is 500 rows. The same specification (`operation`, `csv_path`, `id_column`, `column_map`) is what `plan_changes` accepts.
+A result update reads a CSV file instead of inline records. `--id-column` is the column that holds the result id (`id` in an assay-result export). Each `--map CSV_COLUMN=FIELD` is required; columns are not guessed from the header. `FIELD` is the export display name, the system name, or the field-definition id. The preview resolves every mapped column to a field-definition id and shows only the values that would change. Unmapped columns, including `createdAt` and `modifiedAt`, are not written. A blank cell clears a value that is present. A blank cell on an empty field is not a change, so an unmodified export round-trips: export writes both null and an empty string as a blank cell. Unknown columns, ambiguous names, and bad rows are one error and nothing is written. Apply re-reads each result and sends `PATCH /result/{id}` with `schemaFields` keyed by field-definition id, and only when `modifiedAt` and the mapped values still match the plan. The CSV is not read again at apply time. The limit is 500 rows. The same spec (`operation`, `csv_path`, `id_column`, `column_map`) is what `changes_plan` accepts.
 
-A result attachment field (a V3 `AttachmentLinkFieldDefinition`) can take a local file. In a results upload, give the field the value `{"file": "plots/run-01.png"}`, optionally with `"blob_type": "VISUALIZATION"` (default `RAW_FILE`) and `"mime_type"` (default guessed from the file name). A relative path is resolved against the current directory. A multi-value attachment field takes a list that may mix file references and existing blob IDs. In a CSV update, an attachment cell `file:plots/run-01.png` does the same, relative to the CSV's folder, and any other text is a blob ID. The preview lists each file under `after.uploads` with its base name, size, SHA-256, MD5, MIME type and blob type; the path and contents are never in the plan or its output. Apply reads each file again and refuses the plan with a conflict if its size or SHA-256 changed. It then uploads it as a V2 blob: one `POST /blobs` up to 10,000,000 bytes, otherwise `POST /blobs:start-multipart-upload`, 10 MiB parts, and `:complete-upload`, with `:abort-upload` if a step fails. The blob ID is journaled before the result write that links it. Uploads are never retried; if the result write then fails, the blob stays in Benchling unlinked. Files over 100 MiB, more than 1 GiB in one plan, empty files, and files inside the toolkit state directory are refused. `benchlingtk blob get BLOB_ID` (MCP `get_blob`) reads a blob's metadata, not its contents.
+A result attachment field (a V3 `AttachmentLinkFieldDefinition`) can take a local file. In a results upload, give the field the value `{"file": "plots/run-01.png"}`, optionally with `"blob_type": "VISUALIZATION"` (default `RAW_FILE`) and `"mime_type"` (default guessed from the file name). A relative path is resolved against the current directory. A multi-value attachment field takes a list that may mix file references and existing blob IDs. In a CSV update, an attachment cell `file:plots/run-01.png` does the same, relative to the CSV's folder, and any other text is a blob ID. The preview lists each file under `after.uploads` with its base name, size, SHA-256, MD5, MIME type and blob type; the path and contents are never in the plan or its output. Apply reads each file again and refuses the plan with a conflict if its size or SHA-256 changed. It then uploads it as a V2 blob: one `POST /blobs` up to 10,000,000 bytes, otherwise `POST /blobs:start-multipart-upload`, 10 MiB parts, and `:complete-upload`, with `:abort-upload` if a step fails. The blob ID is journaled before the result write that links it. Uploads are never retried; if the result write then fails, the blob stays in Benchling unlinked. Files over 100 MiB, more than 1 GiB in one plan, empty files, and files inside the toolkit state directory are refused. `benchlingtk blob get BLOB_ID` (MCP `blob_get`) reads a blob's metadata, not its contents.
 
 Results land as pending: they do not appear in the notebook results table, and have no entry, until a person clicks the plug (integrate) icon in that table's toolbar in Benchling. After a results upload, `changes apply` returns `web_url` and a `next_step` naming the entry, its link, and the result table(s). Creating an entry from a template also returns the new entry's `web_url`. The accept control may insert every pending result that matches the table's schema, not only the ones just pushed. See [docs/api-limitations.md](docs/api-limitations.md). A table write updates the named cells or appends rows, checked against the entry version, and resets table evaluation until Benchling's browser evaluates it again.
 Table upload plans use local correlation UUIDs; the tenant assigns the actual result IDs. Local UUIDs are not idempotency keys. Caller-supplied result IDs are rejected by the CLI because the tested tenant rejects them on this endpoint despite the public OpenAPI declaration. Each notebook table batch is limited to 500 records. The immediate apply result is `submission_pending`; task success is reported separately as `pending_integration`.
-Use `batches` in a results specification to push multiple tables in one plan:
+Use `batches` in a results spec to push multiple tables in one plan:
 
 ```json
 {
@@ -454,7 +457,7 @@ Use `batches` in a results specification to push multiple tables in one plan:
 }
 ```
 
-Three canned results specifications in [`examples/`](examples/) use synthetic IDs and generic data: `results-plate-reader.json` (one plate-reader style table), `results-multi-schema.json` (two tables with different result schemas) and `results-invalid.json` (a wrong-type value and a missing required field, for the validation error path). Each record has the `schemaId` and `fields` shape of V2 [bulk create assay results](https://docs.benchling.com/docs/api/v2/benchling-api/assay-results/bulk-create-assay-results). Pass one with `--family results --spec` against an entry that has those tables. To run all three through `changes plan` and `changes apply` against the offline fake API (`tests/fake_benchling.py`, which installs the `strtbl_plate` table), with no credentials or network:
+Three canned results specs in [`examples/`](examples/) use synthetic IDs and generic data: `results-plate-reader.json` (one plate-reader style table), `results-multi-schema.json` (two tables with different result schemas) and `results-invalid.json` (a wrong-type value and a missing required field, for the validation error path). Each record has the `schemaId` and `fields` shape of V2 [bulk create assay results](https://docs.benchling.com/docs/api/v2/benchling-api/assay-results/bulk-create-assay-results). Pass one with `--family results --spec` against an entry that has those tables. To run all three through `changes plan` and `changes apply` against the offline fake API (`tests/fake_benchling.py`, which installs the `strtbl_plate` table), with no credentials or network:
 
 ```console
 uv run pytest tests/test_examples.py
@@ -496,9 +499,11 @@ On Linux the standard MCP SDK starts the stdio server with only `HOME`, `LOGNAME
 
 Startup failures, including a missing keychain, are a JSON envelope on stderr and a non-zero exit. Stdout is reserved for the MCP protocol. The stderr text names the MCP SDK's default environment and the `env` block. Request logging is off unless you pass `--verbose`.
 
-Every tool except `list_environments` and `issue_draft` takes a required `env` argument, and each call is authenticated with that environment's credentials. Every parameter on every tool has a description in the published input schema. The server is read-only by default. To permit `apply_changes` in specific environments, add `--allow-writes ENV` after `serve` (repeatable, e.g. `--allow-writes dev --allow-writes test`); reads remain available in all environments. A [protected environment](#protected-environments) is refused unless it is in `--allow-writes`, and the refusal says it is protected. A plan can only be applied or checked in the environment that created it. `plan_changes` remains available because it performs remote reads and writes only an immutable local preview. Its `specification` is a typed object, the same shapes as [schemas/change-spec.schema.json](schemas/change-spec.schema.json): a document or table `operation`, `schema_fields`, inline `assay_results` or table-specific result `batches`, or a result update with `operation` `update`, `csv_path`, `id_column`, and `column_map`. A specification that does not match is a `validation_error` in the standard envelope, and nothing is planned. `apply_changes` is still gated by `--allow-writes ENV`. `get_change_status` polls result tasks and accepts `wait` and `timeout`; status checks work without `--allow-writes`. The CLI still passes its JSON file to the planner. Large entry, section, table, result, and schema responses expose offset/limit or cursor pagination and never silently truncate data. `list_entries`, `list_schemas`, and `list_results_table_rows` use `limit` (default 50, maximum 100) and return `next_token` for the following page. `list_results_table_rows` is a read, so it works without `--allow-writes`. `read_back_results` (one of `plan_id`, `result_ids`, or `schema_id` with `created_after`) and `verify_results` (`plan_id`, `sample`) are the MCP forms of `results pending` and `results verify`; they are reads and work without `--allow-writes`. `export` reads every page internally and writes a local JSON or CSV file. Its response is the same summary as the CLI (row count, columns, path, SHA-256) and does not include the rows. It does not write to Benchling, and it does not need `--allow-writes`. An existing file is left unchanged unless `overwrite` is true.
+The tools are generated from the CLI: each command is one tool named after its command path (`benchlingtk entry get` is `entry_get`, `benchlingtk results pending` is `results_pending`), with the same arguments, defaults, limits, and help text. Each tool description ends with a generated write class: reads only, writes a local file or plan (`export`, `changes_plan`), or writes to Benchling (`changes_apply`, with its gating rule). Flags become arguments with underscores (`--part-offset` is `part_offset`). Commands that need a terminal or change local credentials (`auth login`, `auth logout`, `auth protect`, `auth unprotect`, `skill path`, `skill show`, and `mcp serve`) have no tool.
 
-The CLI and MCP tools share the same versioned envelope. Static schemas for the envelope and change specifications live under [`schemas/`](schemas/). MCP publishes the generated input and output schema for each tool during discovery. Each input parameter includes a description, and `plan_changes` `specification` is the typed union of those change shapes.
+Every tool except `auth_status` and `issue_draft` takes a required `env` argument, and each call is authenticated with that environment's credentials. Every parameter on every tool has a description in the published input schema. The server is read-only by default. To permit `changes_apply` in specific environments, add `--allow-writes ENV` after `serve` (repeatable, e.g. `--allow-writes dev --allow-writes test`); reads remain available in all environments. A [protected environment](#protected-environments) is refused unless it is in `--allow-writes`, and the refusal says it is protected. A plan can only be applied or checked in the environment that created it. `changes_plan` remains available because it performs remote reads and writes only an immutable local preview. Its `spec` is a typed object, the same shapes as [schemas/change-spec.schema.json](schemas/change-spec.schema.json): a document or table `operation`, `schema_fields`, inline `assay_results` or table-specific result `batches`, or a result update with `operation` `update`, `csv_path`, `id_column`, and `column_map`. A spec that does not match is a `validation_error` in the standard envelope, and nothing is planned. `changes_apply` is still gated by `--allow-writes ENV`. `changes_status` polls result tasks and accepts `wait` and `timeout`; status checks work without `--allow-writes`. The CLI still passes its JSON file to the planner. Large entry, section, table, result, and schema responses expose offset/limit or cursor pagination and never silently truncate data. `entry_list`, `schema_list`, and `results_rows` use `limit` (default 50, maximum 100) and return `next_token` for the following page. `results_rows` is a read, so it works without `--allow-writes`. `results_pending` (one of `plan_id`, `result_ids`, or `schema_id` with `created_after`) and `results_verify` (`plan_id`, `sample`) are the MCP forms of `results pending` and `results verify`; they are reads and work without `--allow-writes`. `export` reads every page internally and writes a local JSON or CSV file. Its response is the same summary as the CLI (row count, columns, path, SHA-256) and does not include the rows. It does not write to Benchling, and it does not need `--allow-writes`. An existing file is left unchanged unless `overwrite` is true.
+
+The CLI and MCP tools share the same versioned envelope. Static schemas for the envelope and change specs live under [`schemas/`](schemas/). MCP publishes the generated input and output schema for each tool during discovery. Each input parameter includes a description, and `changes_plan` `spec` is the typed union of those change shapes.
 
 ## Logging what the toolkit cannot do
 
@@ -544,9 +549,10 @@ flowchart TD
 
 | Module (`src/benchlingtk`) | Role |
 |---|---|
-| `cli.py` | Typer command-line interface |
-| `mcp_server.py` | MCP tools, read-only default, write allow-list |
-| `change_spec.py` | Typed `plan_changes` specifications and their validation |
+| `cli.py` | Typer command-line interface; every command is declared once here |
+| `commands.py` | Command declarations shared by the CLI and the MCP server |
+| `mcp_server.py` | MCP tools generated from the CLI commands, read-only default, write allow-list |
+| `change_spec.py` | Typed `changes_plan` specs and their validation |
 | `services.py` | Typed read services and entry snapshots |
 | `export.py` | Local JSON or CSV export; the response is a summary, not the rows |
 | `listing.py` | Paged entry, schema, and dropdown discovery |
@@ -572,8 +578,8 @@ flowchart TD
 - **Version preconditions.** Document edits and table writes send the entry version observed at preview time, and Benchling answers HTTP 409 if it is stale. Table plans re-check that entry version just before writing. A concurrent edit becomes a conflict instead of an overwrite. Entry field updates have no atomic server-side precondition, so the affected values are compared immediately before writing; this is best effort. CSV result updates re-check each result's `modifiedAt`, entry, schema, and mapped values before any `PATCH /result/{id}`. That PATCH body has no version field, so the check is local. A mismatch writes nothing.
 - **Single use.** A plan with any prior attempt cannot be applied again, and a per-plan file lock stops a CLI and an MCP process from applying the same plan concurrently on one machine.
 - **Writes are never retried.** A write that times out or fails with a server error leaves the journal in `unknown`/`partial` state for a person to reconcile; reads are retried with bounded backoff.
-- **Protected environments.** `changes apply` on an environment marked protected is refused unless `--env` names it on the command line and `--confirm-env` repeats the name. MCP `apply_changes` needs it in `--allow-writes`. The flag is local configuration. It is not a Benchling permission.
-- **Read-only MCP by default.** `apply_changes` is refused unless the server was started with `--allow-writes ENV` for that environment. `plan_changes` stays available because it only reads Benchling and writes a local preview.
+- **Protected environments.** `changes apply` on an environment marked protected is refused unless `--env` names it on the command line and `--confirm-env` repeats the name. MCP `changes_apply` needs it in `--allow-writes` and `confirm_env` equal to `env`. The flag is local configuration. It is not a Benchling permission.
+- **Read-only MCP by default.** `changes_apply` is refused unless the server was started with `--allow-writes ENV` for that environment. `changes_plan` stays available because it only reads Benchling and writes a local preview.
 - **Export writes a local file only.** `export` reads Benchling and writes JSON or CSV on this machine. The response is a summary. An existing file is not replaced unless overwrite is set.
 - **Explicit environment on every call.** There is no default environment, so a command or tool call cannot reach a tenant by omission.
 - **Secrets stay in the OS keychain.** The tenant URL and client ID are stored in `environments.json` with mode 0600. Access tokens stay in process memory. Error envelopes and journals are scrubbed, and TLS verification uses the OS trust store with no insecure fallback. There is no plaintext secret file.

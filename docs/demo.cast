@@ -133,7 +133,7 @@
 [17.1,"o","\n"]
 [17.8,"o","# 6. MCP server: read-only unless --allow-writes ENV is passed\n"]
 [17.95,"o","\n"]
-[17.98,"o","apply_changes(env=\"demo\", plan_id=...) ->\n"]
+[17.98,"o","changes_apply(env=\"demo\", plan_id=...) ->\n"]
 [18.01,"o","{\n"]
 [18.04,"o","  \"code\": \"unsupported_capability\",\n"]
 [18.07,"o","  \"message\": \"MCP writes are disabled for demo; restart with `benchlingtk mcp serve --allow-writes demo`\",\n"]

@@ -164,9 +164,9 @@ def _demo() -> None:
         try:
             async with Client(build_mcp_server(pool)) as client:
                 result = await client.call_tool(
-                    "apply_changes", {"env": "demo", "plan_id": second["data"]["id"]}
+                    "changes_apply", {"env": "demo", "plan_id": second["data"]["id"]}
                 )
-                print('apply_changes(env="demo", plan_id=...) ->')
+                print('changes_apply(env="demo", plan_id=...) ->')
                 print(json.dumps(result.structured_content["error"], indent=2))
         finally:
             await pool.close()

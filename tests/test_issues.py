@@ -39,7 +39,7 @@ SPEC: dict = {
     "expected": "The results appear in the table.",
     "actual": "The results were created as pending and next_step asked for a click.",
     "interface": "mcp",
-    "command_or_tool": "apply_changes",
+    "command_or_tool": "changes_apply",
     "description": (
         "Results created through the API land as pending with no entry, so an agent "
         "cannot finish an upload end to end."
@@ -74,7 +74,7 @@ def test_feature_draft_renders_every_section_and_a_prefilled_url() -> None:
         assert heading in body
     assert f"benchlingtk version: {__version__}" in body
     assert "Interface: MCP" in body
-    assert "`apply_changes`" in body
+    assert "`changes_apply`" in body
     assert f"- {DOCS_URL}" in body
     assert f"> {QUOTE}" in body
     assert draft["environment"]["toolkit_version"] == __version__
@@ -334,6 +334,17 @@ def test_cli_file_without_gh(runner, monkeypatch) -> None:
     assert payload["error"]["code"] == "unsupported_capability"
 
 
+def mcp_arguments(draft: dict) -> dict:
+    """The issue_draft tool takes the CLI's flags, so citations are cite_url/cite_quote lists."""
+    arguments = dict(draft)
+    arguments["attempted"] = arguments.pop("attempted_action")
+    arguments["solution"] = arguments.pop("proposed_solution")
+    citations = arguments.pop("citations")
+    arguments["cite_url"] = [citation["url"] for citation in citations]
+    arguments["cite_quote"] = [citation["quote"] for citation in citations]
+    return arguments
+
+
 async def test_mcp_issue_draft_is_read_only_and_needs_no_env(pool) -> None:
     server = build_mcp_server(pool)
     async with Client(server) as client:
@@ -341,14 +352,15 @@ async def test_mcp_issue_draft_is_read_only_and_needs_no_env(pool) -> None:
         tool = tools["issue_draft"]
         assert tool.annotations.read_only_hint is True
         assert "env" not in tool.input_schema.get("properties", {})
-        result = await client.call_tool("issue_draft", SPEC)
+        result = await client.call_tool("issue_draft", mcp_arguments(SPEC))
         payload = result.structured_content
         assert payload["ok"] is True
         assert payload["data"]["filed"] is False
         assert "never files" in payload["data"]["next_step"]
 
         bad = await client.call_tool(
-            "issue_draft", spec(citations=[{"url": "https://example.com/x", "quote": QUOTE}])
+            "issue_draft",
+            mcp_arguments(spec(citations=[{"url": "https://example.com/x", "quote": QUOTE}])),
         )
         assert bad.structured_content["ok"] is False
         assert bad.structured_content["error"]["code"] == "validation_error"

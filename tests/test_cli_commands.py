@@ -812,7 +812,11 @@ def test_csv_result_plan_and_apply(invoke, fake, tmp_path) -> None:
     ("extra", "match"),
     [
         ([], "needs --spec"),
-        (["--spec", "spec.json", "--csv", "rows.csv"], "not both"),
+        (["--spec", "spec.json", "--csv", "rows.csv"], "only one of"),
+        (["--spec", "spec.json", "--spec-json", "{}"], "only one of"),
+        (["--spec-json", "{}", "--csv", "rows.csv"], "only one of"),
+        (["--spec-json", "{not json"], "Could not parse --spec-json"),
+        (["--spec-json", "[1]"], "must be a JSON object"),
         (
             ["--family", "document", "--csv", "rows.csv", "--id-column", "id", "--map", "Ct=Ct"],
             "results family",
@@ -868,3 +872,44 @@ def test_entry_read_help_mentions_web_url() -> None:
     for command in ("get", "list", "resolve", "bulk-get"):
         help_text = plain_stdout(["entry", command, "--help"])
         assert "web_url" in help_text, command
+
+
+def test_cli_pages_like_the_mcp_tools(invoke, fake) -> None:
+    fake.table_page_size = 2
+    code, table, _ = invoke("table", "get", TABLE_PART, "--row-offset", "2", "--row-limit", "5")
+    assert code == 0
+    assert table["data"]["pagination"] == {
+        "offset": 2,
+        "returned": 1,
+        "total": 3,
+        "next_offset": None,
+    }
+    code, entry, _ = invoke(
+        "entry", "get", ENTRY_ID, "--full", "--part-limit", "4", "--table-row-limit", "1"
+    )
+    assert code == 0
+    assert entry["data"]["pagination"]["parts"]["next_offset"] == 4
+    assert len(entry["data"]["tables"][TABLE_PART]["content"]["rows"]) == 1
+    code, schema, _ = invoke("schema", "get", "entsch_abc123", "--field-limit", "5")
+    assert code == 0
+    assert schema["data"]["pagination"]["next_offset"] == 5
+
+
+def test_cli_help_hides_mcp_only_text() -> None:
+    text = plain_stdout(["changes", "apply", "--help"])
+    assert "--confirm-env" in text
+    assert "MCP:" not in text and "allow-writes list" not in text
+
+
+def test_spec_json_plans_the_same_request_as_a_spec_file(invoke, fake, tmp_path) -> None:
+    request = {"operation": "append_rows", "table_part_id": TABLE_PART, "rows": [["D", "4"]]}
+    path = tmp_path / "spec.json"
+    path.write_text(json.dumps(request), encoding="utf-8")
+    base = ["changes", "plan", "--entry", ENTRY_ID, "--family", "table"]
+    code, from_file, _ = invoke(*base, "--spec", str(path))
+    assert code == 0, from_file
+    code, inline, _ = invoke(*base, "--spec-json", json.dumps(request))
+    assert code == 0, inline
+    assert inline["data"]["request"] == from_file["data"]["request"] == request
+    assert inline["data"]["after"] == from_file["data"]["after"]
+    assert fake.writes() == []
