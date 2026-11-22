@@ -263,6 +263,8 @@ async def test_apply_posts_normalized_records_once(runtime, fake) -> None:
     assert applied["journal"]["result"]["http_status"] == 202
     assert applied["journal"]["result"]["task_id"] == "task_abc123"
     assert applied["journal"]["result"]["state"] == "submission_pending"
+    stages = [event["stage"] for event in applied["journal"]["events"]]
+    assert "create_results" in stages and "submit_results" not in stages
     assert applied["journal"]["result"]["record_ids"] == []
     assert applied["journal"]["result"]["client_record_ids"] == planned.after["client_record_ids"]
     assert all("id" not in record for record in payload["assayResults"])
@@ -298,7 +300,7 @@ async def test_multi_table_apply_keeps_success_when_another_table_fails(runtime,
         await runtime.planner.apply(planned.id)
     journal = caught.value.details["journal"]
     assert journal["status"] == "partial"
-    submissions = [event for event in journal["events"] if event["stage"] == "submit_results"]
+    submissions = [event for event in journal["events"] if event["stage"] == "create_results"]
     assert [event["status"] for event in submissions] == ["failed", "succeeded"]
     assert submissions[0]["details"]["table_id"] == TABLE
     assert submissions[1]["details"]["task_id"] == "task_abc123"

@@ -1259,7 +1259,9 @@ async def results_rows(
 async def results_pending(
     call: Call,
     plan_id: str | None = typer.Option(
-        None, "--plan", help="Applied result upload plan ID; its journal gives the record IDs."
+        None,
+        "--plan",
+        help="Applied result upload plan ID in this home, or a portable plan JSON file.",
     ),
     result_ids: list[str] | None = typer.Option(
         None,
@@ -1308,7 +1310,9 @@ async def results_pending(
 @command(read_only=True)
 async def results_verify(
     call: Call,
-    plan_id: str = typer.Argument(..., help="Applied result upload plan ID in this environment."),
+    plan_id: str = typer.Argument(
+        ..., help="Applied result upload plan ID in this home, or a portable plan JSON file."
+    ),
     sample: int = typer.Option(
         20, "--sample", min=1, max=200, help="Rows to list per category, from 1 to 200."
     ),
@@ -1581,11 +1585,29 @@ async def changes_apply(
     return await call.runtime.planner.apply(plan_id)
 
 
+@changes_app.command("export")
+@command(read_only=False)
+async def changes_export(
+    call: Call,
+    plan_id: str = typer.Argument(..., help="ID of a plan in this environment."),
+    output: str = typer.Option(..., "--output", help="Path for the self-contained JSON bundle."),
+    force: bool = typer.Option(False, "--force", help="Replace the output file if it exists."),
+) -> Any:
+    """Export a plan and its journal as one portable JSON bundle.
+
+    The bundle includes the plan checksum and journal, but no credentials or
+    state-directory path. An existing output file is kept unless --force is set.
+    """
+    return call.runtime.repository.export_plan_bundle(plan_id, output, force=force)
+
+
 @changes_app.command("status")
 @command(read_only=True)
 async def changes_status(
     call: Call,
-    plan_id: str = typer.Argument(..., help="ID of a plan created in this environment."),
+    plan_id: str = typer.Argument(
+        ..., help="Plan ID in this home, or a portable plan JSON file or bundle."
+    ),
     wait: bool = typer.Option(
         False, "--wait", help="Poll result tasks until completion or timeout."
     ),
@@ -1593,7 +1615,11 @@ async def changes_status(
         300.0, "--timeout", min=0.1, max=3600, help="Maximum wait, in seconds (0.1-3600)."
     ),
 ) -> Any:
-    """Show a plan journal and task status; optionally wait for submitted result tasks."""
+    """Show plan journal and task status; optionally wait for result tasks.
+
+    Accepts a local plan ID or portable plan file/bundle. For a plain plan file
+    with no sibling journal, use `changes export` in the source home.
+    """
     return await call.runtime.planner.status(plan_id, wait=wait, timeout=timeout)
 
 

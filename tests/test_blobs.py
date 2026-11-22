@@ -218,7 +218,7 @@ async def test_failed_part_aborts_the_upload_and_writes_no_result(
     stages = [(item["stage"], item["status"]) for item in journal["events"]]
     assert ("abort_blob_upload", "succeeded") in stages
     assert ("upload_blob", "unknown") in stages
-    assert ("submit_results", "unknown") in stages
+    assert ("create_results", "unknown") in stages
     assert _sidecars() == []
 
 
