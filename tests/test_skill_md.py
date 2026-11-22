@@ -71,8 +71,8 @@ def test_frontmatter_follows_the_agent_skills_spec() -> None:
     assert _SKILL_NAME.fullmatch(name)
     assert "--" not in name
     assert 1 <= len(name) <= 64
-    assert name == "benchlingtk"
-    assert name == ROOT.name
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    assert name == project["name"]
 
     description = meta["description"]
     assert isinstance(description, str)
