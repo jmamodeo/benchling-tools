@@ -24,6 +24,7 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
+- **Breaking:** the Typer dependency is limited to versions before 0.29, whose CLI parameter interface breaks the MCP help-text parity check.
 - **Breaking:** `blob get` accepts V3 `attachment_…` IDs as well as V2 blob UUIDs, and its metadata includes `id_namespace`. Attachment downloads use V3 directly; no undocumented ID conversion is assumed.
 - **Breaking:** the MCP dependency is limited to versions before 2.0.
 - **Breaking:** `results get`, `results list`, `results pending --id` and `results verify` (and their MCP tools) accept either a V2 assay result UUID or a V3 result id (`result_…`), and return both. `results get` maps a UUID to its V3 record with V2 `GET /assay-results:bulk-get` and its `v3Id`; `results pending --id` reads a `result_…` id with V3 `GET /result/{id}` and finds its V2 record by schema, creation time and `v3Id`, so a V3 id is never sent to `assayResultIds`. `results get` and each `results list` item add `v2_id` and `v3_id` (`v2_id` is null when Benchling does not return it); each `results pending` item adds `v2_id` beside `id` and `v3_id`; `results verify` rows and `needs_accept` add `v2_id` and `v3_id` beside `result_id`. A plan whose task returned only V3 ids is read back too.
