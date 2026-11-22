@@ -113,3 +113,12 @@ def test_built_wheel_ships_identical_skill_md(tmp_path) -> None:
     with zipfile.ZipFile(_wheel(tmp_path)) as wheel:
         assert WHEEL_MEMBER in wheel.namelist()
         assert wheel.read(WHEEL_MEMBER) == SKILL_BYTES
+
+
+@pytest.mark.wheel
+def test_built_wheel_does_not_advertise_a_typed_python_api(tmp_path) -> None:
+    with zipfile.ZipFile(_wheel(tmp_path)) as wheel:
+        names = wheel.namelist()
+        assert not [name for name in names if name.endswith("py.typed")]
+        metadata = next(name for name in names if name.endswith(".dist-info/METADATA"))
+        assert "Typing :: Typed" not in wheel.read(metadata).decode()

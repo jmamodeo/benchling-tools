@@ -155,7 +155,7 @@ benchlingtk results pending --plan PLAN_ID --env NAME
 benchlingtk results verify PLAN_ID --env NAME
 ```
 
-`table get` reads an unstructured table. Its argument is a `docpart_…` id from `entry inspect`. `results tables` returns `table_id` values that are `strtbl_…` ids. `results rows` reads one page of a results-table part (`docpart_…`) from that part's rows URL; a `strtbl_…` id works only with `--entry ENTRY`, which maps it to that entry's part. `results list` returns V3 result ids (`result_…`), which `results get` takes; `results pending --id` takes V2 assay result UUIDs. `schema get` includes each dropdown field's options. `blob get` reads the metadata of the blob an attachment field links (name, type, MIME type, upload status); it takes that blob UUID, not an `attachment_…` id, and it does not download the file.
+`table get` reads an unstructured table. Its argument is a `docpart_…` id from `entry inspect`. `results tables` returns `table_id` values that are `strtbl_…` ids. `results rows` reads one page of a results-table part (`docpart_…`) from that part's rows URL; a `strtbl_…` id works only with `--entry ENTRY`, which maps it to that entry's part. `results get`, `results list --id` and `results pending --id` take either a V3 result id (`result_…`) or a V2 assay result UUID, and each record they return, like each `results verify` row, has both as `v3_id` and `v2_id` (`v2_id` is null when Benchling does not return it). When an id cannot be read, the error `details` give `id_namespace` (what was passed) and `lookup` (what was tried). `schema get` includes each dropdown field's options. `blob get` reads the metadata of the blob an attachment field links (name, type, MIME type, upload status); it takes that blob UUID, not an `attachment_…` id, and it does not download the file.
 
 ### Export
 
@@ -343,7 +343,7 @@ benchlingtk issue draft --spec issue.json --file
 
 ## Reading this skill from an install
 
-`pip install benchlingtk` installs this file as `share/benchlingtk/SKILL.md` under the environment prefix. These commands find it, or the repository copy in a source checkout, and never contact Benchling. `skill path` prints the absolute path and `skill show` prints the Markdown. If the file is missing, they print a `not_found` envelope:
+`uv tool install benchlingtk` (or `uvx benchlingtk`) installs this file as `share/benchlingtk/SKILL.md` under the tool environment's prefix. These commands find it, or the repository copy in a source checkout, and never contact Benchling. `skill path` prints the absolute path and `skill show` prints the Markdown. If the file is missing, they print a `not_found` envelope:
 
 ```console
 benchlingtk skill path

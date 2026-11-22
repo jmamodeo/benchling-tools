@@ -45,10 +45,14 @@ def record_schema_id(record: dict[str, Any]) -> str | None:
 
 
 def summarize_record(record: dict[str, Any], **extra: Any) -> dict[str, Any]:
-    """Compact view of one fetched result with its pending or accepted state."""
+    """Compact view of one fetched V2 result with its pending or accepted state.
+
+    ``id`` and ``v2_id`` are the V2 assay result UUID; ``v3_id`` is the V3 ``result_…`` id.
+    """
     state = result_state(record)
     return {
         "id": record.get("id"),
+        "v2_id": record.get("id"),
         "v3_id": record.get("v3Id"),
         "schema_id": record_schema_id(record),
         "entry_id": record.get("entryId"),
@@ -230,6 +234,11 @@ def planned_batches(
     return planned
 
 
+def result_ids(record: dict[str, Any]) -> dict[str, Any]:
+    """``result_id`` (the V2 id, as before) with ``v2_id`` and ``v3_id`` for one record."""
+    return {"result_id": record.get("id"), "v2_id": record.get("id"), "v3_id": record.get("v3Id")}
+
+
 def diff_batch(
     batch: dict[str, Any], fetched: list[dict[str, Any]], *, missing_reason: str
 ) -> dict[str, list[dict[str, Any]]]:
@@ -265,7 +274,7 @@ def diff_batch(
             {
                 "table_id": table_id,
                 "plan_row_index": offset + row_index,
-                "result_id": record.get("id"),
+                **result_ids(record),
                 "state": result_state(record),
             }
         )
@@ -273,7 +282,7 @@ def diff_batch(
         {
             "table_id": table_id,
             "plan_row_index": row_index,
-            "result_id": record.get("id"),
+            **result_ids(record),
             "state": result_state(record),
             "fields": field_mismatches(fields, record, schema_id),
         }
@@ -284,7 +293,7 @@ def diff_batch(
         for row_index, _fields in unmatched[len(remaining) :]
     ]
     extra = [
-        {"table_id": table_id, "result_id": record.get("id"), "state": result_state(record)}
+        {"table_id": table_id, **result_ids(record), "state": result_state(record)}
         for record in remaining[len(unmatched) :]
     ]
     return {"matched": matched, "mismatched": mismatched, "missing": missing, "extra": extra}

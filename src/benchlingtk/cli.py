@@ -1075,19 +1075,33 @@ async def results_list(
         "--schema",
         help="Result schema ID (assaysch_…). Omit to include every result schema.",
     ),
+    result_ids: list[str] | None = typer.Option(
+        None,
+        "--id",
+        help=(
+            "Result id to list: a V3 result id (result_…) or a V2 assay result UUID. "
+            "Repeat for several, up to 100."
+        ),
+    ),
     page_size: int = typer.Option(
         100, "--page-size", min=1, max=100, help="Result records per page, from 1 to 100."
     ),
     cursor: str | None = typer.Option(None, "--cursor", help=_CURSOR_HELP),
 ) -> Any:
-    """List one explicit page of result records, optionally filtered by entry or schema.
+    """List one explicit page of result records, optionally filtered by entry, schema, or id.
 
-    Records come from V3 GET /result/items. Each id is a V3 result id (result_…),
-    the id results get takes. results pending --id takes V2 assay result ids
-    (UUIDs) instead.
+    Records come from V3 GET /result/items. Each item's id is its V3 result id
+    (result_…); v3_id repeats it and v2_id is its V2 assay result UUID, or null when
+    Benchling does not return it. --id takes either namespace; a V2 UUID that cannot
+    be mapped is listed in not_found with id_namespace and lookup. results get and
+    results pending --id take either id too.
     """
-    return await call.runtime.service.list_results(
-        entry=entry, schema_id=schema_id, page_size=page_size, cursor=cursor
+    return await call.runtime.service.list_results_by_any_id(
+        entry=entry,
+        schema_id=schema_id,
+        result_ids=result_ids or None,
+        page_size=page_size,
+        cursor=cursor,
     )
 
 
@@ -1096,19 +1110,27 @@ async def results_list(
 async def results_get(
     call: Call,
     result_id: str = typer.Argument(
-        ..., help="V3 result id (result_…), as results list returns. Not a V2 assay result UUID."
+        ...,
+        help=(
+            "Result id: a V3 result id (result_…) or a V2 assay result UUID, "
+            "as results list, results pending, and changes status return."
+        ),
     ),
 ) -> Any:
-    """Get one result record by V3 result id (result_…) with V3 GET /result/{id}.
+    """Get one result record by V3 result id (result_…) or V2 assay result UUID.
 
-    For V2 assay result ids (UUIDs), including pending results, use results pending --id.
-    The record adds table_check: the results-table row on its entry that links it, and
-    whether that row's cells match the record (in_sync or stale). A stale cell adds
-    warnings; ask the person to use Re-sync table in the Benchling UI, which the API
-    cannot do. Reads only.
+    Reads V3 GET /result/{id}; a V2 UUID is first mapped to its V3 id with V2
+    GET /assay-results:bulk-get. The record adds v3_id (result_…) and v2_id (the
+    V2 UUID, or null when Benchling does not return it). An id that cannot be read
+    is a not_found error whose details give id_namespace (the namespace passed),
+    expected_id_namespace, and lookup (the path used). Pending results are included.
+    The record also adds table_check: the results-table row on its entry that links
+    it, and whether that row's cells match the record (in_sync or stale). A stale
+    cell adds warnings; ask the person to use Re-sync table in the Benchling UI,
+    which the API cannot do. Reads only.
     """
     service = call.runtime.service
-    return await check_result_tables(service, await service.get_result(result_id))
+    return await check_result_tables(service, await service.get_result_by_any_id(result_id))
 
 
 @blob_app.command("get")
@@ -1211,8 +1233,8 @@ async def results_pending(
         None,
         "--id",
         help=(
-            "V2 assay result ID (a UUID), read 200 per request. "
-            "Not a V3 result_… id. Repeat to read several."
+            "Result id: a V2 assay result UUID (read 200 per request) or a V3 "
+            "result id (result_…). Repeat to read several; namespaces may be mixed."
         ),
     ),
     schema_id: str | None = typer.Option(
@@ -1234,6 +1256,11 @@ async def results_pending(
     in the results table, so listing results by entry does not find them. Pass
     exactly one of --plan, --id, or --schema with --created-after. Relay
     next_step. Reads only.
+
+    Each item has id and v2_id (the V2 assay result UUID) and v3_id (result_…).
+    A V3 id is read with V3 GET /result/{id} and matched to its V2 record; it is
+    never sent to the V2 assayResultIds filter. Each id not found is listed in
+    not_found, and in not_found_details with id_namespace and lookup.
     """
     return await call.runtime.planner.read_back_results(
         plan_id=plan_id,
@@ -1258,6 +1285,9 @@ async def results_verify(
 
     Compares planned fields by system name and reports matched, mismatched,
     missing, and extra rows, and which rows still need the plug-icon accept. Reads only.
+    The plan's record ids may be V2 assay result UUIDs or V3 result ids (result_…).
+    Each row reports result_id and v2_id (the V2 UUID) and v3_id (result_…), so
+    either id can be passed to results get or results pending --id.
     """
     return await call.runtime.planner.verify_results(plan_id, sample=sample)
 

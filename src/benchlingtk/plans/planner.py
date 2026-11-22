@@ -25,6 +25,7 @@ from ..models import (
     PlanFamily,
     PlanStatus,
 )
+from ..services import assay_result_lookup
 from . import readback
 from .containers import ContainerPlanning
 from .document import DocumentPlanning
@@ -444,13 +445,15 @@ class ChangePlanner(
                 "table_id": task.get("table_id"),
                 "task_id": task_id,
                 "record_ids": [
-                    item for item in stored.get("record_ids") or [] if isinstance(item, str)
+                    item
+                    for item in stored.get("record_ids") or stored.get("record_v3_ids") or []
+                    if isinstance(item, str)
                 ],
                 "task_status": stored.get("task_status"),
             }
             if not entry["record_ids"]:
                 polled = await self._poll_result_task(task, wait=False, deadline=0.0)
-                entry["record_ids"] = polled.get("record_ids", [])
+                entry["record_ids"] = polled.get("record_ids") or polled.get("record_v3_ids", [])
                 entry["task_status"] = polled.get("task_status", entry["task_status"])
                 if "remote_task_error" in polled:
                     entry["remote_task_error"] = polled["remote_task_error"]
@@ -496,7 +499,9 @@ class ChangePlanner(
         """Fetch result records, including pending ones, and mark each pending or accepted.
 
         Exactly one source: a result upload plan ID (its journal record IDs), explicit
-        V2 result IDs, or a result schema ID with a created-after time. At most ``limit``
+        result IDs (V2 UUIDs or V3 ``result_…`` ids, mixed freely), or a result schema ID
+        with a created-after time. Each item has ``v2_id`` and ``v3_id``; each ID not found
+        is listed in ``not_found_details`` with its namespace and the lookup used. At most ``limit``
         records are listed; counts cover every record read. Nothing is written.
         """
         limit = self._readback_limit(limit, "limit", 100)
@@ -546,7 +551,10 @@ class ChangePlanner(
                 fetched = await self.service.get_assay_results(list(table_of))
                 not_found = fetched["not_found"]
                 items = [
-                    readback.summarize_record(record, table_id=table_of.get(record.get("id")))
+                    readback.summarize_record(
+                        record,
+                        table_id=table_of.get(record.get("id"), table_of.get(record.get("v3Id"))),
+                    )
                     for record in fetched["items"]
                 ]
             response = {
@@ -597,6 +605,7 @@ class ChangePlanner(
                     item["id"] for item in ordered if item["state"] == readback.PENDING
                 ][:limit],
                 "not_found": not_found[:limit],
+                "not_found_details": [assay_result_lookup(item) for item in not_found[:limit]],
                 "next_step": next_step,
             }
         )
@@ -621,7 +630,12 @@ class ChangePlanner(
         not_found: set[str] = set()
         if all_ids:
             fetched = await self.service.get_assay_results(all_ids)
-            records = {str(record.get("id")): record for record in fetched["items"]}
+            records = {
+                str(key): record
+                for record in fetched["items"]
+                for key in (record.get("id"), record.get("v3Id"))
+                if isinstance(key, str)
+            }
             not_found = set(fetched["not_found"])
         totals: dict[str, list[dict[str, Any]]] = {
             "matched": [],
@@ -701,7 +715,10 @@ class ChangePlanner(
             "missing": totals["missing"][:sample],
             "extra": totals["extra"][:sample],
             "needs_accept": [
-                {key: row.get(key) for key in ("table_id", "plan_row_index", "result_id")}
+                {
+                    key: row.get(key)
+                    for key in ("table_id", "plan_row_index", "result_id", "v2_id", "v3_id")
+                }
                 for row in pending_rows
             ][:sample],
             "batches": batch_reports,
