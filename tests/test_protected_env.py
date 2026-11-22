@@ -25,8 +25,8 @@ def invoke(benchling_env, fake, monkeypatch):
     monkeypatch.setattr(cli, "Runtime", lambda environment: runtime_for(fake, environment))
 
     def run(*args: str, env: str | None = "sandbox", input: str | None = None):
-        prefix = ["--env", env] if env else []
-        result = CliRunner().invoke(cli.app, [*prefix, *args], input=input)
+        suffix = ["--env", env] if env else []
+        result = CliRunner().invoke(cli.app, [*args, *suffix], input=input)
         return result.exit_code, json.loads(result.stdout)
 
     return run
@@ -94,22 +94,22 @@ def test_guard_requires_env_from_the_command_line() -> None:
     check_apply_allowed(environment, env_on_command_line=True, confirm_env="prod")
 
 
-def test_root_env_option_records_that_it_came_from_the_command_line(monkeypatch) -> None:
-    seen: list[cli.State] = []
+def test_env_option_records_that_it_came_from_the_command_line(monkeypatch) -> None:
+    seen: list[tuple[str | None, bool]] = []
 
-    class Recorder(cli.State):
-        def __init__(self, *args, **kwargs) -> None:
-            super().__init__(*args, **kwargs)
-            seen.append(self)
+    def record(call, *args) -> None:
+        seen.append((call.env, call.env_on_command_line))
 
-    monkeypatch.setattr(cli, "State", Recorder)
-    monkeypatch.setattr(cli, "_execute", lambda *args: None)
-    CliRunner().invoke(cli.app, ["--env", "dev", "changes", "apply", "a" * 32])
+    monkeypatch.setattr(cli, "_execute", record)
+    CliRunner().invoke(cli.app, ["changes", "apply", "a" * 32, "--env", "dev"])
+    CliRunner().invoke(cli.app, ["changes", "apply", "-e", "dev", "a" * 32])
     CliRunner().invoke(cli.app, ["changes", "apply", "a" * 32])
-    assert [(state.env, state.env_on_command_line) for state in seen] == [
-        ("dev", True),
-        (None, False),
-    ]
+    CliRunner().invoke(
+        cli.app,
+        ["changes", "apply", "a" * 32],
+        default_map={"changes": {"apply": {"env": "dev"}}},
+    )
+    assert seen == [("dev", True), ("dev", True), (None, False), ("dev", False)]
 
 
 def test_doctor_and_auth_status_show_protection(invoke) -> None:
@@ -276,6 +276,6 @@ def test_protected_refusal_happens_before_keychain_or_network(benchling_env, mon
         raise AssertionError("Runtime must not be built for a refused apply")
 
     monkeypatch.setattr(cli, "Runtime", no_runtime)
-    result = CliRunner().invoke(cli.app, ["--env", "sandbox", "changes", "apply", "a" * 32])
+    result = CliRunner().invoke(cli.app, ["changes", "apply", "a" * 32, "--env", "sandbox"])
     assert result.exit_code == 2
     assert json.loads(result.stdout)["error"]["details"] == {"env": "sandbox", "protected": True}

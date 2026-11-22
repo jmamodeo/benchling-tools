@@ -449,7 +449,7 @@ def test_cli_blob_get(benchling_env, fake, monkeypatch) -> None:
         "mimeType": "image/png",
         "uploadStatus": "COMPLETE",
     }
-    result = CliRunner().invoke(cli.app, ["--env", "sandbox", "blob", "get", BLOB_1])
+    result = CliRunner().invoke(cli.app, ["blob", "get", BLOB_1, "--env", "sandbox"])
     payload = json.loads(result.stdout)
     assert result.exit_code == 0
     assert payload["data"]["name"] == "plot.png"

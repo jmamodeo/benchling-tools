@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import getpass
+import inspect
 import io
 import json
 import os
 import sys
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from typing import Annotated, Any, NoReturn, TypeVar
 
 import typer
 from pydantic import WithJsonSchema
+from typer.core import TyperGroup
 
 from . import __version__
 from .change_spec import CHANGE_SPECIFICATION_SCHEMA, parse_change_specification
@@ -31,6 +33,7 @@ from .errors import (
     ExitCode,
     UnsupportedError,
     UpstreamError,
+    UsageError,
     ValidationError,
 )
 from .export import export_dataset
@@ -42,10 +45,69 @@ from .runtime import Runtime
 from .services import part_content
 from .skill import find_skill_md
 
+# Typer may vendor click, so take click's exception classes from one typer exports.
+_CLICK_USAGE_ERROR: Any = typer.BadParameter.__mro__[1]
+_CLICK_EXCEPTION: Any = _CLICK_USAGE_ERROR.__mro__[1]
+
+
+class RootGroup(TyperGroup):
+    """The root command. A click usage error prints a usage_error envelope on stdout.
+
+    An unknown command or option, a missing or invalid argument, and a missing
+    subcommand exit with ExitCode.USAGE, not the validation code. A bare
+    ``benchlingtk`` still prints the help, and exits with the same code.
+    """
+
+    def main(
+        self,
+        args: Sequence[str] | None = None,
+        prog_name: str | None = None,
+        complete_var: str | None = None,
+        standalone_mode: bool = True,
+        windows_expand_args: bool = True,
+        **extra: Any,
+    ) -> Any:
+        if not standalone_mode:
+            return super().main(args, prog_name, complete_var, False, windows_expand_args, **extra)
+        try:
+            code = super().main(args, prog_name, complete_var, False, windows_expand_args, **extra)
+        except _CLICK_USAGE_ERROR as exc:
+            code = _usage_failure(exc)
+        except _CLICK_EXCEPTION as exc:
+            exc.show()
+            code = exc.exit_code
+        except typer.Abort:
+            typer.echo("Aborted!", err=True)
+            code = 1
+        sys.exit(code if isinstance(code, int) else 0)
+
+
+def _usage_failure(exc: Any) -> int:
+    """Print the usage_error envelope for a click usage error and return its exit code."""
+    ctx = exc.ctx
+    if type(exc).__name__ == "NoArgsIsHelpError" and ctx is not None:
+        typer.echo(ctx.get_help())
+        return int(ExitCode.USAGE)
+    details: dict[str, Any] = {}
+    if ctx is not None:
+        details = {
+            "command": ctx.command_path,
+            "usage": ctx.get_usage(),
+            "help": f"{ctx.command_path} --help",
+        }
+        if ctx.parent is None and getattr(exc, "option_name", None) in ("--env", "-e"):
+            details["hint"] = "--env is a command option: benchlingtk entry get REF --env NAME"
+    error = UsageError(exc.format_message(), details=details)
+    _emit(Envelope.failure(error))
+    return int(error.exit_code)
+
+
 app = typer.Typer(
     name="benchlingtk",
+    cls=RootGroup,
     help="Safe, auditable tools for structured Benchling entry data.",
     no_args_is_help=True,
+    add_completion=False,
     pretty_exceptions_enable=False,
 )
 auth_app = typer.Typer(help="Log in, log out, and inspect saved environments.")
@@ -87,18 +149,6 @@ app.add_typer(issue_app, name="issue")
 app.add_typer(skill_app, name="skill")
 
 
-class State:
-    """Per-invocation state stored on the Typer context; env is the --env selection.
-
-    env_on_command_line is True only when --env was typed on the command line,
-    not filled from a default or an environment variable.
-    """
-
-    def __init__(self, env: str | None, *, env_on_command_line: bool = False) -> None:
-        self.env = env
-        self.env_on_command_line = env_on_command_line
-
-
 def _show_version(value: bool) -> None:
     if value:
         typer.echo(f"benchlingtk {__version__}")
@@ -107,16 +157,18 @@ def _show_version(value: bool) -> None:
 
 @app.callback()
 def root(
-    ctx: typer.Context,
-    env: str | None = typer.Option(None, "--env", "-e", help="Environment name."),
     version: bool = typer.Option(
         False, "--version", callback=_show_version, is_eager=True, help="Show version and exit."
     ),
 ) -> None:
     """Safe, auditable tools for structured Benchling entry data."""
+
+
+def _env_on_command_line(ctx: typer.Context, env: str | None) -> bool:
+    """True only when --env was typed, not filled from a default or a variable."""
     # Typer may vendor click, so compare the ParameterSource member by name.
     source = getattr(ctx.get_parameter_source("env"), "name", None)
-    ctx.obj = State(env, env_on_command_line=bool(env) and source == "COMMANDLINE")
+    return bool(env) and source == "COMMANDLINE"
 
 
 def _json(value: Any) -> str:
@@ -132,9 +184,9 @@ def _emit(envelope: Envelope[Any]) -> None:
 class CliCall(Call):
     """A command run from the command line. The runtime is built from --env."""
 
-    def __init__(self, state: State) -> None:
-        super().__init__(state.env)
-        self.state = state
+    def __init__(self, env: str | None, *, env_on_command_line: bool = False) -> None:
+        super().__init__(env)
+        self.env_on_command_line = env_on_command_line
 
     def _open(self) -> Runtime:
         return Runtime(self.env)
@@ -148,12 +200,12 @@ class CliCall(Call):
         environment = EnvironmentConfigStore().resolve(self.env)
         check_apply_allowed(
             environment,
-            env_on_command_line=self.state.env_on_command_line,
+            env_on_command_line=self.env_on_command_line,
             confirm_env=confirm_env,
         )
         check_apply_allowed(
             self.runtime.environment,
-            env_on_command_line=self.state.env_on_command_line,
+            env_on_command_line=self.env_on_command_line,
             confirm_env=confirm_env,
         )
 
@@ -185,6 +237,13 @@ def _execute(call: Call, declared: Command, arguments: dict[str, Any]) -> None:
 
 _F = TypeVar("_F", bound=Callable[..., Any])
 
+_ENV_PARAMETER = inspect.Parameter(
+    "env",
+    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+    annotation=str | None,
+    default=typer.Option(None, "--env", "-e", help="Environment name."),
+)
+
 
 def command(
     *,
@@ -214,9 +273,15 @@ def command(
         )
 
         def callback(ctx: typer.Context, **arguments: Any) -> None:
-            _execute(CliCall(ctx.obj), declared, arguments)
+            env = arguments.pop("env") if needs_env else None
+            call = CliCall(env, env_on_command_line=_env_on_command_line(ctx, env))
+            _execute(call, declared, arguments)
 
         signature = declared.cli_signature(typer.Context)
+        if needs_env:
+            params = list(signature.parameters.values())
+            params.insert(1, _ENV_PARAMETER)
+            signature = signature.replace(parameters=params)
         callback.__name__ = function.__name__
         callback.__qualname__ = function.__qualname__
         callback.__doc__ = surface_text(declared.doc, "cli")
@@ -390,7 +455,6 @@ def _blank_to_none(value: str | None) -> str | None:
 @auth_app.command("login")
 @cli_only("Reads a client secret; only a person at a terminal logs in.")
 def auth_login(
-    ctx: typer.Context,
     env: str | None = typer.Option(None, "--env", "-e", help="Environment name to save."),
     tenant_url: str | None = typer.Option(
         None,
@@ -419,10 +483,9 @@ def auth_login(
     The secret is never accepted as an argument. Nothing is saved unless a
     client-credentials token request succeeds.
     """
-    state: State = ctx.obj
     store = EnvironmentConfigStore()
     try:
-        name = _require_env_name(env or state.env, store)
+        name = _require_env_name(env, store)
         url = _blank_to_none(tenant_url)
         client = _blank_to_none(client_id)
         fix_url, fix_client = login_fix_values(store, name, url, client)
@@ -475,25 +538,22 @@ def auth_login(
 @auth_app.command("logout")
 @cli_only("Deletes a saved environment and its secret; a person decides that.")
 def auth_logout(
-    ctx: typer.Context,
     env: str | None = typer.Option(None, "--env", "-e", help="Environment name to remove."),
 ) -> None:
     """Remove an environment from environments.json and delete its keychain secret."""
-    state: State = ctx.obj
     store = EnvironmentConfigStore()
     try:
-        name = _require_env_name(env or state.env, store)
+        name = _require_env_name(env, store)
         logout(store, Keychain(), name)
     except BenchlingAgentError as exc:
         _auth_failure(exc)
     _emit(Envelope.success({"env": name, "removed": True}, env=name))
 
 
-def _set_protection(ctx: typer.Context, env: str | None, protected: bool) -> None:
-    state: State = ctx.obj
+def _set_protection(env: str | None, protected: bool) -> None:
     store = EnvironmentConfigStore()
     try:
-        name = _require_env_name(env or state.env, store)
+        name = _require_env_name(env, store)
         environment = store.set_protected(name, protected)
     except BenchlingAgentError as exc:
         _auth_failure(exc)
@@ -509,7 +569,6 @@ def _set_protection(ctx: typer.Context, env: str | None, protected: bool) -> Non
 @auth_app.command("protect")
 @cli_only("Protection is set by a person, never by the agent it restricts.")
 def auth_protect(
-    ctx: typer.Context,
     env: str | None = typer.Option(None, "--env", "-e", help="Environment name to protect."),
 ) -> None:
     """Mark a saved environment protected.
@@ -517,17 +576,16 @@ def auth_protect(
     `changes apply` then refuses it unless --env names it on the command line and
     --confirm-env repeats the name. Reads are unaffected. No secret is read.
     """
-    _set_protection(ctx, env, True)
+    _set_protection(env, True)
 
 
 @auth_app.command("unprotect")
 @cli_only("Protection is set by a person, never by the agent it restricts.")
 def auth_unprotect(
-    ctx: typer.Context,
     env: str | None = typer.Option(None, "--env", "-e", help="Environment name to unprotect."),
 ) -> None:
     """Remove the protected mark from a saved environment."""
-    _set_protection(ctx, env, False)
+    _set_protection(env, False)
 
 
 @auth_app.command("status")
@@ -552,9 +610,8 @@ async def auth_status(
     Each environment also reports writes_allowed: whether this server was started
     with --allow-writes for it.
     """
-    selected = env or call.env
     report = await asyncio.to_thread(
-        collect_status, EnvironmentConfigStore(), Keychain(), name=selected, check=check
+        collect_status, EnvironmentConfigStore(), Keychain(), name=env, check=check
     )
     writable = call.writable_envs
     if writable is not None:
@@ -572,8 +629,8 @@ async def auth_status(
             message,
             details={"environments": payload["environments"], "failed_envs": report.failed_envs},
         )
-    if selected and selected in report.environments:
-        call.meta.update(env=selected, tenant_url=report.environments[selected]["tenant_url"])
+    if env and env in report.environments:
+        call.meta.update(env=env, tenant_url=report.environments[env]["tenant_url"])
     return payload
 
 

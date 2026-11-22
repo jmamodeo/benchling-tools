@@ -4,11 +4,13 @@ import json
 import os
 
 import pytest
+import typer
 from conftest import configure_env, plain_stdout, runtime_for
 from fake_benchling import ENTRY_ID, TABLE_PART, TEXT_PART, entry_web_url
 from typer.testing import CliRunner
 
 from benchlingtk import cli
+from benchlingtk.errors import ExitCode
 
 
 @pytest.fixture
@@ -16,8 +18,8 @@ def invoke(benchling_env, fake, monkeypatch):
     monkeypatch.setattr(cli, "Runtime", lambda environment: runtime_for(fake, environment))
 
     def run(*args: str, input: str | None = None, env: str | None = "sandbox"):
-        prefix = ["--env", env] if env else []
-        result = CliRunner().invoke(cli.app, [*prefix, *args], input=input)
+        suffix = ["--env", env] if env else []
+        result = CliRunner().invoke(cli.app, [*args, *suffix], input=input)
         return result.exit_code, json.loads(result.stdout), result
 
     return run
@@ -222,9 +224,10 @@ def test_results_list_forwards_filters_and_cursor(invoke, fake) -> None:
 @pytest.mark.parametrize("size", ["0", "101"])
 def test_results_list_page_size_bounds_are_enforced_by_the_cli(invoke, fake, size) -> None:
     result = CliRunner().invoke(
-        cli.app, ["--env", "sandbox", "results", "list", "--page-size", size]
+        cli.app, ["results", "list", "--page-size", size, "--env", "sandbox"]
     )
-    assert result.exit_code == 2
+    assert result.exit_code == ExitCode.USAGE
+    assert json.loads(result.stdout)["error"]["code"] == "usage_error"
     assert fake.calls == []
 
 
@@ -418,8 +421,6 @@ def test_plan_family_is_validated_case_insensitively(invoke, tmp_path) -> None:
     result = CliRunner().invoke(
         cli.app,
         [
-            "--env",
-            "sandbox",
             "changes",
             "plan",
             "--entry",
@@ -428,9 +429,12 @@ def test_plan_family_is_validated_case_insensitively(invoke, tmp_path) -> None:
             "magic",
             "--spec",
             "-",
+            "--env",
+            "sandbox",
         ],
     )
-    assert result.exit_code == 2
+    assert result.exit_code == ExitCode.USAGE
+    assert json.loads(result.stdout)["error"]["code"] == "usage_error"
 
 
 def test_apply_with_unconfirmed_write_exits_with_partial_code(invoke, fake, tmp_path) -> None:
@@ -543,7 +547,7 @@ def test_doctor_reports_an_unexpected_local_failure(monkeypatch) -> None:
         raise RuntimeError("doctor-boom")
 
     monkeypatch.setattr("benchlingtk.services.BenchlingService.doctor", boom)
-    result = CliRunner().invoke(cli.app, ["--env", "dev", "doctor"])
+    result = CliRunner().invoke(cli.app, ["doctor", "--env", "dev"])
     assert result.exit_code == 7
     payload = json.loads(result.stdout)
     assert payload["ok"] is False
@@ -561,7 +565,7 @@ def test_saved_tenant_url_must_be_text() -> None:
         ),
         encoding="utf-8",
     )
-    result = CliRunner().invoke(cli.app, ["--env", "dev", "auth", "status"])
+    result = CliRunner().invoke(cli.app, ["auth", "status", "--env", "dev"])
     assert result.exit_code == 2
     message = json.loads(result.stdout)["error"]["message"]
     assert "Invalid tenant URL" in message
@@ -741,9 +745,10 @@ def test_results_rows_pages_with_the_standard_envelope(invoke, fake) -> None:
 @pytest.mark.parametrize("size", ["0", "101"])
 def test_results_rows_limit_bounds_are_enforced_by_the_cli(invoke, fake, size) -> None:
     result = CliRunner().invoke(
-        cli.app, ["--env", "sandbox", "results", "rows", "docpart_rt1", "--limit", size]
+        cli.app, ["results", "rows", "docpart_rt1", "--limit", size, "--env", "sandbox"]
     )
-    assert result.exit_code == 2
+    assert result.exit_code == ExitCode.USAGE
+    assert json.loads(result.stdout)["error"]["code"] == "usage_error"
     assert fake.calls == []
 
 
@@ -759,8 +764,9 @@ def test_list_commands_reject_bad_input_with_the_validation_exit_code(invoke, fa
 
 @pytest.mark.parametrize("size", ["0", "101"])
 def test_list_limit_bounds_are_enforced_by_the_cli(invoke, fake, size) -> None:
-    result = CliRunner().invoke(cli.app, ["--env", "sandbox", "entry", "list", "--limit", size])
-    assert result.exit_code == 2
+    result = CliRunner().invoke(cli.app, ["entry", "list", "--limit", size, "--env", "sandbox"])
+    assert result.exit_code == ExitCode.USAGE
+    assert json.loads(result.stdout)["error"]["code"] == "usage_error"
     assert fake.calls == []
 
 
@@ -913,3 +919,135 @@ def test_spec_json_plans_the_same_request_as_a_spec_file(invoke, fake, tmp_path)
     assert inline["data"]["request"] == from_file["data"]["request"] == request
     assert inline["data"]["after"] == from_file["data"]["after"]
     assert fake.writes() == []
+
+
+def _usage_failure(args: list[str]) -> dict:
+    result = CliRunner().invoke(cli.app, args)
+    assert result.exit_code == ExitCode.USAGE, result.output
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False and payload["data"] is None
+    assert payload["error"]["code"] == "usage_error"
+    return payload["error"]
+
+
+def test_usage_errors_have_their_own_exit_code() -> None:
+    assert ExitCode.USAGE != ExitCode.VALIDATION
+    assert len(set(ExitCode)) == len(list(ExitCode))
+
+
+def test_unknown_option_is_a_usage_error_envelope(fake) -> None:
+    error = _usage_failure(["entry", "get", ENTRY_ID, "--bogus"])
+    assert error["message"] == "No such option: --bogus"
+    assert error["details"]["command"].endswith("entry get")
+    assert error["details"]["help"].endswith("entry get --help")
+    assert error["details"]["usage"].startswith("Usage:")
+    assert fake.calls == []
+
+
+def test_unknown_command_is_a_usage_error_envelope() -> None:
+    error = _usage_failure(["nope"])
+    assert error["message"] == "No such command 'nope'."
+    error = _usage_failure(["entry", "nope"])
+    assert error["message"] == "No such command 'nope'."
+
+
+def test_missing_argument_and_subcommand_are_usage_errors() -> None:
+    assert _usage_failure(["entry", "get"])["message"] == "Missing argument 'reference'."
+    assert _usage_failure(["entry"])["message"] == "Missing command."
+
+
+def test_root_env_option_is_gone_and_the_error_says_where_it_goes() -> None:
+    for flag in ("--env", "-e"):
+        error = _usage_failure([flag, "sandbox", "entry", "get", ENTRY_ID])
+        assert error["details"]["hint"].endswith("entry get REF --env NAME")
+
+
+def test_bare_command_prints_help_and_help_still_succeeds() -> None:
+    result = CliRunner().invoke(cli.app, [])
+    assert result.exit_code == ExitCode.USAGE
+    assert "Usage:" in result.stdout
+    result = CliRunner().invoke(cli.app, ["--help"])
+    assert result.exit_code == 0
+    result = CliRunner().invoke(cli.app, ["entry", "get", "--help"])
+    assert result.exit_code == 0
+
+
+def test_completion_options_are_absent() -> None:
+    help_text = plain_stdout(["--help"])
+    assert "--install-completion" not in help_text
+    assert "--show-completion" not in help_text
+    _usage_failure(["--install-completion"])
+    _usage_failure(["--show-completion"])
+
+
+def test_entry_get_takes_env_after_the_reference(fake, monkeypatch) -> None:
+    configure_env("dev", "https://your-tenant-dev.benchling.com")
+    monkeypatch.setattr(cli, "Runtime", lambda environment: runtime_for(fake, environment))
+    for args in (
+        ["entry", "get", ENTRY_ID, "--env", "dev"],
+        ["entry", "get", ENTRY_ID, "-e", "dev"],
+        ["entry", "get", "--env", "dev", ENTRY_ID],
+    ):
+        result = CliRunner().invoke(cli.app, args)
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["meta"]["env"] == "dev"
+        assert payload["data"]["version_id"] == "ver_1"
+
+
+def test_every_command_that_needs_an_env_takes_env() -> None:
+    from benchlingtk.commands import TOOL_ATTR
+
+    def walk(command, path=()):
+        for name, child in getattr(command, "commands", {}).items():
+            yield from walk(child, (*path, name))
+        if not hasattr(command, "commands"):
+            yield path, command
+
+    root = typer.main.get_command(cli.app)
+    assert [param.name for param in root.params] == ["version"]
+    checked = 0
+    for path, command in walk(root):
+        declared = getattr(command.callback, TOOL_ATTR, None)
+        if declared is not None and not declared.needs_env:
+            continue
+        if path[0] in ("mcp", "skill"):
+            continue
+        options = {opt for param in command.params for opt in param.opts}
+        assert {"--env", "-e"} <= options, path
+        checked += 1
+    assert checked > 20
+
+
+def test_auth_commands_take_env_after_the_subcommand(benchling_env) -> None:
+    for args in (
+        ["auth", "status", "--env", "sandbox"],
+        ["auth", "protect", "--env", "sandbox"],
+        ["auth", "unprotect", "-e", "sandbox"],
+    ):
+        result = CliRunner().invoke(cli.app, args)
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout)["meta"]["env"] == "sandbox"
+
+
+def test_non_standalone_callers_still_get_the_click_exception() -> None:
+    with pytest.raises(cli._CLICK_USAGE_ERROR):
+        cli.app(["--bogus"], standalone_mode=False)
+
+
+def test_other_click_failures_keep_their_text_and_exit_code(monkeypatch) -> None:
+    def fail(*args) -> None:
+        raise cli._CLICK_EXCEPTION("disk is full")
+
+    monkeypatch.setattr(cli, "_execute", fail)
+    result = CliRunner().invoke(cli.app, ["entry", "get", ENTRY_ID, "--env", "dev"])
+    assert result.exit_code == 1
+    assert "disk is full" in result.stderr
+
+    def abort(*args) -> None:
+        raise typer.Abort()
+
+    monkeypatch.setattr(cli, "_execute", abort)
+    result = CliRunner().invoke(cli.app, ["entry", "get", ENTRY_ID, "--env", "dev"])
+    assert result.exit_code == 1
+    assert "Aborted!" in result.stderr

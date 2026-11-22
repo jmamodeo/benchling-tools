@@ -28,7 +28,7 @@ The picture and the [asciinema cast](docs/demo.cast) are a scripted playback of 
 ```console
 # 1. Read an entry (envelope trimmed for readability)
 
-$ benchlingtk --env demo entry inspect etr_abc123
+$ benchlingtk entry inspect etr_abc123 --env demo
 {
   "ok": true,
   "data": {
@@ -40,7 +40,7 @@ $ benchlingtk --env demo entry inspect etr_abc123
 
 # 2. Preview: reads Benchling, writes nothing remotely
 
-$ benchlingtk --env demo changes plan --entry etr_abc123 --family table --spec set-cell-b2.json
+$ benchlingtk changes plan --entry etr_abc123 --family table --spec set-cell-b2.json --env demo
 {
   "ok": true,
   "data": {
@@ -65,7 +65,7 @@ remote writes so far: 0
 
 # 3. Apply the first plan
 
-$ benchlingtk --env demo changes apply b7a812bc920d407e9df9b23ef6ef749e
+$ benchlingtk changes apply b7a812bc920d407e9df9b23ef6ef749e --env demo
 {
   "ok": true,
   "data": {
@@ -92,7 +92,7 @@ $ benchlingtk --env demo changes apply b7a812bc920d407e9df9b23ef6ef749e
 
 # 4. The second plan was previewed against the old entry version: apply is refused
 
-$ benchlingtk --env demo changes apply c2eac4de90534faeabea68cac9cf2a05
+$ benchlingtk changes apply c2eac4de90534faeabea68cac9cf2a05 --env demo
 {
   "ok": false,
   "error": {
@@ -109,7 +109,7 @@ $ benchlingtk --env demo changes apply c2eac4de90534faeabea68cac9cf2a05
 
 # 5. A plan cannot be applied twice
 
-$ benchlingtk --env demo changes apply b7a812bc920d407e9df9b23ef6ef749e
+$ benchlingtk changes apply b7a812bc920d407e9df9b23ef6ef749e --env demo
 {
   "ok": false,
   "error": {
@@ -195,8 +195,8 @@ Environment names use lowercase letters and digits, start with a letter, and are
 ```console
 benchlingtk auth login --env test
 benchlingtk auth status
-benchlingtk --env dev auth status --check
-benchlingtk --env test doctor
+benchlingtk auth status --check --env dev
+benchlingtk doctor --env test
 benchlingtk auth logout --env dev
 ```
 
@@ -215,7 +215,7 @@ benchlingtk auth unprotect --env prod
 On a protected environment, `changes apply` is refused (exit 2) unless `--env` names it on the command line and `--confirm-env` repeats the same name. There is no default environment and no environment-variable override for either flag. A `--confirm-env` that names a different environment is refused for any environment. Reads, `changes plan` and `changes status` are unaffected. The MCP tool `changes_apply` needs a protected environment in `--allow-writes`, and its refusal says the environment is protected. Once it is listed, the call also needs `confirm_env` equal to `env`; an agent sets it only after the person confirms the name. A `confirm_env` that names a different environment is refused for any environment. `doctor`, `auth status` and the MCP tool `auth_status` report `protected`. `doctor` also prints a `protection` line naming the flags a write needs.
 
 ```console
-benchlingtk --env prod changes apply PLAN_ID --confirm-env prod
+benchlingtk changes apply PLAN_ID --confirm-env prod --env prod
 ```
 
 ## Headless Linux
@@ -276,8 +276,8 @@ In Benchling, grant each app access only to the specific projects it should see.
 uv tool install benchlingtk
 benchlingtk auth login --env dev
 benchlingtk auth status
-benchlingtk --env dev doctor
-benchlingtk --env dev entry resolve EXP-0001
+benchlingtk doctor --env dev
+benchlingtk entry resolve EXP-0001 --env dev
 ```
 
 `uv tool install benchlingtk` installs it from PyPI. From a checkout, use `uv tool install .`. `auth login` prompts for `https://your-tenant.benchling.com`, the client ID, and the client secret. Run it in your own terminal. App setup is in the [setup guide](docs/setup.md).
@@ -289,37 +289,37 @@ benchlingtk --env dev entry resolve EXP-0001
 Every command prints a versioned JSON envelope. Diagnostics go to stderr.
 
 ```console
-benchlingtk --env dev entry resolve EXP-0001
-benchlingtk --env dev entry get etr_abc123 --full
-benchlingtk --env dev entry bulk-get --id etr_abc123 --id etr_other
-benchlingtk --env dev entry inspect etr_abc123
-benchlingtk --env dev template get etpl_example
-benchlingtk --env dev template list --name "Example template"
-benchlingtk --env dev folder get lib_example
-benchlingtk --env dev section get etr_abc123 docpart_section1
-benchlingtk --env dev part get etr_abc123 docpart_text1
-benchlingtk --env dev table get docpart_table1
-benchlingtk --env dev schema get entsch_example
-benchlingtk --env dev schema list
-benchlingtk --env dev schema list --kind run --limit 50
-benchlingtk --env dev schema find "qPCR assay"
-benchlingtk --env dev entry fields get etr_abc123
-benchlingtk --env dev entry list --project src_example --modified-after 2026-01-01
-benchlingtk --env dev entry list --folder lib_example --name "Example entry"
-benchlingtk --env dev results list --entry etr_abc123
-benchlingtk --env dev results tables etr_abc123
-benchlingtk --env dev results rows docpart_example --limit 50
-benchlingtk --env dev results pending --plan PLAN_ID
-benchlingtk --env dev results pending --schema assaysch_example --created-after 2026-11-19T00:00:00Z
-benchlingtk --env dev results verify PLAN_ID --sample 20
-benchlingtk --env dev container get con_example
-benchlingtk --env dev container find --barcode VIAL-001
-benchlingtk --env dev container find --name "Sample vial"
-benchlingtk --env dev container schema list --limit 50
-benchlingtk --env dev export --kind table --part docpart_table1 --format csv --output measurements.csv
-benchlingtk --env dev export --kind results-table --part docpart_rt1 --format json --output results-table.json
-benchlingtk --env dev export --kind results-table --part strtbl_example --entry etr_abc123 --format csv --output listed-table.csv
-benchlingtk --env dev export --kind assay-results --entry etr_abc123 --schema assaysch_example --format csv --output assay.csv
+benchlingtk entry resolve EXP-0001 --env dev
+benchlingtk entry get etr_abc123 --full --env dev
+benchlingtk entry bulk-get --id etr_abc123 --id etr_other --env dev
+benchlingtk entry inspect etr_abc123 --env dev
+benchlingtk template get etpl_example --env dev
+benchlingtk template list --name "Example template" --env dev
+benchlingtk folder get lib_example --env dev
+benchlingtk section get etr_abc123 docpart_section1 --env dev
+benchlingtk part get etr_abc123 docpart_text1 --env dev
+benchlingtk table get docpart_table1 --env dev
+benchlingtk schema get entsch_example --env dev
+benchlingtk schema list --env dev
+benchlingtk schema list --kind run --limit 50 --env dev
+benchlingtk schema find "qPCR assay" --env dev
+benchlingtk entry fields get etr_abc123 --env dev
+benchlingtk entry list --project src_example --modified-after 2026-01-01 --env dev
+benchlingtk entry list --folder lib_example --name "Example entry" --env dev
+benchlingtk results list --entry etr_abc123 --env dev
+benchlingtk results tables etr_abc123 --env dev
+benchlingtk results rows docpart_example --limit 50 --env dev
+benchlingtk results pending --plan PLAN_ID --env dev
+benchlingtk results pending --schema assaysch_example --created-after 2026-11-19T00:00:00Z --env dev
+benchlingtk results verify PLAN_ID --sample 20 --env dev
+benchlingtk container get con_example --env dev
+benchlingtk container find --barcode VIAL-001 --env dev
+benchlingtk container find --name "Sample vial" --env dev
+benchlingtk container schema list --limit 50 --env dev
+benchlingtk export --kind table --part docpart_table1 --format csv --output measurements.csv --env dev
+benchlingtk export --kind results-table --part docpart_rt1 --format json --output results-table.json --env dev
+benchlingtk export --kind results-table --part strtbl_example --entry etr_abc123 --format csv --output listed-table.csv --env dev
+benchlingtk export --kind assay-results --entry etr_abc123 --schema assaysch_example --format csv --output assay.csv --env dev
 ```
 
 Entry references may be canonical IDs, display IDs, or URLs for the selected tenant. Duplicate section titles must be addressed by part ID.
@@ -358,21 +358,22 @@ A results-table or unstructured-table cell is flattened the same way. A link or 
 A change spec covers one existing-entry mutation, one new-entry creation, or one container mutation. Previewing only reads Benchling and creates a local immutable plan:
 
 ```console
-benchlingtk --env dev changes plan \
+benchlingtk changes plan \
   --entry etr_abc123 \
   --family table \
-  --spec examples/table-set-cells.json
+  --spec examples/table-set-cells.json --env dev
 
-benchlingtk --env dev changes plan \
+benchlingtk changes plan \
   --entry etr_abc123 \
   --family results \
   --csv assay.csv \
   --id-column id \
   --map Ct=Ct \
-  --map Note=Note
+  --map Note=Note --env dev
 
-benchlingtk --env dev changes plan \
+benchlingtk changes plan \
   --family entry \
+  --env dev \
   --spec - <<'JSON'
 {
   "entry_template_id": "etpl_abc123",
@@ -384,13 +385,13 @@ benchlingtk --env dev changes plan \
 }
 JSON
 
-benchlingtk --env dev changes plan --entry etr_abc123 --family table \
-  --spec-json '{"operation": "append_rows", "table_part_id": "docpart_table1", "rows": [["D", "4"]]}'
+benchlingtk changes plan --entry etr_abc123 --family table \
+  --spec-json '{"operation": "append_rows", "table_part_id": "docpart_table1", "rows": [["D", "4"]]}' --env dev
 
-benchlingtk --env dev changes apply PLAN_ID
-benchlingtk --env prod changes apply PLAN_ID --confirm-env prod
-benchlingtk --env dev changes status PLAN_ID
-benchlingtk --env dev changes status PLAN_ID --wait --timeout 300
+benchlingtk changes apply PLAN_ID --env dev
+benchlingtk changes apply PLAN_ID --confirm-env prod --env prod
+benchlingtk changes status PLAN_ID --env dev
+benchlingtk changes status PLAN_ID --wait --timeout 300 --env dev
 ```
 
 `--confirm-env` is required only for a [protected environment](#protected-environments).
@@ -399,9 +400,9 @@ An entry spec uses `entry_template_id`, `folder_id`, and `name`, and may include
 Container creation and transfer use the same local preview and explicit apply lifecycle. Container plans do not take `--entry`:
 
 ```console
-benchlingtk --env dev changes plan --family containers --spec create-container.json
-benchlingtk --env dev changes plan --family containers --spec transfer-container.json
-benchlingtk --env dev changes apply PLAN_ID
+benchlingtk changes plan --family containers --spec create-container.json --env dev
+benchlingtk changes plan --family containers --spec transfer-container.json --env dev
+benchlingtk changes apply PLAN_ID --env dev
 ```
 
 Container create specs use `operation: "create"` and `schema_id`; transfer specs use `operation: "transfer"`, `source_container_id`, `destination_container_id`, and `destination_contents` (each item has an `entity_id`). Transfer previews read both containers and apply re-checks their modification timestamps before the one-time transfer. Create previews read the schema and apply re-checks its field definitions. As with other families, an uncertain write is never retried. MCP apply remains disabled unless the server was started with `--allow-writes ENV`.
@@ -596,7 +597,7 @@ flowchart TD
 
 ## JSON envelope and exit codes
 
-Every command and MCP tool returns `{"schema_version": "1.0", "ok": ..., "data": ..., "error": ..., "meta": ...}`. Exit codes:
+Every command and MCP tool returns `{"schema_version": "1.0", "ok": ..., "data": ..., "error": ..., "meta": ...}`. A command line that does not parse also prints an envelope, with `error.code` `usage_error` and the command, usage line, and help command in `error.details`; only `--help` and `--version` print plain text. `--env NAME` is an option of each command, after the command name: `benchlingtk entry get REF --env NAME`. Exit codes:
 
 | Code | Meaning |
 |---:|---|
@@ -608,6 +609,7 @@ Every command and MCP tool returns `{"schema_version": "1.0", "ok": ..., "data":
 | 6 | Unsupported capability |
 | 7 | Upstream or transport failure |
 | 8 | Partial or unknown write completion |
+| 9 | Usage error: an unknown command or option, or a missing or invalid argument |
 
 ## Testing
 
