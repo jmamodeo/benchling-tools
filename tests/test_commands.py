@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 import typer
 
-from benchlingtk.commands import (
+from benchling_tools.commands import (
     REQUIRED,
     Call,
     McpParam,
@@ -14,9 +14,9 @@ from benchlingtk.commands import (
     rename_flags,
     surface_text,
 )
-from benchlingtk.errors import ValidationError
-from benchlingtk.mcp_server import McpCall
-from benchlingtk.runtime import RuntimePool
+from benchling_tools.errors import ValidationError
+from benchling_tools.mcp_server import McpCall
+from benchling_tools.runtime import RuntimePool
 
 
 async def _documented(

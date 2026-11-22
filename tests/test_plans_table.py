@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from fake_benchling import ENTRY_ID, TABLE_PART
 
-from benchlingtk.errors import (
+from benchling_tools.errors import (
     ConflictError,
     NotFoundError,
     PartialCompletionError,

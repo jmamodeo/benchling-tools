@@ -47,19 +47,19 @@ jobs:
         shell: bash
         run: |
           keychain_pass=$(openssl rand -hex 24)
-          security create-keychain -p "$keychain_pass" "$RUNNER_TEMP/benchlingtk-test.keychain"
-          security list-keychains -d user -s "$RUNNER_TEMP/benchlingtk-test.keychain"
-          security default-keychain -d user -s "$RUNNER_TEMP/benchlingtk-test.keychain"
-          security unlock-keychain -p "$keychain_pass" "$RUNNER_TEMP/benchlingtk-test.keychain"
+          security create-keychain -p "$keychain_pass" "$RUNNER_TEMP/benchling-tools-test.keychain"
+          security list-keychains -d user -s "$RUNNER_TEMP/benchling-tools-test.keychain"
+          security default-keychain -d user -s "$RUNNER_TEMP/benchling-tools-test.keychain"
+          security unlock-keychain -p "$keychain_pass" "$RUNNER_TEMP/benchling-tools-test.keychain"
       - name: Exercise native keyring
         env:
-          BENCHLINGTK_NATIVE_KEYRING_TEST: "1"
+          BENCHLING_TOOLS_NATIVE_KEYRING_TEST: "1"
           PYTHON_KEYRING_BACKEND: ${{ matrix.backend }}
         run: uv run pytest tests/test_native_keyring.py
       - name: Delete temporary macOS keychain
         if: always() && runner.os == 'macOS'
         shell: bash
-        run: security delete-keychain "$RUNNER_TEMP/benchlingtk-test.keychain" || true
+        run: security delete-keychain "$RUNNER_TEMP/benchling-tools-test.keychain" || true
 
   skill:
     runs-on: ubuntu-latest
@@ -67,9 +67,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       - name: Validate SKILL.md
-        # skills-ref 0.1.1 provides `agentskills`. Pass the absolute path:
-        # `validate .` reports an empty directory name.
-        run: uvx --from skills-ref==0.1.1 agentskills validate "$PWD"
+        # The validator requires the directory name to match the skill name.
+        run: |
+          mkdir -p "$RUNNER_TEMP/benchling-tools"
+          cp SKILL.md "$RUNNER_TEMP/benchling-tools/SKILL.md"
+          uvx --from skills-ref==0.1.1 agentskills validate "$RUNNER_TEMP/benchling-tools"
 
   build:
     runs-on: ubuntu-latest
@@ -84,12 +86,12 @@ jobs:
         run: |
           uv venv --python 3.12 /tmp/wheel-venv
           uv pip install --python /tmp/wheel-venv/bin/python dist/*.whl
-          /tmp/wheel-venv/bin/benchlingtk --version
-          test -s /tmp/wheel-venv/share/benchlingtk/SKILL.md
-          cmp /tmp/wheel-venv/share/benchlingtk/SKILL.md SKILL.md
-          test "$(/tmp/wheel-venv/bin/benchlingtk skill path)" = /tmp/wheel-venv/share/benchlingtk/SKILL.md
-          /tmp/wheel-venv/bin/benchlingtk skill show | cmp - SKILL.md
+          /tmp/wheel-venv/bin/benchling-tools --version
+          test -s /tmp/wheel-venv/share/benchling-tools/SKILL.md
+          cmp /tmp/wheel-venv/share/benchling-tools/SKILL.md SKILL.md
+          test "$(/tmp/wheel-venv/bin/benchling-tools skill path)" = /tmp/wheel-venv/share/benchling-tools/SKILL.md
+          /tmp/wheel-venv/bin/benchling-tools skill show | cmp - SKILL.md
       - name: Check SKILL.md in the built wheel
         env:
-          BENCHLINGTK_WHEEL_DIR: dist
+          BENCHLING_TOOLS_WHEEL_DIR: dist
         run: uv run --extra dev pytest -m wheel tests/test_skill_package.py

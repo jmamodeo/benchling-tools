@@ -1,12 +1,12 @@
 # Benchling setup
 
-Create the Benchling apps this toolkit uses, grant each one access to specific projects, and save each app with `benchlingtk auth login --env NAME`.
+Create the Benchling apps this toolkit uses, grant each one access to specific projects, and save each app with `benchling-tools auth login --env NAME`.
 
 This project is unofficial and not affiliated with or endorsed by Benchling, Inc. Benchling is a trademark of Benchling, Inc.
 
 The toolkit calls the API as the app. The app has its own permissions and its own audit identity. Login uses the OAuth client-credentials grant described in Benchling's [authentication](https://docs.benchling.com/docs/authentication) guide. A personal API key is not accepted, and delegated login (the app acting as the signed-in user) is not used.
 
-Install the `benchlingtk` command before the login step. `uv tool install benchlingtk` and `uvx benchlingtk mcp serve` install the package from PyPI. From a checkout, use `uv tool install .` and `uvx --from . benchlingtk mcp serve`. Details are in the README section Install.
+Install the `benchling-tools` command before the login step. `uv tool install benchling-tools` and `uvx benchling-tools mcp serve` install the package from PyPI. From a checkout, use `uv tool install .` and `uvx --from . benchling-tools mcp serve`. Details are in the README section Install.
 
 ## Create an app
 
@@ -21,9 +21,9 @@ Create the app from the Developer Console. The path and the credential screens a
 5. On the app settings page, copy the client ID. It identifies the app. It is not a secret, and it does not change.
 6. On that same page, generate the client secret. Benchling shows the secret once. Copy it into a password manager, or straight into the login prompt below, and then close the dialog. A lost secret is replaced by generating a new one, which deletes the previous secret.
 
-Keep the secret only until `benchlingtk auth login` has stored it in the OS keychain. It is never a command-line argument, a shell history entry, a commit, a chat message, or a field in an MCP client config.
+Keep the secret only until `benchling-tools auth login` has stored it in the OS keychain. It is never a command-line argument, a shell history entry, a commit, a chat message, or a field in an MCP client config.
 
-Archiving an app revokes its API access immediately. Unarchiving restores access and keeps the current secret. If a secret is exposed, generate a new one in the Developer Console and run `benchlingtk auth login --env NAME` again for that environment.
+Archiving an app revokes its API access immediately. Unarchiving restores access and keeps the current secret. If a secret is exposed, generate a new one in the Developer Console and run `benchling-tools auth login --env NAME` again for that environment.
 
 ## Grant project access
 
@@ -51,23 +51,23 @@ Adding the app to an organization gives it every project that all members of tha
 
 Folders inherit the project policy and can only be more open, so a Write project stays Write in every folder under it. Put the tight policy on the project.
 
-A 403 or a 404 on an object usually means the app is not a collaborator on that object's project. `benchlingtk doctor --env NAME` checks that the V3 and V2 entry-list routes accept the app. An empty page means the token worked. It does not prove the app was added to a particular project. Confirm one with `benchlingtk entry list --project src_example --env NAME` or `benchlingtk entry resolve EXP-0001 --env NAME`, using an id from your tenant.
+A 403 or a 404 on an object usually means the app is not a collaborator on that object's project. `benchling-tools doctor --env NAME` checks that the V3 and V2 entry-list routes accept the app. An empty page means the token worked. It does not prove the app was added to a particular project. Confirm one with `benchling-tools entry list --project src_example --env NAME` or `benchling-tools entry resolve EXP-0001 --env NAME`, using an id from your tenant.
 
 ## Least privilege: a read environment and a write environment
 
 Create two apps and save them as two environments. The MCP flag `--allow-writes` is a local switch. It does not grant anything Benchling withheld, and the CLI `changes apply` does not consult it. The app's Benchling policy is what stops a read session from changing data.
 
-- Read app. Access policy Read, on the projects agents may inspect. Save it with `benchlingtk auth login --env read`. Use this environment for agents and for everyday MCP sessions. Do not start the server with `--allow-writes read`.
-- Write app. Access policy Write, or Append when the agent should create records and leave existing ones unchanged, and only on the projects that should change. Save it with `benchlingtk auth login --env write`. A server that may apply plans is `benchlingtk mcp serve --allow-writes write`.
+- Read app. Access policy Read, on the projects agents may inspect. Save it with `benchling-tools auth login --env read`. Use this environment for agents and for everyday MCP sessions. Do not start the server with `--allow-writes read`.
+- Write app. Access policy Write, or Append when the agent should create records and leave existing ones unchanged, and only on the projects that should change. Save it with `benchling-tools auth login --env write`. A server that may apply plans is `benchling-tools mcp serve --allow-writes write`.
 
 Keep the write environment out of agent configs that only need to read. Environment names use lowercase letters and digits, start with a letter, and are at most 32 characters. `read` and `write` fit that rule. There is no default environment. Every command and every MCP tool call names one.
 
-## Log in with `benchlingtk auth login --env NAME`
+## Log in with `benchling-tools auth login --env NAME`
 
 Run this in your own terminal. `NAME` is the environment name, such as `read` or `write`:
 
 ```console
-benchlingtk auth login --env NAME
+benchling-tools auth login --env NAME
 ```
 
 The prompt asks for three values:
@@ -78,8 +78,9 @@ The prompt asks for three values:
 
 Login requests a client-credentials token before it saves anything. A rejected id or secret is not written. On success:
 
-- The tenant URL and client ID go in `environments.json`, mode 0600, under the state directory. That file holds no secret. The directory is `$XDG_CONFIG_HOME/benchlingtk`, or `~/.config/benchlingtk` when `XDG_CONFIG_HOME` is unset. On macOS it is `~/Library/Application Support/benchlingtk`. On Windows it is `%APPDATA%\benchlingtk`. `BENCHLINGTK_HOME` overrides the directory and still holds no secrets.
-- The client secret goes in the OS keychain. The service name is `benchlingtk`. The keychain username is the environment name.
+- The tenant URL and client ID go in `environments.json`, mode 0600, under the state directory. That file holds no secret. The directory is `$XDG_CONFIG_HOME/benchling-tools`, or `~/.config/benchling-tools` when `XDG_CONFIG_HOME` is unset. On macOS it is `~/Library/Application Support/benchling-tools`. On Windows it is `%APPDATA%\benchling-tools`. `BENCHLING_TOOLS_HOME` overrides the directory and still holds no secrets.
+- Upgrading from benchlingtk: move the old `benchlingtk` state directory to `benchling-tools` under the same platform config root, or set `BENCHLING_TOOLS_HOME` to the old directory (including the path previously set in `BENCHLINGTK_HOME`). No files are moved automatically. The keychain service remains unchanged, so saved credentials remain available.
+- The client secret goes in the OS keychain. The service name is `benchling-tools`. The keychain username is the environment name.
 - Access tokens stay in process memory and are renewed before they expire. They are not written to the keychain or to `environments.json`.
 
 macOS and Windows use the system keychain. Linux uses the Secret Service (`org.freedesktop.secrets`) on the session bus. There is no plaintext file fallback. If the keychain cannot store the secret, login fails and nothing is saved. The error is the cause, one fix command, and a pointer to the README section Headless Linux.
@@ -87,14 +88,14 @@ macOS and Windows use the system keychain. Linux uses the Secret Service (`org.f
 Confirm the save, then the token, then a read:
 
 ```console
-benchlingtk auth status
-benchlingtk auth status --check --env NAME
-benchlingtk doctor --env NAME
+benchling-tools auth status
+benchling-tools auth status --check --env NAME
+benchling-tools doctor --env NAME
 ```
 
 `auth status` lists each saved environment, its tenant URL without a trailing slash, and whether a keychain secret is present. It never prints the secret. `--check` requests a token and puts a failure in the top-level message. `doctor` is read-only: one page of V3 entries and one page of V2 entries. A failed check exits 3, the envelope is `ok: false`, and each failed check includes a hint.
 
-`benchlingtk auth logout --env NAME` removes that `environments.json` record and its keychain secret. It does not archive the app or rotate the secret in Benchling. Logging out an environment that was never configured says that it is not configured.
+`benchling-tools auth logout --env NAME` removes that `environments.json` record and its keychain secret. It does not archive the app or rotate the secret in Benchling. Logging out an environment that was never configured says that it is not configured.
 
 A 401 from the token endpoint says `Benchling at https://<tenant> rejected the client ID or secret.`
 
@@ -103,7 +104,7 @@ A 401 from the token endpoint says `Benchling at https://<tenant> rejected the c
 Agents, CI, and machines without a terminal pass the tenant and client ID as flags and the secret on stdin:
 
 ```console
-printf '%s' "$BENCHLING_CLIENT_SECRET" | benchlingtk auth login --env NAME \
+printf '%s' "$BENCHLING_CLIENT_SECRET" | benchling-tools auth login --env NAME \
   --tenant-url https://your-tenant.benchling.com \
   --client-id your-app-client-id \
   --secret-stdin
@@ -116,7 +117,7 @@ On a Linux server or agent machine, the Secret Service is often missing from the
 ```console
 dbus-run-session -- sh -c '
   printf "%s\n" "$KEYRING_PASSWORD" | gnome-keyring-daemon --unlock --components=secrets
-  printf "%s" "$BENCHLING_CLIENT_SECRET" | benchlingtk auth login --env NAME \
+  printf "%s" "$BENCHLING_CLIENT_SECRET" | benchling-tools auth login --env NAME \
     --tenant-url https://your-tenant.benchling.com \
     --client-id your-app-client-id \
     --secret-stdin
@@ -134,14 +135,14 @@ The standard MCP SDK starts the stdio server with only `HOME`, `LOGNAME`, `PATH`
 Reads use the read environment:
 
 ```console
-benchlingtk entry list --project src_example --env read
-benchlingtk doctor --env read
+benchling-tools entry list --project src_example --env read
+benchling-tools doctor --env read
 ```
 
 A server that can apply plans only in the write environment:
 
 ```console
-benchlingtk mcp serve --allow-writes write
+benchling-tools mcp serve --allow-writes write
 ```
 
 The read-only default, the client config, and `--allow-writes` are in the [reference section MCP server](reference.md#mcp-server).

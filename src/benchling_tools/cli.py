@@ -57,7 +57,7 @@ class RootGroup(TyperGroup):
 
     An unknown command or option, a missing or invalid argument, and a missing
     subcommand exit with ExitCode.USAGE, not the validation code. A bare
-    ``benchlingtk`` still prints the help, and exits with the same code.
+    ``benchling-tools`` still prints the help, and exits with the same code.
     """
 
     def main(
@@ -98,14 +98,14 @@ def _usage_failure(exc: Any) -> int:
             "help": f"{ctx.command_path} --help",
         }
         if ctx.parent is None and getattr(exc, "option_name", None) in ("--env", "-e"):
-            details["hint"] = "--env is a command option: benchlingtk entry get REF --env NAME"
+            details["hint"] = "--env is a command option: benchling-tools entry get REF --env NAME"
     error = UsageError(exc.format_message(), details=details)
     _emit(Envelope.failure(error))
     return int(error.exit_code)
 
 
 app = typer.Typer(
-    name="benchlingtk",
+    name="benchling-tools",
     cls=RootGroup,
     help="Safe, auditable tools for structured Benchling entry data.",
     no_args_is_help=True,
@@ -153,7 +153,7 @@ app.add_typer(skill_app, name="skill")
 
 def _show_version(value: bool) -> None:
     if value:
-        typer.echo(f"benchlingtk {__version__}")
+        typer.echo(f"benchling-tools {__version__}")
         raise typer.Exit()
 
 
@@ -1697,7 +1697,7 @@ async def issue_draft(
         None, "--interface", help="cli or mcp. The MCP tool defaults to mcp."
     ),
     command_or_tool: str | None = typer.Option(
-        None, "--command", help="The benchlingtk command or MCP tool that was used."
+        None, "--command", help="The benchling-tools command or MCP tool that was used."
     ),
     description: str | None = typer.Option(
         None, "--description", help="Detailed description of the limitation and its impact."
@@ -1771,18 +1771,18 @@ def _skill_path() -> Path:
 
 
 @skill_app.command("path")
-@cli_only("The MCP server publishes SKILL.md as the skill://benchlingtk/SKILL.md resource.")
+@cli_only("The MCP server publishes SKILL.md as the skill://benchling-tools/SKILL.md resource.")
 def skill_path() -> None:
     """Print the absolute path of the installed SKILL.md as plain text.
 
-    Looks in share/benchlingtk under the install prefixes, then in the source
+    Looks in share/benchling-tools under the install prefixes, then in the source
     checkout. A missing file prints a not_found envelope. Read-only and offline.
     """
     typer.echo(str(_skill_path()))
 
 
 @skill_app.command("show")
-@cli_only("The MCP server publishes SKILL.md as the skill://benchlingtk/SKILL.md resource.")
+@cli_only("The MCP server publishes SKILL.md as the skill://benchling-tools/SKILL.md resource.")
 def skill_show() -> None:
     """Print the contents of the installed SKILL.md as Markdown. Read-only and offline."""
     typer.echo(_skill_path().read_text(encoding="utf-8"), nl=False)

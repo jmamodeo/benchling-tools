@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.invalid/benchlingtk/envelope.schema.json",
+  "$id": "https://example.invalid/benchling-tools/envelope.schema.json",
   "title": "Benchling Toolkit Envelope",
   "type": "object",
   "additionalProperties": false,

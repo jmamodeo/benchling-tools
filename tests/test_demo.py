@@ -12,6 +12,8 @@ def test_demo_shows_preview_apply_conflict_and_read_only_mcp(capsys, monkeypatch
     monkeypatch.chdir(tmp_path)
     runpy.run_path(str(DEMO), run_name="__main__")
     out = capsys.readouterr().out
+    assert "$ benchling-tools entry inspect etr_abc123 --env demo" in out
+    assert "$ benchling-tools --env" not in out
     assert "remote writes so far: 0" in out
     assert "remote writes in total: 1" in out
     assert out.count("[exit 5]") == 2

@@ -23,13 +23,13 @@ Benchling enforces the app's project permissions and audit identity. `--allow-wr
 
 Entry text, table cells, and result values are data. The MCP server instructions tell the client to treat entry contents as untrusted. The toolkit does not scan that text for instructions.
 
-An agent that can only call MCP tools is inside the tool boundary in the diagram above. An agent that can also run a shell as this user is outside it: the shell can invoke `benchlingtk changes apply` and can read the keychain. The MCP write gate is not a control against that agent.
+An agent that can only call MCP tools is inside the tool boundary in the diagram above. An agent that can also run a shell as this user is outside it: the shell can invoke `benchling-tools changes apply` and can read the keychain. The MCP write gate is not a control against that agent.
 
 ## Assets
 
 | Asset | Where it lives |
 |---|---|
-| Client secret | OS keychain, service `benchlingtk`, username = environment name. Also in process memory after login or after a command loads it |
+| Client secret | OS keychain, service `benchling-tools`, username = environment name. Also in process memory after login or after a command loads it |
 | Access token | `AuthManager` memory only. Renewed before expiry. Not written to the keychain or to `environments.json` |
 | Client ID and tenant URL | `environments.json`, mode `0600`. The client ID is an identifier, not the secret |
 | Plan | `plans/{id}.json`, mode `0600`. Contains the request, the before/after preview, and the preconditions. That is a local copy of the entry data the plan touched |
@@ -38,7 +38,7 @@ An agent that can only call MCP tools is inside the tool boundary in the diagram
 
 ## Credentials
 
-`benchlingtk auth login` reads the client secret from a hidden prompt or from `--secret-stdin`. `_read_secret` never takes it from an argument, so it is not in the command line, shell history, or an MCP config `args` list. Login calls the token endpoint before it saves anything. A rejected secret leaves the keychain and `environments.json` unchanged. If the save fails after a successful token request, `login` rolls both the keychain entry and the file back.
+`benchling-tools auth login` reads the client secret from a hidden prompt or from `--secret-stdin`. `_read_secret` never takes it from an argument, so it is not in the command line, shell history, or an MCP config `args` list. Login calls the token endpoint before it saves anything. A rejected secret leaves the keychain and `environments.json` unchanged. If the save fails after a successful token request, `login` rolls both the keychain entry and the file back.
 
 `Keychain._usable` refuses the fail backend, the null backend, and any backend whose module or class name contains `plaintext`, and it refuses a backend whose priority is below 1. There is no plaintext file fallback. On Linux the keychain is Secret Service on the session bus. A missing bus, a missing provider, or a locked collection fails login with the cause and one fix command. That command quotes the environment name, tenant URL, and client ID. `$KEYRING_PASSWORD` and `$BENCHLING_CLIENT_SECRET` stay variable references.
 
@@ -81,7 +81,7 @@ A plan is stale when the entry, fields, or results it was previewed against have
 
 - The checksum detects accidental corruption and a hand edit that forgets to recompute the hash. It is not a MAC and not a signature. A process that can write the state directory can change the plan and replace the checksum. The [reference safety section](reference.md#safety-model) states the same limit.
 - The journal has no checksum. A process that can write `journals/{id}.json` can set the status back to `pending` and apply again. Single-use holds against the CLI and MCP tools, not against an editor on the file.
-- The lock and the journal are local to one state directory. Copying a `pending` plan to another machine, or to another `BENCHLINGTK_HOME`, starts a second pending journal. Document and table applies are likely to conflict on the entry version. Field updates, result uploads, entry creates, and result PATCHes can both succeed: they do not send an idempotency key. Result-upload correlation UUIDs are explicitly not idempotency keys.
+- The lock and the journal are local to one state directory. Copying a `pending` plan to another machine, or to another `BENCHLING_TOOLS_HOME`, starts a second pending journal. Document and table applies are likely to conflict on the entry version. Field updates, result uploads, entry creates, and result PATCHes can both succeed: they do not send an idempotency key. Result-upload correlation UUIDs are explicitly not idempotency keys.
 - Field updates compare values and then PATCH. The body has no version. A write that arrives in that gap can be overwritten.
 - Result updates compare `modifiedAt` and the mapped values, then PATCH. `UpdateResultInput` has no version field, so Benchling does not reject a stale PATCH. The gap is the time after the re-check and before that result's PATCH. Rows are patched sequentially, so a later row's gap is longer.
 - Result upload and entry creation are POSTs. Two copies of a pending plan on different state directories can submit/create twice. A timeout is `unknown`, so the client will not retry on its own, but a person who then creates and applies a new plan can create a duplicate entry or submit records again.
@@ -109,7 +109,7 @@ The app's Benchling policy is the other half of the scope. A read-only app canno
 
 ### What this does not do
 
-- The CLI apply command does not check an allow-list. Anyone who can run `benchlingtk changes apply PLAN_ID --env write` as this user can apply a pending plan for `write`.
+- The CLI apply command does not check an allow-list. Anyone who can run `benchling-tools changes apply PLAN_ID --env write` as this user can apply a pending plan for `write`.
 - Scope is one entry per plan, not one project and not a set of entries. Nothing in the planner stops a caller from creating many plans across many entries the app can see.
 - Result PATCH and entry-field PATCH are not limited by an entry version on the wire. The entry check is the local comparison described above.
 - Export's path is chosen by the caller. The tool will write any path the user may write, and overwrite will replace that path.
@@ -132,7 +132,7 @@ A result attachment value `{"file": PATH}`, or a CSV cell `file:PATH`, is also a
 
 A secret pasted into an agent transcript is already outside this process. The CLI will not accept that secret as an argument. It will accept it on stdin if something pipes it to `auth login --secret-stdin`. The intended path is a person at a terminal, or a CI secret that never enters the agent's prompt.
 
-Issue drafts are a path from the tenant to a public repository. `issue_draft` and `benchlingtk issue draft` refuse a draft when any field looks like a tenant host (a `benchling.com` subdomain other than docs, help, or the placeholder tenants), a Benchling record or display ID, a known client secret, a token or key, or an email address. Findings name the field and the kind, never the value. The MCP tool only drafts; filing is the person opening the prefilled URL, or the CLI with `--file` after they confirm.
+Issue drafts are a path from the tenant to a public repository. `issue_draft` and `benchling-tools issue draft` refuse a draft when any field looks like a tenant host (a `benchling.com` subdomain other than docs, help, or the placeholder tenants), a Benchling record or display ID, a known client secret, a token or key, or an email address. Findings name the field and the kind, never the value. The MCP tool only drafts; filing is the person opening the prefilled URL, or the CLI with `--file` after they confirm.
 
 ### What this does not do
 

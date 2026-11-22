@@ -13,17 +13,17 @@ import yaml
 from mcp.shared.memory import create_connected_server_and_client_session as Client
 from typer.testing import CliRunner
 
-from benchlingtk import __version__, cli, issues
-from benchlingtk.errors import ValidationError
-from benchlingtk.issues import (
+from benchling_tools import __version__, cli, issues
+from benchling_tools.errors import ValidationError
+from benchling_tools.issues import (
     DocsCitation,
     build_issue_draft,
     find_sensitive,
     is_benchling_docs_url,
     validate_citations,
 )
-from benchlingtk.mcp_server import build_mcp_server
-from benchlingtk.redact import register_secret
+from benchling_tools.mcp_server import build_mcp_server
+from benchling_tools.redact import register_secret
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS_URL = "https://docs.benchling.com/docs/example-creating-results"
@@ -72,7 +72,7 @@ def test_feature_draft_renders_every_section_and_a_prefilled_url() -> None:
         "## Benchling documentation",
     ):
         assert heading in body
-    assert f"benchlingtk version: {__version__}" in body
+    assert f"benchling-tools version: {__version__}" in body
     assert "Interface: MCP" in body
     assert "`changes_apply`" in body
     assert f"- {DOCS_URL}" in body
@@ -90,7 +90,7 @@ def test_feature_draft_renders_every_section_and_a_prefilled_url() -> None:
 
 def test_bug_draft_uses_the_bug_label() -> None:
     draft = build_issue_draft(
-        spec(kind="bug", interface="cli", command_or_tool="benchlingtk table get")
+        spec(kind="bug", interface="cli", command_or_tool="benchling-tools table get")
     )
     assert draft["title"].startswith("Bug: ")
     assert draft["labels"] == ["bug"]
@@ -242,7 +242,7 @@ def test_cli_draft_from_a_spec_file_files_nothing(runner, tmp_path, monkeypatch)
     assert payload["ok"] is True
     assert payload["data"]["filed"] is False
     assert payload["data"]["labels"] == ["enhancement"]
-    assert payload["meta"] == {"repository": "jmamodeo/benchlingtk"}
+    assert payload["meta"] == {"repository": "jmamodeo/benchling-tools"}
 
 
 def test_cli_draft_from_flags(runner) -> None:
@@ -254,7 +254,7 @@ def test_cli_draft_from_flags(runner) -> None:
         "--expected", SPEC["expected"],
         "--actual", SPEC["actual"],
         "--interface", "cli",
-        "--command", "benchlingtk changes apply",
+        "--command", "benchling-tools changes apply",
         "--description", SPEC["description"],
         "--solution", SPEC["proposed_solution"],
         "--cite-url", DOCS_URL,
@@ -262,7 +262,7 @@ def test_cli_draft_from_flags(runner) -> None:
     )  # fmt: skip
     assert code == 0, payload
     assert payload["data"]["labels"] == ["bug"]
-    assert "`benchlingtk changes apply`" in payload["data"]["body"]
+    assert "`benchling-tools changes apply`" in payload["data"]["body"]
 
 
 def test_cli_flags_override_the_spec_on_stdin(runner) -> None:
@@ -297,7 +297,7 @@ def test_cli_file_calls_gh_only_with_the_flag(runner, monkeypatch) -> None:
 
     def fake_run(command, **kwargs):
         calls.append((command, kwargs))
-        return _Completed(0, "https://github.com/jmamodeo/benchlingtk/issues/999\n")
+        return _Completed(0, "https://github.com/jmamodeo/benchling-tools/issues/999\n")
 
     monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/gh")
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -309,7 +309,7 @@ def test_cli_file_calls_gh_only_with_the_flag(runner, monkeypatch) -> None:
     assert payload["data"]["filed"] is True
     assert payload["data"]["issue_url"].endswith("/issues/999")
     command, kwargs = calls[0]
-    assert command[:5] == ["/usr/bin/gh", "issue", "create", "--repo", "jmamodeo/benchlingtk"]
+    assert command[:5] == ["/usr/bin/gh", "issue", "create", "--repo", "jmamodeo/benchling-tools"]
     assert ["--label", "enhancement"] == command[
         command.index("--label") : command.index("--label") + 2
     ]

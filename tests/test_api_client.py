@@ -4,10 +4,10 @@ import httpx
 import pytest
 from conftest import make_api, make_environment
 
-from benchlingtk import api as api_module
-from benchlingtk.api import BenchlingAPI
-from benchlingtk.auth import AuthManager
-from benchlingtk.errors import (
+from benchling_tools import api as api_module
+from benchling_tools.api import BenchlingAPI
+from benchling_tools.auth import AuthManager
+from benchling_tools.errors import (
     ApiDriftError,
     PartialCompletionError,
     UpstreamError,

@@ -8,8 +8,8 @@ from pathlib import Path
 
 
 def application_home() -> Path:
-    """Return the per-user config root; BENCHLINGTK_HOME overrides the platform default."""
-    override = os.getenv("BENCHLINGTK_HOME")
+    """Return the per-user config root; BENCHLING_TOOLS_HOME overrides the platform default."""
+    override = os.getenv("BENCHLING_TOOLS_HOME")
     if override:
         return Path(override).expanduser().resolve()
     if os.name == "nt":
@@ -18,7 +18,7 @@ def application_home() -> Path:
         root = Path.home() / "Library" / "Application Support"
     else:
         root = Path(os.getenv("XDG_CONFIG_HOME", Path.home() / ".config"))
-    return root / "benchlingtk"
+    return root / "benchling-tools"
 
 
 class ConfigStore:

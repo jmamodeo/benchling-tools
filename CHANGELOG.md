@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Breaking
+
+- Renamed the distribution and command from `benchlingtk` to `benchling-tools` and the Python
+  module to `benchling_tools`; there is no old command or import alias. Update scripts and MCP
+  client launch configurations. The MCP skill resource is now `skill://benchling-tools/SKILL.md`.
+  MCP tool names are unchanged.
+- `BENCHLING_TOOLS_HOME` replaces `BENCHLINGTK_HOME`, and the default state directory changes
+  from `benchlingtk` to `benchling-tools` under the same platform config root. Nothing is moved
+  automatically: move the old state directory to the new location, or set
+  `BENCHLING_TOOLS_HOME` to its existing path. This preserves environments, plans, and journals.
+  The keychain service name remains `benchlingtk`, so existing credentials remain usable.
+
 ### Added
 
 - `blob download` (MCP `blob_download`) streams a blob UUID or `attachment_…` ID to a local file and reports size, SHA-256 and MD5. Optional expected hashes, size, or a reference file verify the download before it replaces the destination; without expectations the summary says `verified: false`. Existing files require `--force` to replace.

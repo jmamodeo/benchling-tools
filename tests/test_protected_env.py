@@ -11,10 +11,10 @@ from fake_benchling import ENTRY_ID, TABLE_PART, TEXT_PART, FakeBenchling
 from mcp.shared.memory import create_connected_server_and_client_session as Client
 from typer.testing import CliRunner
 
-from benchlingtk import cli
-from benchlingtk.environment import EnvironmentConfigStore, check_apply_allowed
-from benchlingtk.errors import ValidationError
-from benchlingtk.mcp_server import build_mcp_server
+from benchling_tools import cli
+from benchling_tools.environment import EnvironmentConfigStore, check_apply_allowed
+from benchling_tools.errors import ValidationError
+from benchling_tools.mcp_server import build_mcp_server
 
 SECRET = "sensitive-test-secret"
 DELETE_SPEC = {"operation": "delete", "from_part_id": TEXT_PART}
@@ -139,7 +139,7 @@ def test_protect_unknown_environment_is_a_validation_error(benchling_env) -> Non
 def _login(monkeypatch, *flags: str) -> dict:
     fake = FakeBenchling()
     monkeypatch.setattr(
-        "benchlingtk.credentials.open_token_client",
+        "benchling_tools.credentials.open_token_client",
         lambda: httpx.Client(transport=httpx.MockTransport(fake.handler)),
     )
     result = CliRunner().invoke(

@@ -9,8 +9,8 @@ from conftest import plain_stdout, runtime_for
 from fake_benchling import ENTRY_ID
 from typer.testing import CliRunner
 
-from benchlingtk import cli
-from benchlingtk.errors import NotFoundError, ValidationError
+from benchling_tools import cli
+from benchling_tools.errors import NotFoundError, ValidationError
 
 TABLE = "strtbl_example"
 MISSING_V2 = "00000000-0000-4000-8000-0000000000ff"

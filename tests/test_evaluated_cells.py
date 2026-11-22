@@ -9,9 +9,9 @@ from conftest import runtime_for
 from fake_benchling import ENTRY_ID, evaluated_results_rows
 from typer.testing import CliRunner
 
-from benchlingtk import cli, services
-from benchlingtk.errors import UpstreamError
-from benchlingtk.export import export_dataset
+from benchling_tools import cli, services
+from benchling_tools.errors import UpstreamError
+from benchling_tools.export import export_dataset
 
 PART = "docpart_rt1"
 ROWS_PATH = f"/document-part-results-table/{PART}/rows/items"

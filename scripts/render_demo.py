@@ -97,7 +97,7 @@ def build_cast(transcript: str) -> str:
         "width": width,
         "height": ROWS,
         "timestamp": CAST_TIMESTAMP,
-        "title": "benchlingtk fixture demo",
+        "title": "benchling-tools fixture demo",
         "env": {"TERM": "dumb", "SHELL": "/bin/sh"},
     }
     lines = [json.dumps(header, separators=(",", ":"))]
@@ -292,7 +292,7 @@ def _draw_frame(
     draw.rectangle((0, 0, image_w, bar_h), fill=BAR)
     for offset, color in enumerate(((247, 118, 142), (224, 175, 104), (158, 206, 106))):
         draw.ellipse((14 + offset * 18, 10, 26 + offset * 18, 22), fill=color)
-    draw.text((78, 7), "benchlingtk    fixture demo    no network", font=font, fill=MUTED)
+    draw.text((78, 7), "benchling-tools    fixture demo    no network", font=font, fill=MUTED)
     colors = {
         "fg": FG,
         "comment": COMMENT,

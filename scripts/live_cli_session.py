@@ -3,7 +3,7 @@
 Log in first, in your own terminal, so the client secret never enters this
 script or an agent. State for the session is isolated below:
 
-    BENCHLINGTK_HOME=work/live-test/state benchlingtk auth login --env dev
+    BENCHLING_TOOLS_HOME=work/live-test/state benchling-tools auth login --env dev
 
 Then send one JSON object per line: {"args": ["entry", "inspect", "etr_...", "--env", "dev"]}.
 Optional `artifact` saves the generated CLI output under ignored work/live-test.
@@ -26,11 +26,11 @@ def main() -> None:
     output_dir = root / "work" / "live-test"
     output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     env = dict(os.environ)
-    env["BENCHLINGTK_HOME"] = str(output_dir / "state")
-    executable = root / ".venv" / "bin" / "benchlingtk"
+    env["BENCHLING_TOOLS_HOME"] = str(output_dir / "state")
+    executable = root / ".venv" / "bin" / "benchling-tools"
     print(
         "CLI test session ready. Environments come from "
-        f"{env['BENCHLINGTK_HOME']}. Send JSON command objects; exit with EOF.",
+        f"{env['BENCHLING_TOOLS_HOME']}. Send JSON command objects; exit with EOF.",
         flush=True,
     )
     for line in sys.stdin:

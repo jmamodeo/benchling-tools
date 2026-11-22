@@ -2,7 +2,7 @@ name: Publish to PyPI
 
 # Runs when a GitHub release is published. PyPI trusted publishing (OIDC) signs
 # the upload, so no token is stored in this repository. On PyPI, the trusted
-# publisher is: owner jmamodeo, repository benchlingtk, workflow
+# publisher is: owner jmamodeo, repository benchling-tools, workflow
 # publish.yml, environment pypi.
 
 on:
@@ -22,7 +22,7 @@ jobs:
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: |
-          version="$(uv run --no-project python -c "import re,pathlib; print(re.search(r'__version__ = \"([^\"]+)\"', pathlib.Path('src/benchlingtk/__init__.py').read_text()).group(1))")"
+          version="$(uv run --no-project python -c "import re,pathlib; print(re.search(r'__version__ = \"([^\"]+)\"', pathlib.Path('src/benchling_tools/__init__.py').read_text()).group(1))")"
           test "$TAG" = "v$version" || { echo "Tag $TAG does not match version $version"; exit 1; }
       - name: Build sdist and wheel
         run: uv build
@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/benchlingtk/
+      url: https://pypi.org/project/benchling-tools/
     permissions:
       id-token: write
     steps:

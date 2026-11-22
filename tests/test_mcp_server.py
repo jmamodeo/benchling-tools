@@ -9,9 +9,9 @@ from conftest import runtime_for
 from fake_benchling import ENTRY_ID, TABLE_PART, TEXT_PART, entry_web_url
 from mcp.shared.memory import create_connected_server_and_client_session as Client
 
-from benchlingtk.errors import AuthenticationError, ValidationError
-from benchlingtk.mcp_server import build_mcp_server, run_mcp_server
-from benchlingtk.runtime import RuntimePool
+from benchling_tools.errors import AuthenticationError, ValidationError
+from benchling_tools.mcp_server import build_mcp_server, run_mcp_server
+from benchling_tools.runtime import RuntimePool
 
 READ_TOOLS = {
     "auth_status",
@@ -961,7 +961,7 @@ def test_serve_runs_stdio_transport_with_validated_writable_envs(
 def test_closed_loop_on_shutdown_is_not_a_startup_failure(benchling_env, monkeypatch) -> None:
     from mcp.server.fastmcp import FastMCP
 
-    from benchlingtk.mcp_server import _close_pool, _closed_event_loop
+    from benchling_tools.mcp_server import _close_pool, _closed_event_loop
 
     monkeypatch.setattr(
         FastMCP,
@@ -977,7 +977,7 @@ def test_closed_loop_on_shutdown_is_not_a_startup_failure(benchling_env, monkeyp
         raise RuntimeError("Event loop is closed")
 
     monkeypatch.setattr(FastMCP, "run", lambda self, transport: None)
-    monkeypatch.setattr("benchlingtk.mcp_server.asyncio.run", close_raises)
+    monkeypatch.setattr("benchling_tools.mcp_server.asyncio.run", close_raises)
     run_mcp_server()
 
     grouped = BaseExceptionGroup("shutdown", [RuntimeError("Event loop is closed")])
@@ -997,10 +997,10 @@ import keyring
 from memory_keyring import MemoryKeyring
 
 keyring.set_keyring(MemoryKeyring())
-from benchlingtk.environment import EnvironmentConfigStore
-from benchlingtk.keychain import Keychain
-from benchlingtk.models import AuthMethod, Environment
-from benchlingtk.services import BenchlingService
+from benchling_tools.environment import EnvironmentConfigStore
+from benchling_tools.keychain import Keychain
+from benchling_tools.models import AuthMethod, Environment
+from benchling_tools.services import BenchlingService
 
 async def fake_resolve(self, reference):
     try:
@@ -1019,13 +1019,13 @@ EnvironmentConfigStore().upsert(
     )
 )
 Keychain().set("sandbox", "sandbox-client-secret")
-from benchlingtk.cli import app
+from benchling_tools.cli import app
 app(["mcp", "serve"])
 """
     # The child is the server. The parent sends the session and closes stdin.
     env = os.environ.copy()
     env["PYTHONPATH"] = "tests" + os.pathsep + env.get("PYTHONPATH", "")
-    env["BENCHLINGTK_HOME"] = str(tmp_path)
+    env["BENCHLING_TOOLS_HOME"] = str(tmp_path)
     proc = subprocess.Popen(
         [sys.executable, "-c", script],
         stdin=subprocess.PIPE,
@@ -1317,14 +1317,14 @@ CLI_ONLY_COMMANDS = {
 def _cli_commands():
     import typer
 
-    from benchlingtk import cli
-    from benchlingtk.mcp_server import cli_commands
+    from benchling_tools import cli
+    from benchling_tools.mcp_server import cli_commands
 
     return dict(cli_commands(typer.main.get_command(cli.app)))
 
 
 async def test_every_cli_command_is_one_tool_named_after_its_path(client) -> None:
-    from benchlingtk.commands import CLI_ONLY_ATTR, TOOL_ATTR
+    from benchling_tools.commands import CLI_ONLY_ATTR, TOOL_ATTR
 
     commands = _cli_commands()
     cli_only = {
@@ -1354,7 +1354,7 @@ def _tool_text(text: str, command) -> str:
 
 
 async def test_tool_text_comes_from_cli_help(client) -> None:
-    from benchlingtk.commands import TOOL_ATTR
+    from benchling_tools.commands import TOOL_ATTR
 
     tools = {tool.name: tool for tool in (await client.list_tools()).tools}
     for path, command in _cli_commands().items():
@@ -1392,7 +1392,7 @@ async def test_tool_text_comes_from_cli_help(client) -> None:
 def test_a_command_without_a_declaration_fails_the_build(pool, monkeypatch) -> None:
     import typer
 
-    from benchlingtk import cli
+    from benchling_tools import cli
 
     extra = typer.Typer()
 
@@ -1439,7 +1439,7 @@ async def test_plan_entry_rules_are_validation_envelopes(client, fake, arguments
 
 
 async def test_every_tool_description_ends_with_its_write_class(client) -> None:
-    from benchlingtk.mcp_server import WRITE_CLASS_NOTES
+    from benchling_tools.mcp_server import WRITE_CLASS_NOTES
 
     tools = {tool.name: tool for tool in (await client.list_tools()).tools}
     expected = {name: "read" for name in READ_TOOLS | {"issue_draft"}}

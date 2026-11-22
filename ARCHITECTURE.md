@@ -25,7 +25,7 @@ flowchart TD
 
 Each CLI command is declared once in `cli.py` with `@command`. Typer builds the CLI from it, and `build_mcp_server` walks the same command tree and registers one tool per command, named after its path (`changes apply` is `changes_apply`). A tool runs the same function as the command; only the `Call` differs, which supplies the runtime and the apply check for that surface.
 
-`changes_plan` does not pass through the write gate. It is allowed on a read-only MCP server because the remote calls it makes are reads. The plan file is local. `changes_apply` calls `Call.authorize_apply` before `ChangePlanner.apply`; on MCP that checks `writable_envs`. The CLI has no equivalent flag: `benchlingtk changes apply` is the operator's command.
+`changes_plan` does not pass through the write gate. It is allowed on a read-only MCP server because the remote calls it makes are reads. The plan file is local. `changes_apply` calls `Call.authorize_apply` before `ChangePlanner.apply`; on MCP that checks `writable_envs`. The CLI has no equivalent flag: `benchling-tools changes apply` is the operator's command.
 
 MCP `changes_plan` validates the specification with `parse_change_specification` before any remote read. A shape that does not match the typed union returns `validation_error` and does not create a plan. The CLI accepts the same JSON, or a CSV result update, and the family planner validates it.
 
@@ -150,7 +150,7 @@ The journal file is `journals/{id}.json`, written atomically with mode `0600`. T
 
 ## State on disk
 
-`ConfigStore` roots everything at the platform config directory plus `benchlingtk`, or at `BENCHLINGTK_HOME`. `ensure` creates the root, `plans`, `journals`, and `locks` at mode `0700`. The blob planner adds `uploads` (mode `0700`) on first use: one `0600` file per planned local file, holding its absolute path, size and SHA-256 so the plan itself never contains the path. Apply deletes these files after its attempt, and a failed preview deletes its own. `environments.json` is the tenant URL and client ID for each environment, mode `0600`, written by `write_private`. The client secret is not in that file. It is in the OS keychain under the service name `benchlingtk`, with the environment name as the username. Access tokens stay in the `AuthManager` process. HTTPS uses the operating-system trust store from `tls.verified_context`. `http://` is rejected.
+`ConfigStore` roots everything at the platform config directory plus `benchling-tools`, or at `BENCHLING_TOOLS_HOME`. `ensure` creates the root, `plans`, `journals`, and `locks` at mode `0700`. The blob planner adds `uploads` (mode `0700`) on first use: one `0600` file per planned local file, holding its absolute path, size and SHA-256 so the plan itself never contains the path. Apply deletes these files after its attempt, and a failed preview deletes its own. `environments.json` is the tenant URL and client ID for each environment, mode `0600`, written by `write_private`. The client secret is not in that file. It is in the OS keychain under the service name `benchling-tools`, with the environment name as the username. Access tokens stay in the `AuthManager` process. HTTPS uses the operating-system trust store from `tls.verified_context`. `http://` is rejected.
 
 Two processes on one machine serialize on the per-plan lock. Two machines do not. A copied plan file is a new `pending` journal on the machine that did not apply it. Document and table versions make the second apply likely to conflict. Field updates, result uploads, and result PATCHes have no server-side idempotency key. The threat model describes that limit.
 
@@ -178,7 +178,7 @@ flowchart TD
     AUTH --> BENCHLING
 ```
 
-| Module (`src/benchlingtk`) | Role |
+| Module (`src/benchling-tools`) | Role |
 |---|---|
 | `cli.py` | Typer command-line interface; every command is declared once here |
 | `commands.py` | Command declarations shared by the CLI and the MCP server |

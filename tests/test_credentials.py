@@ -15,13 +15,13 @@ from fake_benchling import ENTRY_ID, TEXT_PART, FakeBenchling
 from memory_keyring import MemoryKeyring
 from typer.testing import CliRunner
 
-from benchlingtk import cli
-from benchlingtk.credentials import build_environment, login, logout
-from benchlingtk.environment import EnvironmentConfigStore
-from benchlingtk.errors import AuthenticationError, ValidationError
-from benchlingtk.keychain import Keychain, keychain_message
-from benchlingtk.models import Envelope
-from benchlingtk.redact import redact, register_secret
+from benchling_tools import cli
+from benchling_tools.credentials import build_environment, login, logout
+from benchling_tools.environment import EnvironmentConfigStore
+from benchling_tools.errors import AuthenticationError, ValidationError
+from benchling_tools.keychain import Keychain, keychain_message
+from benchling_tools.models import Envelope
+from benchling_tools.redact import redact, register_secret
 
 SECRET = "sensitive-test-secret"
 TOKEN = "memory-only-access-token"
@@ -33,7 +33,7 @@ def token_transport(fake: FakeBenchling) -> httpx.Client:
 
 def patch_token_client(monkeypatch, fake: FakeBenchling) -> None:
     monkeypatch.setattr(
-        "benchlingtk.credentials.open_token_client",
+        "benchling_tools.credentials.open_token_client",
         lambda: token_transport(fake),
     )
 
@@ -43,11 +43,11 @@ def test_login_saves_only_after_the_token_request_and_hides_the_secret(monkeypat
     fake.access_token = TOKEN
     patch_token_client(monkeypatch, fake)
     monkeypatch.setattr(
-        "benchlingtk.cli.getpass.getpass",
+        "benchling_tools.cli.getpass.getpass",
         lambda prompt="": (_ for _ in ()).throw(AssertionError("getpass")),
     )
     monkeypatch.setattr(
-        "benchlingtk.cli._read_terminal",
+        "benchling_tools.cli._read_terminal",
         lambda label: (_ for _ in ()).throw(AssertionError("tty")),
     )
     result = CliRunner().invoke(
@@ -90,7 +90,7 @@ def test_failed_token_request_saves_nothing_and_hides_the_response(monkeypatch, 
     patch_token_client(monkeypatch, fake)
     seen: list[str] = []
     monkeypatch.setattr(
-        "benchlingtk.cli.getpass.getpass",
+        "benchling_tools.cli.getpass.getpass",
         lambda prompt="": seen.append("prompted") or SECRET,
     )
     result = CliRunner().invoke(
@@ -129,9 +129,9 @@ def test_invalid_url_is_rejected_before_the_secret_is_read(monkeypatch) -> None:
     def forbidden(prompt=""):
         raise AssertionError("secret prompt")
 
-    monkeypatch.setattr("benchlingtk.cli.getpass.getpass", forbidden)
+    monkeypatch.setattr("benchling_tools.cli.getpass.getpass", forbidden)
     monkeypatch.setattr(
-        "benchlingtk.cli._read_terminal",
+        "benchling_tools.cli._read_terminal",
         lambda label: (_ for _ in ()).throw(AssertionError("tty")),
     )
     result = CliRunner().invoke(
@@ -160,8 +160,8 @@ def test_secret_stdin_and_terminal_prompts(monkeypatch) -> None:
     fake = FakeBenchling()
     patch_token_client(monkeypatch, fake)
     answers = iter(["https://your-tenant.benchling.com", "stdin-client"])
-    monkeypatch.setattr("benchlingtk.cli._prompts_available", lambda **kwargs: True)
-    monkeypatch.setattr("benchlingtk.cli._read_terminal", lambda label: next(answers))
+    monkeypatch.setattr("benchling_tools.cli._prompts_available", lambda **kwargs: True)
+    monkeypatch.setattr("benchling_tools.cli._read_terminal", lambda label: next(answers))
     result = CliRunner().invoke(
         cli.app,
         ["auth", "login", "--env", "lab", "--secret-stdin"],
@@ -176,7 +176,7 @@ def test_secret_stdin_and_terminal_prompts(monkeypatch) -> None:
 
 def test_secret_is_not_accepted_as_an_argument(monkeypatch) -> None:
     monkeypatch.setattr(
-        "benchlingtk.cli.getpass.getpass",
+        "benchling_tools.cli.getpass.getpass",
         lambda prompt="": (_ for _ in ()).throw(AssertionError("prompted")),
     )
     result = CliRunner().invoke(
@@ -194,10 +194,10 @@ def test_secret_is_not_accepted_as_an_argument(monkeypatch) -> None:
 
 def test_missing_keyring_fails_before_prompting_and_names_a_fix(monkeypatch) -> None:
     keyring.set_keyring(keyring.backends.fail.Keyring())
-    monkeypatch.setattr("benchlingtk.keychain.provider_installed", lambda: False)
-    monkeypatch.setattr("benchlingtk.keychain.secret_service_reachable", lambda: False)
+    monkeypatch.setattr("benchling_tools.keychain.provider_installed", lambda: False)
+    monkeypatch.setattr("benchling_tools.keychain.secret_service_reachable", lambda: False)
     monkeypatch.setattr(
-        "benchlingtk.cli.getpass.getpass",
+        "benchling_tools.cli.getpass.getpass",
         lambda prompt="": (_ for _ in ()).throw(AssertionError("prompted")),
     )
     result = CliRunner().invoke(cli.app, ["auth", "login", "--env", "dev"])
@@ -216,9 +216,9 @@ def test_missing_keyring_fails_before_prompting_and_names_a_fix(monkeypatch) -> 
 
 def _dbus_keychain_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     keyring.set_keyring(keyring.backends.fail.Keyring())
-    monkeypatch.setattr("benchlingtk.keychain.sys.platform", "linux")
-    monkeypatch.setattr("benchlingtk.keychain.provider_installed", lambda: True)
-    monkeypatch.setattr("benchlingtk.keychain.secret_service_reachable", lambda: False)
+    monkeypatch.setattr("benchling_tools.keychain.sys.platform", "linux")
+    monkeypatch.setattr("benchling_tools.keychain.provider_installed", lambda: True)
+    monkeypatch.setattr("benchling_tools.keychain.secret_service_reachable", lambda: False)
 
 
 def _login_fix_args(message: str) -> list[str]:
@@ -267,7 +267,7 @@ def test_login_keychain_error_keeps_placeholders_for_omitted_flags(
 ) -> None:
     _dbus_keychain_failure(monkeypatch)
     monkeypatch.setattr(
-        "benchlingtk.cli.getpass.getpass",
+        "benchling_tools.cli.getpass.getpass",
         lambda prompt="": (_ for _ in ()).throw(AssertionError("prompted")),
     )
     result = CliRunner().invoke(
@@ -307,7 +307,7 @@ def test_login_keychain_error_uses_a_saved_environment(monkeypatch: pytest.Monke
     configure_env("lab", "https://other-tenant.benchling.com/api/v2/", "saved-client", secret=None)
     _dbus_keychain_failure(monkeypatch)
     monkeypatch.setattr(
-        "benchlingtk.cli.getpass.getpass",
+        "benchling_tools.cli.getpass.getpass",
         lambda prompt="": (_ for _ in ()).throw(AssertionError("prompted")),
     )
     result = CliRunner().invoke(cli.app, ["auth", "login", "--env", "lab"])
@@ -398,7 +398,7 @@ def test_keychain_error_outside_login_keeps_placeholders(monkeypatch: pytest.Mon
     assert "saved-client" not in message
     assert "other-tenant" not in message
 
-    from benchlingtk.keychain import dbus_login_command
+    from benchling_tools.keychain import dbus_login_command
 
     placeholder = dbus_login_command()
     assert "--env dev " in placeholder
@@ -490,8 +490,8 @@ def test_status_check_failure_is_an_authentication_error_without_the_secret(monk
 
 
 def test_commands_fail_clearly_when_the_keychain_disappears() -> None:
-    from benchlingtk.mcp_server import run_mcp_server
-    from benchlingtk.runtime import Runtime
+    from benchling_tools.mcp_server import run_mcp_server
+    from benchling_tools.runtime import Runtime
 
     configure_env("dev", "https://your-tenant.benchling.com/", secret=SECRET)
     keyring.set_keyring(keyring.backends.fail.Keyring())
@@ -517,8 +517,8 @@ def test_keychain_rejects_unusable_backends_and_hides_backend_errors(monkeypatch
 
     NullKeyring.__module__ = "keyring.backends.null"
     keyring.set_keyring(PlaintextKeyring())
-    monkeypatch.setattr("benchlingtk.keychain.provider_installed", lambda: False)
-    monkeypatch.setattr("benchlingtk.keychain.secret_service_reachable", lambda: False)
+    monkeypatch.setattr("benchling_tools.keychain.provider_installed", lambda: False)
+    monkeypatch.setattr("benchling_tools.keychain.secret_service_reachable", lambda: False)
     with pytest.raises(AuthenticationError) as plaintext:
         Keychain().require()
     assert plaintext.value.details["cause"] == "no_backend"
@@ -607,11 +607,11 @@ def test_terminal_prompts_and_empty_secret(monkeypatch) -> None:
     monkeypatch.setattr(cli.sys, "stdin", type("In", (), {"read": lambda self: "\n"})())
     with pytest.raises(ValidationError, match="No client secret was received on stdin"):
         cli._read_secret(True)
-    monkeypatch.setattr("benchlingtk.cli.getpass.getpass", lambda prompt="": "")
+    monkeypatch.setattr("benchling_tools.cli.getpass.getpass", lambda prompt="": "")
     with pytest.raises(ValidationError, match="Client secret is required"):
         cli._read_secret(False)
     monkeypatch.setattr(
-        "benchlingtk.cli.getpass.getpass",
+        "benchling_tools.cli.getpass.getpass",
         lambda prompt="": (_ for _ in ()).throw(EOFError()),
     )
     with pytest.raises(ValidationError, match="Client secret is required"):
@@ -873,7 +873,7 @@ def test_logout_without_a_secret_still_removes_the_record(monkeypatch) -> None:
 
 
 def test_pool_loads_a_saved_environment_without_a_secret() -> None:
-    from benchlingtk.runtime import RuntimePool, load_secrets
+    from benchling_tools.runtime import RuntimePool, load_secrets
 
     configure_env("dev", "https://your-tenant.benchling.com/", secret=None)
     assert load_secrets("dev") == {}
@@ -898,7 +898,9 @@ def test_status_check_reports_a_missing_secret(monkeypatch) -> None:
     assert row["secret_present"] is False
     assert row["token_check"]["ok"] is False
     message = json.loads(result.stdout)["error"]["message"]
-    assert message == "Client secret is not in the keychain; run benchlingtk auth login --env dev"
+    assert (
+        message == "Client secret is not in the keychain; run benchling-tools auth login --env dev"
+    )
     assert fake_calls_were_not_made(result)
 
 
@@ -914,7 +916,7 @@ def test_noninteractive_login_needs_no_tty_and_prints_no_getpass_warning(monkeyp
     patch_token_client(monkeypatch, fake)
     monkeypatch.setattr(cli, "_prompts_available", lambda **kwargs: False)
     monkeypatch.setattr(
-        "benchlingtk.cli.getpass.getpass",
+        "benchling_tools.cli.getpass.getpass",
         lambda prompt="": (_ for _ in ()).throw(AssertionError("getpass")),
     )
     with warnings.catch_warnings(record=True) as caught:
@@ -947,7 +949,7 @@ def test_noninteractive_login_needs_no_tty_and_prints_no_getpass_warning(monkeyp
 def test_login_without_a_tty_names_the_missing_flags(monkeypatch) -> None:
     monkeypatch.setattr(cli, "_prompts_available", lambda **kwargs: False)
     monkeypatch.setattr(
-        "benchlingtk.cli.getpass.getpass",
+        "benchling_tools.cli.getpass.getpass",
         lambda prompt="": (_ for _ in ()).throw(AssertionError("getpass")),
     )
     result = CliRunner().invoke(cli.app, ["auth", "login", "--env", "dev"])
@@ -1042,8 +1044,8 @@ def test_tty_reader_accepts_a_terminal_python_refuses_to_open_for_update() -> No
 
 def test_keychain_diagnosis_names_dbus_and_a_locked_collection(monkeypatch) -> None:
     monkeypatch.delenv("DBUS_SESSION_BUS_ADDRESS", raising=False)
-    monkeypatch.setattr("benchlingtk.keychain.provider_installed", lambda: True)
-    monkeypatch.setattr("benchlingtk.keychain.secret_service_reachable", lambda: False)
+    monkeypatch.setattr("benchling_tools.keychain.provider_installed", lambda: True)
+    monkeypatch.setattr("benchling_tools.keychain.secret_service_reachable", lambda: False)
     keyring.set_keyring(keyring.backends.fail.Keyring())
     with pytest.raises(AuthenticationError) as dbus_error:
         Keychain().require()
@@ -1086,7 +1088,7 @@ def test_keychain_diagnosis_names_dbus_and_a_locked_collection(monkeypatch) -> N
 
 
 def test_secret_service_probe_and_logging_flags(monkeypatch) -> None:
-    from benchlingtk import keychain as keychain_module
+    from benchling_tools import keychain as keychain_module
 
     monkeypatch.delenv("DBUS_SESSION_BUS_ADDRESS", raising=False)
     assert keychain_module.secret_service_reachable() is False
@@ -1153,13 +1155,13 @@ def test_secret_service_probe_and_logging_flags(monkeypatch) -> None:
 def test_prompt_helpers_and_url_error_wording(monkeypatch) -> None:
     from pydantic import ValidationError as ModelValidationError
 
-    from benchlingtk.models import (
+    from benchling_tools.models import (
         Environment,
         _tenant_url_message,
         explain_environment_error,
         prepare_tenant_url,
     )
-    from benchlingtk.services import _doctor_hint
+    from benchling_tools.services import _doctor_hint
 
     class BrokenStdin:
         def isatty(self) -> bool:
@@ -1242,7 +1244,7 @@ def test_prompt_helpers_and_url_error_wording(monkeypatch) -> None:
         Environment.strip_url_path(HttpUrl())  # type: ignore[arg-type]
 
     assert _doctor_hint(RuntimeError("unexpected"), "dev").startswith(
-        "Run benchlingtk doctor --env dev"
+        "Run benchling-tools doctor --env dev"
     )
     summary = cli._doctor_failure_message({"checks": [{"ok": True}]})
     assert summary == "Doctor checks failed"

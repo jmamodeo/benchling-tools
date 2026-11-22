@@ -15,7 +15,7 @@ from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
-from benchlingtk.plans import blobs
+from benchling_tools.plans import blobs
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = json.loads((ROOT / "contracts" / "openapi-manifest.json").read_text())

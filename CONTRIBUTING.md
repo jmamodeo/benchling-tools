@@ -1,12 +1,12 @@
 # Contributing
 
-Thanks for helping improve benchlingtk. This project is unofficial and not affiliated with Benchling, Inc.
+Thanks for helping improve benchling-tools. This project is unofficial and not affiliated with Benchling, Inc.
 
 ## Development setup
 
 ```console
-git clone https://github.com/jmamodeo/benchlingtk.git
-cd benchlingtk
+git clone https://github.com/jmamodeo/benchling-tools.git
+cd benchling-tools
 uv sync --extra dev
 ```
 
@@ -44,7 +44,7 @@ Unit tests for the script use fixture specs and do not download anything.
 
 ## Opt-in sandbox exercise
 
-Offline tests never require credentials. For a live sandbox, run `benchlingtk auth login --env dev` in your own terminal first. The exercise below then creates a plan, pauses for a browser edit to invalidate it, verifies the conflict, and applies and verifies one selected-cell update. Add `--restore` to preview and explicitly restore the original input afterward.
+Offline tests never require credentials. For a live sandbox, run `benchling-tools auth login --env dev` in your own terminal first. The exercise below then creates a plan, pauses for a browser edit to invalidate it, verifies the conflict, and applies and verifies one selected-cell update. Add `--restore` to preview and explicitly restore the original input afterward.
 
 ```console
 uv run python scripts/sandbox_exercise.py \
@@ -58,7 +58,7 @@ uv run python scripts/sandbox_exercise.py \
 
 ## Issues
 
-Use the bug or feature form. Both ask what you tried, the expected and actual behaviour, the version and command or MCP tool, a description, a proposed solution, and at least one Benchling documentation link (docs.benchling.com, help.benchling.com, or the API reference) with the quoted line that shows the solution is possible. `benchlingtk issue draft` builds the same body and refuses drafts that look like they hold tenant data or secrets.
+Use the bug or feature form. Both ask what you tried, the expected and actual behaviour, the version and command or MCP tool, a description, a proposed solution, and at least one Benchling documentation link (docs.benchling.com, help.benchling.com, or the API reference) with the quoted line that shows the solution is possible. `benchling-tools issue draft` builds the same body and refuses drafts that look like they hold tenant data or secrets.
 
 ## Pull requests
 
@@ -70,7 +70,7 @@ Use the bug or feature form. Both ask what you tried, the expected and actual be
 
 ## Releasing
 
-Only the maintainer releases. Set the same version in `src/benchlingtk/__init__.py`, `CITATION.cff`, and `SKILL.md`, move the `CHANGELOG.md` entries under the new version, and merge that pull request. Then publish a GitHub release from `main` whose tag is `v` plus the version. The `Publish to PyPI` workflow builds the package and uploads it with PyPI trusted publishing (GitHub environment `pypi`); no token is stored in the repository.
+Only the maintainer releases. Set the same version in `src/benchling-tools/__init__.py`, `CITATION.cff`, and `SKILL.md`, move the `CHANGELOG.md` entries under the new version, and merge that pull request. Then publish a GitHub release from `main` whose tag is `v` plus the version. The `Publish to PyPI` workflow builds the package and uploads it with PyPI trusted publishing (GitHub environment `pypi`); no token is stored in the repository.
 
 ## No secrets or real tenant data
 

@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 type: software
-title: "benchlingtk"
+title: "benchling-tools"
 version: 0.6.0
 date-released: "2026-11-20"
 abstract: >-
@@ -13,8 +13,8 @@ abstract: >-
 authors:
   - family-names: Amodeo
     given-names: John
-url: "https://github.com/jmamodeo/benchlingtk"
-repository-code: "https://github.com/jmamodeo/benchlingtk"
+url: "https://github.com/jmamodeo/benchling-tools"
+repository-code: "https://github.com/jmamodeo/benchling-tools"
 license: Apache-2.0
 keywords:
   - benchling

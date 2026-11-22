@@ -32,7 +32,7 @@ MAX_SPEC_BYTES = 32 * 1024 * 1024
 MAX_REF_DETAILS = 8
 _SHA256 = re.compile(r"^[0-9a-fA-F]{64}$")
 _PARAM = re.compile(r"^\{[^{}/]+\}$")
-_USER_AGENT = "benchlingtk-openapi-drift"
+_USER_AGENT = "benchling-tools-openapi-drift"
 
 
 class DriftCheckError(Exception):

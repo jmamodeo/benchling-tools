@@ -1,5 +1,5 @@
 name: Bug report
-description: Something in benchlingtk does not work as documented.
+description: Something in benchling-tools does not work as documented.
 title: "Bug: "
 labels: ["bug"]
 body:
@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         **Do not include secrets, real tenant URLs, real entry or record IDs, or personal data.** Use placeholders such as `your-tenant.benchling.com` and `etr_XXXX`.
-        Agents can build this with `benchlingtk issue draft` or the MCP tool `issue_draft`, which check the fields below.
+        Agents can build this with `benchling-tools issue draft` or the MCP tool `issue_draft`, which check the fields below.
   - type: textarea
     id: attempted
     attributes:
@@ -31,16 +31,16 @@ body:
   - type: input
     id: version
     attributes:
-      label: benchlingtk version
-      description: Output of `benchlingtk --version`.
-      placeholder: benchlingtk 0.6.0
+      label: benchling-tools version
+      description: Output of `benchling-tools --version`.
+      placeholder: benchling-tools 0.6.0
     validations:
       required: true
   - type: input
     id: command
     attributes:
       label: Command or MCP tool
-      placeholder: benchlingtk changes apply / changes_apply
+      placeholder: benchling-tools changes apply / changes_apply
     validations:
       required: true
   - type: textarea

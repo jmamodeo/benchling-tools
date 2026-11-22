@@ -1,4 +1,4 @@
-"""The packaged SKILL.md: locating it, the `benchlingtk skill` commands, the MCP resource,
+"""The packaged SKILL.md: locating it, the `benchling-tools skill` commands, the MCP resource,
 and the built wheel."""
 
 from __future__ import annotations
@@ -15,16 +15,20 @@ import pytest
 from mcp.shared.memory import create_connected_server_and_client_session as Client
 from typer.testing import CliRunner
 
-from benchlingtk import __version__, cli, skill
-from benchlingtk.mcp_server import SKILL_RESOURCE_URI, build_mcp_server
+from benchling_tools import __version__, cli, skill
+from benchling_tools.mcp_server import SKILL_RESOURCE_URI, build_mcp_server
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_BYTES = (ROOT / "SKILL.md").read_bytes()
-WHEEL_MEMBER = f"benchlingtk-{__version__}.data/data/share/benchlingtk/SKILL.md"
+WHEEL_MEMBER = f"benchling_tools-{__version__}.data/data/share/benchling-tools/SKILL.md"
+
+
+def test_skill_resource_has_renamed_uri() -> None:
+    assert SKILL_RESOURCE_URI == "skill://benchling-tools/SKILL.md"
 
 
 def test_installed_data_file_is_preferred(tmp_path, monkeypatch) -> None:
-    installed = tmp_path / "share" / "benchlingtk" / "SKILL.md"
+    installed = tmp_path / "share" / "benchling-tools" / "SKILL.md"
     installed.parent.mkdir(parents=True)
     installed.write_text("installed\n", encoding="utf-8")
     monkeypatch.setattr(skill, "_data_roots", lambda: [tmp_path])
@@ -89,8 +93,8 @@ async def test_mcp_serves_skill_md_as_a_resource(pool) -> None:
 
 
 def _wheel(tmp_path: Path) -> Path:
-    """The wheel in BENCHLINGTK_WHEEL_DIR (CI build job), else one built here."""
-    configured = os.environ.get("BENCHLINGTK_WHEEL_DIR")
+    """The wheel in BENCHLING_TOOLS_WHEEL_DIR (CI build job), else one built here."""
+    configured = os.environ.get("BENCHLING_TOOLS_WHEEL_DIR")
     if configured:
         out = Path(configured)
     else:
@@ -103,7 +107,7 @@ def _wheel(tmp_path: Path) -> Path:
             check=True,
             capture_output=True,
         )
-    wheels = sorted(out.glob(f"benchlingtk-{__version__}-*.whl"))
+    wheels = sorted(out.glob(f"benchling_tools-{__version__}-*.whl"))
     assert len(wheels) == 1, wheels
     return wheels[0]
 

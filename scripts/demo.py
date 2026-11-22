@@ -1,4 +1,4 @@
-"""Run the real `benchlingtk` CLI and MCP server against the offline fake Benchling API.
+"""Run the real `benchling-tools` CLI and MCP server against the offline fake Benchling API.
 
 No credentials or network are used: HTTP is served in-process by
 ``tests/fake_benchling.py`` through ``httpx.MockTransport``, the same fake the test
@@ -28,12 +28,12 @@ sys.path.insert(0, str(ROOT / "tests"))
 from fake_benchling import ENTRY_ID, TABLE_PART, TENANT, FakeBenchling  # noqa: E402
 from memory_keyring import MemoryKeyring  # noqa: E402
 
-from benchlingtk import cli  # noqa: E402
-from benchlingtk.environment import EnvironmentConfigStore  # noqa: E402
-from benchlingtk.keychain import Keychain  # noqa: E402
-from benchlingtk.mcp_server import build_mcp_server  # noqa: E402
-from benchlingtk.models import AuthMethod, Environment  # noqa: E402
-from benchlingtk.runtime import Runtime, RuntimePool  # noqa: E402
+from benchling_tools import cli  # noqa: E402
+from benchling_tools.environment import EnvironmentConfigStore  # noqa: E402
+from benchling_tools.keychain import Keychain  # noqa: E402
+from benchling_tools.mcp_server import build_mcp_server  # noqa: E402
+from benchling_tools.models import AuthMethod, Environment  # noqa: E402
+from benchling_tools.runtime import Runtime, RuntimePool  # noqa: E402
 
 fake = FakeBenchling()
 
@@ -70,7 +70,7 @@ def run(*args: str, keep: tuple[str, ...] = (), brief_journal: bool = False) -> 
     output.
     """
     code, envelope = capture(*args)
-    print(f"$ benchlingtk {' '.join(args)}")
+    print(f"$ benchling-tools {' '.join(args)}")
     if keep and envelope["data"]:
         envelope = {**envelope, "data": {k: envelope["data"][k] for k in keep}}
     if brief_journal:
@@ -100,7 +100,7 @@ def main() -> None:
 
 def _demo() -> None:
     home = tempfile.mkdtemp(prefix="benchling-demo-")
-    os.environ["BENCHLINGTK_HOME"] = home
+    os.environ["BENCHLING_TOOLS_HOME"] = home
     keyring.set_keyring(MemoryKeyring())
     EnvironmentConfigStore().upsert(
         Environment(
