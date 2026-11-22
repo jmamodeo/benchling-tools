@@ -125,7 +125,7 @@ dbus-run-session -- sh -c '
 
 A wrong `KEYRING_PASSWORD` for an existing login keyring makes the first keyring call hang. Use the right password, or remove `~/.local/share/keyrings/login.keyring` for a fresh scratch setup.
 
-`dbus-run-session` sets `DBUS_SESSION_BUS_ADDRESS` for that shell only. When the shell exits, the bus exits with it, and a secret stored there is gone. MCP, later shells, and cron need a bus that stays up. The README section Headless Linux shows a long-lived `dbus-daemon --session --fork` bus, the systemd user bus, and the MCP client `env` block. Do not capture `gnome-keyring-daemon --unlock` with `$(...)` or backticks. The daemon does not exit, so the shell waits forever.
+`dbus-run-session` sets `DBUS_SESSION_BUS_ADDRESS` for that shell only. When the shell exits, the bus exits with it, and a secret stored there is gone. MCP, later shells, and cron need a bus that stays up. The [reference section Headless Linux](reference.md#headless-linux) shows a long-lived `dbus-daemon --session --fork` bus, the systemd user bus, and the MCP client `env` block. Do not capture `gnome-keyring-daemon --unlock` with `$(...)` or backticks. The daemon does not exit, so the shell waits forever.
 
 The standard MCP SDK starts the stdio server with only `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, and `USER`. Put the long-lived `DBUS_SESSION_BUS_ADDRESS` in the client config `env` block or the server cannot see the keychain. macOS and Windows use the system keychain and do not need this session.
 
@@ -144,4 +144,4 @@ A server that can apply plans only in the write environment:
 benchlingtk mcp serve --allow-writes write
 ```
 
-The read-only default, the client config, and `--allow-writes` are in the README section MCP server.
+The read-only default, the client config, and `--allow-writes` are in the [reference section MCP server](reference.md#mcp-server).
