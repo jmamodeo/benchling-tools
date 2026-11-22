@@ -12,7 +12,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from mcp import Client
+from mcp.shared.memory import create_connected_server_and_client_session as Client
 from typer.testing import CliRunner
 
 from benchlingtk import __version__, cli, skill
@@ -80,10 +80,10 @@ def test_skill_commands_report_a_missing_file(tmp_path, monkeypatch) -> None:
 
 
 async def test_mcp_serves_skill_md_as_a_resource(pool) -> None:
-    async with Client(build_mcp_server(pool)) as client:
+    async with Client(build_mcp_server(pool)._mcp_server) as client:
         listed = await client.list_resources()
         assert [str(item.uri) for item in listed.resources] == [SKILL_RESOURCE_URI]
-        assert listed.resources[0].mime_type == "text/markdown"
+        assert listed.resources[0].mimeType == "text/markdown"
         result = await client.read_resource(SKILL_RESOURCE_URI)
     assert result.contents[0].text.encode("utf-8") == SKILL_BYTES
 

@@ -20,7 +20,7 @@ from pathlib import Path
 
 import httpx
 import keyring
-from mcp import Client
+from mcp.shared.memory import create_connected_server_and_client_session as Client
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
@@ -164,12 +164,12 @@ def _demo() -> None:
     async def mcp_demo() -> None:
         pool = RuntimePool(runtimes={"demo": _runtime()})
         try:
-            async with Client(build_mcp_server(pool)) as client:
+            async with Client(build_mcp_server(pool)._mcp_server) as client:
                 result = await client.call_tool(
                     "changes_apply", {"env": "demo", "plan_id": second["data"]["id"]}
                 )
                 print('changes_apply(env="demo", plan_id=...) ->')
-                print(json.dumps(result.structured_content["error"], indent=2))
+                print(json.dumps(result.structuredContent["error"], indent=2))
         finally:
             await pool.close()
 

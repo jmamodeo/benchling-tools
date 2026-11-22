@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 import yaml
-from mcp import Client
+from mcp.shared.memory import create_connected_server_and_client_session as Client
 from typer.testing import CliRunner
 
 from benchlingtk import __version__, cli, issues
@@ -347,13 +347,13 @@ def mcp_arguments(draft: dict) -> dict:
 
 async def test_mcp_issue_draft_is_read_only_and_needs_no_env(pool) -> None:
     server = build_mcp_server(pool)
-    async with Client(server) as client:
+    async with Client(server._mcp_server) as client:
         tools = {tool.name: tool for tool in (await client.list_tools()).tools}
         tool = tools["issue_draft"]
-        assert tool.annotations.read_only_hint is True
-        assert "env" not in tool.input_schema.get("properties", {})
+        assert tool.annotations.readOnlyHint is True
+        assert "env" not in tool.inputSchema.get("properties", {})
         result = await client.call_tool("issue_draft", mcp_arguments(SPEC))
-        payload = result.structured_content
+        payload = result.structuredContent
         assert payload["ok"] is True
         assert payload["data"]["filed"] is False
         assert "never files" in payload["data"]["next_step"]
@@ -362,8 +362,8 @@ async def test_mcp_issue_draft_is_read_only_and_needs_no_env(pool) -> None:
             "issue_draft",
             mcp_arguments(spec(citations=[{"url": "https://example.com/x", "quote": QUOTE}])),
         )
-        assert bad.structured_content["ok"] is False
-        assert bad.structured_content["error"]["code"] == "validation_error"
+        assert bad.structuredContent["ok"] is False
+        assert bad.structuredContent["error"]["code"] == "validation_error"
 
 
 async def test_mcp_instructions_carry_the_issue_rule(pool) -> None:

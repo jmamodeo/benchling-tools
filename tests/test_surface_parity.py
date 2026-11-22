@@ -8,7 +8,7 @@ import json
 import pytest
 from conftest import runtime_for
 from fake_benchling import ENTRY_ID, TABLE_PART, TENANT
-from mcp import Client
+from mcp.shared.memory import create_connected_server_and_client_session as Client
 from typer.testing import CliRunner
 
 from benchlingtk import cli
@@ -38,10 +38,10 @@ def mcp_reply(pool):
     server = build_mcp_server(pool)
 
     async def run(tool: str, **arguments) -> dict:
-        async with Client(server) as client:
+        async with Client(server._mcp_server) as client:
             result = await client.call_tool(tool, {"env": "sandbox", **arguments})
-        assert result.is_error is False, result
-        return result.structured_content
+        assert result.isError is False, result
+        return result.structuredContent
 
     return run
 
@@ -177,9 +177,9 @@ async def test_protected_apply_refusal_has_the_same_code(cli_reply, pool, fake) 
     )
     plan_id = printed_plan["data"]["id"]
     printed = await cli_reply("changes", "apply", plan_id)
-    async with Client(build_mcp_server(pool, writable_envs={"sandbox"})) as client:
+    async with Client(build_mcp_server(pool, writable_envs={"sandbox"})._mcp_server) as client:
         result = await client.call_tool("changes_apply", {"env": "sandbox", "plan_id": plan_id})
-    replied = result.structured_content
+    replied = result.structuredContent
     assert printed["ok"] is replied["ok"] is False
     assert printed["error"]["code"] == replied["error"]["code"] == "validation_error"
     assert printed["error"]["details"] == replied["error"]["details"]

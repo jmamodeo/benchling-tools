@@ -11,7 +11,7 @@ from urllib.parse import parse_qs
 import httpx
 import pytest
 from conftest import configure_env
-from mcp import Client
+from mcp.shared.memory import create_connected_server_and_client_session as Client
 from typer.testing import CliRunner
 
 from benchlingtk.auth import AuthManager
@@ -284,11 +284,11 @@ async def test_mcp_uses_saved_app_identity(monkeypatch):
     )
     pool = RuntimePool(runtimes={"dev": runtime})
     try:
-        async with Client(build_mcp_server(pool)) as client:
+        async with Client(build_mcp_server(pool)._mcp_server) as client:
             result = await client.call_tool("doctor", {"env": "dev"})
-            rendered = json.dumps(result.structured_content)
-            assert result.structured_content["ok"] is True
-            assert result.structured_content["data"]["auth_method"] == "client_credentials"
+            rendered = json.dumps(result.structuredContent)
+            assert result.structuredContent["ok"] is True
+            assert result.structuredContent["data"]["auth_method"] == "client_credentials"
             assert SECRET not in rendered
             assert "memory-only-access-token" not in rendered
     finally:
@@ -321,9 +321,9 @@ async def test_mcp_routes_each_call_to_its_env():
         }
     )
     try:
-        async with Client(build_mcp_server(pool, writable_envs={"dev"})) as client:
+        async with Client(build_mcp_server(pool, writable_envs={"dev"})._mcp_server) as client:
             listed = await client.call_tool("auth_status", {})
-            environments = listed.structured_content["data"]["environments"]
+            environments = listed.structuredContent["data"]["environments"]
             assert {
                 name: {key: row[key] for key in ("tenant_url", "protected", "writes_allowed")}
                 for name, row in environments.items()
@@ -346,16 +346,16 @@ async def test_mcp_routes_each_call_to_its_env():
             ):
                 hosts.clear()
                 result = await client.call_tool("doctor", {"env": env})
-                assert result.structured_content["meta"]["env"] == env
+                assert result.structuredContent["meta"]["env"] == env
                 assert hosts and set(hosts) == {host}
             blocked = await client.call_tool("changes_apply", {"env": "test", "plan_id": "a" * 32})
-            assert blocked.structured_content["error"]["code"] == "unsupported_capability"
+            assert blocked.structuredContent["error"]["code"] == "unsupported_capability"
             unknown = await client.call_tool("doctor", {"env": "prod"})
-            assert unknown.structured_content["error"]["details"]["available_envs"] == [
+            assert unknown.structuredContent["error"]["details"]["available_envs"] == [
                 "dev",
                 "test",
             ]
-            rendered = json.dumps(listed.structured_content)
+            rendered = json.dumps(listed.structuredContent)
             assert SECRET not in rendered and "other-secret-value" not in rendered
     finally:
         await pool.close()

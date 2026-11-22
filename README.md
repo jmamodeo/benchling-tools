@@ -5,7 +5,6 @@ A CLI for coding agents and humans, directly mirrored as an MCP server for chat 
 [![CI](https://github.com/jmamodeo/benchlingtk/actions/workflows/ci.yml/badge.svg)](https://github.com/jmamodeo/benchlingtk/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
-[![Coverage](https://img.shields.io/badge/coverage-96%25-brightgreen)](https://github.com/jmamodeo/benchlingtk/actions/workflows/ci.yml)
 
 > **Unofficial; not affiliated with or endorsed by Benchling, Inc.** Benchling is a trademark of Benchling, Inc.
 

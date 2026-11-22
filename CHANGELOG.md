@@ -8,6 +8,7 @@ All notable changes to this project are documented here. The format is based on
 
 ### Added
 
+- CI exercises real macOS and Windows keyring set/get/delete operations.
 - `results list --id` (MCP `results_list` `result_ids`) lists results by id, up to 100, as V3 `id.anyOf`. Each id may be a V3 result id (`result_…`) or a V2 assay result UUID; a UUID that cannot be mapped is listed in `not_found` with `id_namespace` and `lookup`.
 
 - CLI paging options that only the MCP tools had: `entry get --full` takes `--part-offset`, `--part-limit`, `--result-offset`, `--result-limit`, `--table-row-offset` and `--table-row-limit`; `section get` takes the part and table-row options; `part get` and `table get` take `--row-offset` and `--row-limit`; `schema get` takes `--field-offset` and `--field-limit`; and `results tables` takes `--offset` and `--limit`. Paged output has a `pagination` object.
@@ -22,6 +23,7 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
+- **Breaking:** the MCP dependency is limited to versions before 2.0.
 - **Breaking:** `results get`, `results list`, `results pending --id` and `results verify` (and their MCP tools) accept either a V2 assay result UUID or a V3 result id (`result_…`), and return both. `results get` maps a UUID to its V3 record with V2 `GET /assay-results:bulk-get` and its `v3Id`; `results pending --id` reads a `result_…` id with V3 `GET /result/{id}` and finds its V2 record by schema, creation time and `v3Id`, so a V3 id is never sent to `assayResultIds`. `results get` and each `results list` item add `v2_id` and `v3_id` (`v2_id` is null when Benchling does not return it); each `results pending` item adds `v2_id` beside `id` and `v3_id`; `results verify` rows and `needs_accept` add `v2_id` and `v3_id` beside `result_id`. A plan whose task returned only V3 ids is read back too.
 - **Breaking:** an id that cannot be read is reported with its namespace. `results get` returns a `not_found` envelope whose message and `details` give `id_namespace` (the namespace passed: `v3_result`, `v2_assay_result`, or `unknown`), `expected_id_namespace`, `lookup` (the API path used) and `accepted_id_namespaces`. A V2 bulk-get 400 is a `validation_error` with the same fields, and `results pending` adds `not_found_details` with them for each id in `not_found`.
 - **Breaking:** `--env` (`-e`) is an option of each command that needs an environment, and the root `--env` is removed. Write `benchlingtk entry get REF --env NAME` (the option may come anywhere after the command name), not `benchlingtk --env NAME entry get REF`; the old form is a `usage_error` whose `details.hint` says where `--env` goes. `changes apply` on a protected environment still needs `--env` typed on the command line and `--confirm-env` repeating it. MCP tools keep their required `env` argument.
@@ -38,6 +40,7 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- CI explicitly enforces 96% coverage, uses locked dependencies and pinned actions and tooling, and checks the skill name against package metadata rather than the checkout directory.
 - SKILL.md step 6 no longer says to accept an updated result with the plug icon. After a results update, the agent checks `results get` `table_check` or `results rows` `stale_cells`. If a cell is stale, it asks the person to use **Re-sync table** in the Benchling UI. The plug stays documented only for accepting pending results after a create.
 
 ## [0.6.0] - 2026-11-21
