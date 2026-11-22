@@ -19,15 +19,21 @@ from typing import Any
 from . import listing
 from .errors import NotFoundError, UpstreamError, ValidationError
 from .redact import redact_text
-from .services import BenchlingService, field_definition_type
+from .services import (
+    V2_STRUCTURED_TABLE_NAMESPACE,
+    V2_STRUCTURED_TABLE_PREFIX,
+    V3_DOCUMENT_PART_NAMESPACE,
+    BenchlingService,
+    field_definition_type,
+)
 
 _KINDS = {"table", "results-table", "assay-results"}
 _FORMATS = {"json", "csv"}
 _IDENTITY = ("id", "entryId", "schemaId", "projectId", "createdAt", "modifiedAt")
 _COLUMN_KEYS = ("name", "systemName", "columnId")
-_V2_STRUCTURED_TABLE_PREFIX = "strtbl_"
-_V2_STRUCTURED_TABLE_NAMESPACE = "v2_structured_table"
-_V3_DOCUMENT_PART_NAMESPACE = "v3_document_part"
+_V2_STRUCTURED_TABLE_PREFIX = V2_STRUCTURED_TABLE_PREFIX
+_V2_STRUCTURED_TABLE_NAMESPACE = V2_STRUCTURED_TABLE_NAMESPACE
+_V3_DOCUMENT_PART_NAMESPACE = V3_DOCUMENT_PART_NAMESPACE
 _NESTED_RESULT_KEYS = {"fields", "schemaFields"}
 _REF_TYPENAMES = {"SchemaFieldDefinitionRef", "FieldDefinition"}
 

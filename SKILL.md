@@ -150,7 +150,7 @@ benchlingtk --env NAME results pending --plan PLAN_ID
 benchlingtk --env NAME results verify PLAN_ID
 ```
 
-`table get` reads an unstructured table. Its argument is a `docpart_…` id from `entry inspect`. `results tables` returns `table_id` values that are `strtbl_…` ids. `results rows` reads one page of a results-table part (`docpart_…`) from that part's rows URL. `schema get` includes each dropdown field's options. `blob get` reads the metadata of the blob an attachment field links (name, type, MIME type, upload status); it does not download the file.
+`table get` reads an unstructured table. Its argument is a `docpart_…` id from `entry inspect`. `results tables` returns `table_id` values that are `strtbl_…` ids. `results rows` reads one page of a results-table part (`docpart_…`) from that part's rows URL; a `strtbl_…` id works only with `--entry ENTRY`, which maps it to that entry's part. `results list` returns V3 result ids (`result_…`), which `results get` takes; `results pending --id` takes V2 assay result UUIDs. `schema get` includes each dropdown field's options. `blob get` reads the metadata of the blob an attachment field links (name, type, MIME type, upload status); it takes that blob UUID, not an `attachment_…` id, and it does not download the file.
 
 ### Export
 

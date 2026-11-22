@@ -48,6 +48,9 @@ def _doctor_hint(exc: Exception, env: str) -> str:
     return f"Run benchlingtk --env {env} doctor again after fixing this check."
 
 
+V2_STRUCTURED_TABLE_PREFIX = "strtbl_"
+V2_STRUCTURED_TABLE_NAMESPACE = "v2_structured_table"
+V3_DOCUMENT_PART_NAMESPACE = "v3_document_part"
 ENTRY_ID = re.compile(r"^etr_[A-Za-z0-9]+$")
 ENTRY_ID_IN_URL = re.compile(r"/(etr_[A-Za-z0-9]+)(?:[-/]|$)")
 KNOWN_PART_TYPES = {
@@ -875,11 +878,16 @@ class BenchlingService:
         self,
         part_id: object,
         *,
+        entry: str | None = None,
         limit: object = listing.LIST_LIMIT,
         cursor: object = None,
     ) -> dict[str, Any]:
         """Return one page of rows from a V3 results table.
 
+        ``part_id`` is a ``v3_document_part`` id (``docpart_…``). A
+        ``v2_structured_table`` id (``strtbl_…``) from ``results tables`` is mapped
+        to its document part on ``entry`` with ``document_part_for_listed_table``;
+        without ``entry``, or when no single part matches, it is a validation error.
         The part is read first, and its published rows URL must be
         ``/document-part-results-table/{id}/rows/items``. That endpoint is paged
         with ``pageSize`` (1 to 100, default 50) and ``nextToken``. A short
@@ -890,6 +898,16 @@ class BenchlingService:
         table_id = _require_part_id(part_id)
         if cursor is not None and (not isinstance(cursor, str) or not cursor):
             raise ValidationError("cursor must be a non-empty string")
+        listed: dict[str, Any] = {}
+        if table_id.startswith(V2_STRUCTURED_TABLE_PREFIX):
+            entry_id, part = await self._results_part_for_listed_table(table_id, entry)
+            listed = {
+                "table_id": table_id,
+                "entry_id": entry_id,
+                "id_namespace": V3_DOCUMENT_PART_NAMESPACE,
+                "listed_id_namespace": V2_STRUCTURED_TABLE_NAMESPACE,
+            }
+            table_id = part
         detail = await self.api.request("GET", f"/document-part-results-table/{table_id}")
         version = entry_version(detail)
         path = rows_items_path(
@@ -920,6 +938,7 @@ class BenchlingService:
         schema_id = schema.get("id") if isinstance(schema, dict) else None
         return {
             "id": detail.get("id", table_id),
+            **listed,
             "version_id": version,
             "name": detail.get("name"),
             "column_definitions": columns,
@@ -932,6 +951,46 @@ class BenchlingService:
             ],
             "next_token": token,
         }
+
+    async def _results_part_for_listed_table(
+        self, table_id: str, entry: str | None
+    ) -> tuple[str, str]:
+        """Map a ``strtbl_`` id on ``entry`` to its results-table ``docpart_`` id.
+
+        Returns the resolved entry id and the document-part id. Raises a
+        validation error naming both namespaces when ``entry`` is missing, the
+        table is not on the entry, or no single document part matches.
+        """
+        details: dict[str, Any] = {
+            "part_id": table_id,
+            "id_namespace": V2_STRUCTURED_TABLE_NAMESPACE,
+            "expected_id_namespace": V3_DOCUMENT_PART_NAMESPACE,
+        }
+        if entry is None or not entry.strip():
+            raise ValidationError(
+                f"{table_id} is a {V2_STRUCTURED_TABLE_NAMESPACE} id from `results tables`. "
+                "Pass --entry for that entry to map it, or pass a "
+                f"{V3_DOCUMENT_PART_NAMESPACE} id (docpart_…) from `entry inspect`.",
+                details=details,
+            )
+        entry_id = str((await self.resolve_entry(entry))["entry_id"])
+        details["entry_id"] = entry_id
+        try:
+            note = await self.get_result_table(entry_id, table_id)
+        except NotFoundError as exc:
+            raise ValidationError(
+                f"{table_id} is a {V2_STRUCTURED_TABLE_NAMESPACE} id and was not found on "
+                "this entry. `results tables` lists those ids.",
+                details=details,
+            ) from exc
+        part = await self.document_part_for_listed_table(entry_id, note, unstructured=False)
+        if part is None:
+            raise ValidationError(
+                f"{table_id} could not be mapped to a single {V3_DOCUMENT_PART_NAMESPACE} id "
+                "on this entry. Pass the results table's docpart_ id from `entry inspect`.",
+                details=details,
+            )
+        return entry_id, part
 
     @staticmethod
     def _normalize_results_table_row(
