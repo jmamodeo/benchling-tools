@@ -79,7 +79,7 @@ A plan is stale when the entry, fields, or results it was previewed against have
 
 ### What this does not do
 
-- The checksum detects accidental corruption and a hand edit that forgets to recompute the hash. It is not a MAC and not a signature. A process that can write the state directory can change the plan and replace the checksum. The README safety section states the same limit.
+- The checksum detects accidental corruption and a hand edit that forgets to recompute the hash. It is not a MAC and not a signature. A process that can write the state directory can change the plan and replace the checksum. The [reference safety section](reference.md#safety-model) states the same limit.
 - The journal has no checksum. A process that can write `journals/{id}.json` can set the status back to `pending` and apply again. Single-use holds against the CLI and MCP tools, not against an editor on the file.
 - The lock and the journal are local to one state directory. Copying a `pending` plan to another machine, or to another `BENCHLINGTK_HOME`, starts a second pending journal. Document and table applies are likely to conflict on the entry version. Field updates, result uploads, entry creates, and result PATCHes can both succeed: they do not send an idempotency key. Result-upload correlation UUIDs are explicitly not idempotency keys.
 - Field updates compare values and then PATCH. The body has no version. A write that arrives in that gap can be overwritten.

@@ -1,6 +1,6 @@
 # Architecture
 
-This document explains how a change moves from a preview, through an explicit apply, into a local journal. The module map in the README is the directory view. This is the sequence.
+This document explains how a change moves from a preview, through an explicit apply, into a local journal. The module map at the end of this document is the directory view. The rest is the sequence.
 
 The CLI and the MCP server call the same `ChangePlanner`. Preview reads Benchling and writes a plan file on this machine. Apply is a separate call. It re-checks the plan, takes a lock, and only then sends a write. The journal is the local record of that attempt.
 
@@ -156,4 +156,47 @@ Two processes on one machine serialize on the per-plan lock. Two machines do not
 
 ## What is intentionally shared
 
-The CLI and MCP server construct a `Runtime` per environment: one `BenchlingAPI`, one `AuthManager`, one `BenchlingService`, one `ChangePlanner`, one `PlanRepository`. They return the same envelope (`schema_version` `1.0`) and the same exit-code classes. Tests run that stack against `tests/fake_benchling.py` through `httpx.MockTransport`. The fixture demo in the README is that same path.
+The CLI and MCP server construct a `Runtime` per environment: one `BenchlingAPI`, one `AuthManager`, one `BenchlingService`, one `ChangePlanner`, one `PlanRepository`. They return the same envelope (`schema_version` `1.0`) and the same exit-code classes. Tests run that stack against `tests/fake_benchling.py` through `httpx.MockTransport`. The [fixture demo](docs/demo.md) is that same path.
+
+## Module map
+
+```mermaid
+flowchart TD
+    Agent["AI agent (MCP client)"] -->|stdio| MCP["MCP server"]
+    Operator["Operator or script"] --> CLI["CLI (Typer)"]
+    MCP --> SVC["BenchlingService: typed reads"]
+    CLI --> SVC
+    MCP --> PLANNER["ChangePlanner: plan, apply, status"]
+    CLI --> PLANNER
+    PLANNER --> SVC
+    PLANNER --> STORE[("Local state: plans, journals, apply locks")]
+    PLANNER --> API["BenchlingAPI: httpx, retries, pagination"]
+    SVC --> API
+    API --> AUTH["OAuth client credentials, in-memory tokens"]
+    AUTH --> KEY[("OS keychain: client secret")]
+    API --> BENCHLING[("Benchling REST V2 and V3")]
+    AUTH --> BENCHLING
+```
+
+| Module (`src/benchlingtk`) | Role |
+|---|---|
+| `cli.py` | Typer command-line interface; every command is declared once here |
+| `commands.py` | Command declarations shared by the CLI and the MCP server |
+| `mcp_server.py` | MCP tools generated from the CLI commands, read-only default, write allow-list |
+| `change_spec.py` | Typed `changes_plan` specs and their validation |
+| `services.py` | Typed read services and entry snapshots |
+| `export.py` | Local JSON or CSV export; the response is a summary, not the rows |
+| `listing.py` | Paged entry, schema, and dropdown discovery |
+| `plans/planner.py` | `ChangePlanner`: plan, apply (under a per-plan file lock), status, journal |
+| `plans/document.py`, `plans/table.py`, `plans/fields.py`, `plans/results.py` | One planning/apply mixin per change family |
+| `plans/result_update.py` | CSV updates of existing results: re-check `modifiedAt`, then `PATCH /result/{id}` |
+| `plans/blobs.py` | Local files for result attachment fields: hash at plan, re-check and upload as V2 blobs at apply |
+| `plans/readback.py` | Read-back of pushed results: pending/accepted state and the field-by-field diff against a plan |
+| `plans/repository.py` | Plan and journal persistence, checksums, JSON diff |
+| `api.py` | HTTP client for Benchling REST V2/V3: retries for reads, never for writes |
+| `auth.py` | OAuth client-credentials tokens, kept in memory |
+| `credentials.py`, `keychain.py` | Login, logout, status, and OS keychain storage |
+| `environment.py`, `config.py`, `runtime.py` | `environments.json`, state directories, per-environment runtimes |
+| `redact.py` | Removes client secrets and access tokens from errors and journals |
+| `models.py`, `errors.py` | Envelope, plan and journal models, error types and exit codes |
+| `tls.py` | OS trust-store TLS |
