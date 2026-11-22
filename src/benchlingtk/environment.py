@@ -84,7 +84,7 @@ def check_apply_allowed(
             f"confirm_env set to {name}"
             if mcp
             else f"Environment {name} is protected; nothing was applied. To write, rerun "
-            f"`benchlingtk --env {name} changes apply PLAN_ID --confirm-env {name}`"
+            f"`benchlingtk changes apply PLAN_ID --env {name} --confirm-env {name}`"
         )
         raise ValidationError(message, details=details)
 

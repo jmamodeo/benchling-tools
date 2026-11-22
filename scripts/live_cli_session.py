@@ -5,7 +5,7 @@ script or an agent. State for the session is isolated below:
 
     BENCHLINGTK_HOME=work/live-test/state benchlingtk auth login --env dev
 
-Then send one JSON object per line: {"args": ["--env", "dev", "entry", "inspect", "etr_..."]}.
+Then send one JSON object per line: {"args": ["entry", "inspect", "etr_...", "--env", "dev"]}.
 Optional `artifact` saves the generated CLI output under ignored work/live-test.
 Optional `select` limits displayed data keys, leaving the artifact unchanged.
 The session invokes the real CLI for every operation, including plan/apply.

@@ -1275,6 +1275,9 @@ async def test_tool_text_comes_from_cli_help(client) -> None:
         assert tool.description.split("\n")[0] == _tool_text(summary, command), path
         properties = tool.input_schema.get("properties", {})
         for param in command.params:
+            if param.name == "env" and declared.needs_env:
+                assert "env" in tool.input_schema["required"], path
+                continue
             if param.name in declared.cli_only or param.name in declared.mcp_params:
                 assert param.name not in properties or param.name in declared.mcp_params
                 continue

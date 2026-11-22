@@ -193,7 +193,7 @@ def write_class_note(declared: Command) -> str:
 
 
 def _flag_names(command: Any) -> dict[str, str]:
-    """Map each long option of a command, and the global --env, to its argument name."""
+    """Map each long option of a command, and --env, to its argument name."""
     flags = {"--env": "env"}
     for param in command.params:
         if param.param_type_name == "option" and param.name:

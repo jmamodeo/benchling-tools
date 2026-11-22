@@ -17,6 +17,7 @@ class ExitCode(IntEnum):
     UNSUPPORTED = 6
     UPSTREAM = 7
     PARTIAL_OR_UNKNOWN = 8
+    USAGE = 9
 
 
 class BenchlingAgentError(Exception):
@@ -46,6 +47,13 @@ class ValidationError(BenchlingAgentError):
 
     code = "validation_error"
     exit_code = ExitCode.VALIDATION
+
+
+class UsageError(BenchlingAgentError):
+    """The command line does not parse: an unknown command or option, or a missing argument."""
+
+    code = "usage_error"
+    exit_code = ExitCode.USAGE
 
 
 class AuthenticationError(BenchlingAgentError):

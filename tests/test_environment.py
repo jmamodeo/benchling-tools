@@ -244,7 +244,7 @@ def test_token_error_cannot_echo_secret():
 
 def test_cli_status_lists_the_environment_without_a_secret_or_network(monkeypatch, tmp_path):
     configure_env("dev", "https://your-tenant.benchling.com/", "dev-client", SECRET)
-    result = CliRunner().invoke(app, ["--env", "dev", "auth", "status"])
+    result = CliRunner().invoke(app, ["auth", "status", "--env", "dev"])
     assert result.exit_code == 0, result.stdout
     payload = json.loads(result.stdout)
     data = payload["data"]["environments"]["dev"]

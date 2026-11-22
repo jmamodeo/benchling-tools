@@ -23,7 +23,7 @@ def cli_reply(benchling_env, fake, monkeypatch):
     monkeypatch.setattr(cli, "Runtime", lambda environment: runtime_for(fake, environment))
 
     def invoke(args: tuple[str, ...]) -> dict:
-        result = CliRunner().invoke(cli.app, ["--env", "sandbox", *args])
+        result = CliRunner().invoke(cli.app, [*args, "--env", "sandbox"])
         return json.loads(result.stdout)
 
     async def run(*args: str) -> dict:

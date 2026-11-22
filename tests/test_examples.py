@@ -27,7 +27,7 @@ def invoke(benchling_env, fake, monkeypatch):
     monkeypatch.setattr(cli, "Runtime", lambda environment: runtime_for(fake, environment))
 
     def run(*args: str):
-        result = CliRunner().invoke(cli.app, ["--env", "sandbox", *args])
+        result = CliRunner().invoke(cli.app, [*args, "--env", "sandbox"])
         return result.exit_code, json.loads(result.stdout)
 
     return run
