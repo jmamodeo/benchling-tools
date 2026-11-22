@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote, urlparse
 
 from . import listing
 from .api import BenchlingAPI
 from .environment import protection_summary
-from .errors import ConflictError, NotFoundError, UnsupportedError, UpstreamError, ValidationError
+from .errors import (
+    AccessError,
+    ConflictError,
+    NotFoundError,
+    UnsupportedError,
+    UpstreamError,
+    ValidationError,
+)
 from .models import CompletenessIssue, EntrySnapshot
 from .redact import redact_text
 
@@ -51,6 +58,19 @@ def _doctor_hint(exc: Exception, env: str) -> str:
 V2_STRUCTURED_TABLE_PREFIX = "strtbl_"
 V2_STRUCTURED_TABLE_NAMESPACE = "v2_structured_table"
 V3_DOCUMENT_PART_NAMESPACE = "v3_document_part"
+V2_ASSAY_RESULT_NAMESPACE = "v2_assay_result"
+V3_RESULT_NAMESPACE = "v3_result"
+V3_RESULT_PREFIX = "result_"
+UNKNOWN_ID_NAMESPACE = "unknown"
+RESULT_ID_NAMESPACES = (V3_RESULT_NAMESPACE, V2_ASSAY_RESULT_NAMESPACE)
+V3_RESULT_LOOKUP = "V3 GET /result/{result_id}"
+V2_RESULT_LOOKUP = "V2 GET /assay-results:bulk-get"
+V3_TO_V2_RESULT_LOOKUP = (
+    "V3 GET /result/{result_id}, then V2 GET /assay-results by schemaId and createdAt"
+)
+UUID_ID = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
 ENTRY_ID = re.compile(r"^etr_[A-Za-z0-9]+$")
 ENTRY_ID_IN_URL = re.compile(r"/(etr_[A-Za-z0-9]+)(?:[-/]|$)")
 KNOWN_PART_TYPES = {
@@ -88,6 +108,8 @@ KNOWN_PART_TYPES = {
 TABLE_ROW_PAGE_SIZE = 100
 ENTRY_BULK_GET_LIMIT = 100
 ASSAY_RESULT_BULK_GET_LIMIT = 200
+RESULT_ID_FILTER_LIMIT = 100
+V2_ID_LOOKUP_MAX_PAGES = 5
 TEMPLATE_TEXT_PREVIEW_LIMIT = 160
 
 _BENCHLING_VALUE_TYPES = {
@@ -509,6 +531,80 @@ def build_sections(parts: list[dict[str, Any]]) -> list[dict[str, Any]]:
             current["child_part_ids"].append(part.get("id"))
             current["end_index"] = index
     return sections
+
+
+def result_id_namespace(result_id: str) -> str:
+    """``v3_result`` for a ``result_…`` id, ``v2_assay_result`` for a UUID, else ``unknown``."""
+    if result_id.startswith(V3_RESULT_PREFIX):
+        return V3_RESULT_NAMESPACE
+    if UUID_ID.match(result_id):
+        return V2_ASSAY_RESULT_NAMESPACE
+    return UNKNOWN_ID_NAMESPACE
+
+
+def assay_result_lookup(result_id: str) -> dict[str, Any]:
+    """How ``get_assay_results`` reads one id: its namespace and the lookup path used."""
+    namespace = result_id_namespace(result_id)
+    v3 = namespace == V3_RESULT_NAMESPACE
+    return {
+        "result_id": result_id,
+        "id_namespace": namespace,
+        "expected_id_namespace": V3_RESULT_NAMESPACE if v3 else V2_ASSAY_RESULT_NAMESPACE,
+        "lookup": V3_TO_V2_RESULT_LOOKUP if v3 else V2_RESULT_LOOKUP,
+    }
+
+
+def _result_not_found(
+    result_id: str, *, expected: str, lookup: str, reason: str = "was not found"
+) -> NotFoundError:
+    namespace = result_id_namespace(result_id)
+    passed = {
+        V3_RESULT_NAMESPACE: f"a {V3_RESULT_NAMESPACE} id (result_…)",
+        V2_ASSAY_RESULT_NAMESPACE: f"a {V2_ASSAY_RESULT_NAMESPACE} id (a UUID)",
+    }.get(namespace, "neither a V3 result id (result_…) nor a V2 assay result UUID")
+    return NotFoundError(
+        f"Result {result_id} {reason}. The id passed is {passed}; it was read as a "
+        f"{expected} id with {lookup}. Both V3 result ids and V2 assay result UUIDs are accepted.",
+        details={
+            "result_id": result_id,
+            "id_namespace": namespace,
+            "expected_id_namespace": expected,
+            "lookup": lookup,
+            "accepted_id_namespaces": list(RESULT_ID_NAMESPACES),
+        },
+    )
+
+
+def _result_schema_id(record: dict[str, Any]) -> str | None:
+    schema = record.get("schema")
+    if isinstance(schema, dict) and isinstance(schema.get("id"), str):
+        return str(schema["id"])
+    schema_id = record.get("schemaId")
+    return schema_id if isinstance(schema_id, str) and schema_id else None
+
+
+def _result_created_at(record: dict[str, Any]) -> datetime | None:
+    value = record.get("createdAt")
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _rfc3339(value: datetime) -> str:
+    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def with_result_ids(record: dict[str, Any], v2_id: Any, v3_id: Any) -> dict[str, Any]:
+    """The record with ``v2_id`` (V2 assay result UUID) and ``v3_id`` (``result_…``) added."""
+    return {
+        **record,
+        "v2_id": v2_id if isinstance(v2_id, str) and v2_id else None,
+        "v3_id": v3_id if isinstance(v3_id, str) and v3_id else None,
+    }
 
 
 class BenchlingService:
@@ -1520,10 +1616,12 @@ class BenchlingService:
         schema_id: str | None = None,
         page_size: int = 100,
         cursor: str | None = None,
+        v3_ids: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Return one page of results, optionally filtered by entry and schema.
+        """Return one page of results, optionally filtered by entry, schema, and V3 ids.
 
         page_size must be 1-100 (ValidationError otherwise); next_token is None on the last page.
+        ``v3_ids`` (``result_…``) is sent as ``id.anyOf``.
         """
         if page_size < 1 or page_size > 100:
             raise ValidationError("page_size must be between 1 and 100")
@@ -1534,6 +1632,8 @@ class BenchlingService:
             params["entry.eq"] = (await self.resolve_entry(entry))["entry_id"]
         if schema_id:
             params["schema.eq"] = schema_id
+        if v3_ids:
+            params["id.anyOf"] = ",".join(v3_ids)
         payload = await self.api.request("GET", "/result/items", params=params)
         return {
             "items": payload.get("items", []),
@@ -1562,32 +1662,231 @@ class BenchlingService:
         return {"items": items, "entry_id": resolved, "schema_id": schema_id}
 
     async def get_assay_results(self, result_ids: object) -> dict[str, Any]:
-        """Fetch V2 assay results by ID through bulk-get, 200 IDs per request.
+        """Fetch V2 assay results by V2 UUID or V3 ``result_…`` id.
 
-        IDs that Benchling does not return are listed under ``not_found``.
-        Pending results are included: they are records without an entry.
+        V2 ids go through bulk-get, 200 per request. A V3 id is never sent there: it is
+        read with V3 GET /result/{id} and matched to its V2 record by ``v3Id``. IDs that
+        cannot be read are listed under ``not_found``, in the order given. Pending results
+        are included: they are records without an entry.
         """
         requested = self._bulk_lookup_ids(result_ids, "result_ids") or []
         unique = list(dict.fromkeys(requested))
+        v3_ids = [item for item in unique if result_id_namespace(item) == V3_RESULT_NAMESPACE]
+        found = await self._bulk_get_v2_results([item for item in unique if item not in v3_ids])
+        if v3_ids:
+            v3_records: list[dict[str, Any]] = []
+            for v3_id in v3_ids:
+                try:
+                    v3_records.append(
+                        await self.api.request("GET", f"/result/{quote(v3_id, safe='')}")
+                    )
+                except NotFoundError:
+                    continue
+            found.update(await self._v2_results_for_v3(v3_records))
+        items: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for result_id in unique:
+            record = found.get(result_id)
+            if record is not None and record["id"] not in seen:
+                seen.add(record["id"])
+                items.append(record)
+        return {
+            "items": items,
+            "not_found": [result_id for result_id in unique if result_id not in found],
+        }
+
+    async def _bulk_get_v2_results(self, result_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """V2 bulk-get, 200 ids per request, keyed by V2 id. A 400 names the id namespace."""
         found: dict[str, dict[str, Any]] = {}
-        for offset in range(0, len(unique), ASSAY_RESULT_BULK_GET_LIMIT):
-            batch = unique[offset : offset + ASSAY_RESULT_BULK_GET_LIMIT]
-            payload = await self.api.request(
-                "GET",
-                "/assay-results:bulk-get",
-                version=2,
-                params={"assayResultIds": ",".join(batch)},
-            )
+        for offset in range(0, len(result_ids), ASSAY_RESULT_BULK_GET_LIMIT):
+            batch = result_ids[offset : offset + ASSAY_RESULT_BULK_GET_LIMIT]
+            try:
+                payload = await self.api.request(
+                    "GET",
+                    "/assay-results:bulk-get",
+                    version=2,
+                    params={"assayResultIds": ",".join(batch)},
+                )
+            except ValidationError as exc:
+                namespaces = sorted({result_id_namespace(item) for item in batch})
+                raise ValidationError(
+                    "Benchling rejected one or more ids as V2 assay result ids. Pass V2 assay "
+                    "result UUIDs or V3 result ids (result_…); each is read in its own namespace.",
+                    details={
+                        **exc.details,
+                        "id_namespace": namespaces[0] if len(namespaces) == 1 else namespaces,
+                        "expected_id_namespace": V2_ASSAY_RESULT_NAMESPACE,
+                        "lookup": V2_RESULT_LOOKUP,
+                        "accepted_id_namespaces": list(RESULT_ID_NAMESPACES),
+                        "result_ids": batch[:20],
+                    },
+                ) from exc
             records = payload.get("assayResults")
             if not isinstance(records, list) or any(not isinstance(item, dict) for item in records):
                 raise UpstreamError("Benchling returned an unexpected bulk result response")
             for item in records:
                 if isinstance(item.get("id"), str):
                     found[item["id"]] = item
-        return {
-            "items": [found[result_id] for result_id in unique if result_id in found],
-            "not_found": [result_id for result_id in unique if result_id not in found],
-        }
+        return found
+
+    async def _v2_results_for_v3(self, records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        """Map V3 result ids to their V2 assay results, archived ones included.
+
+        V3 results do not carry the V2 UUID, and V2 has no lookup by V3 id. Records of a
+        schema are grouped into runs created within two seconds of each other. For each
+        run, V2 GET /assay-results is read in creation order from a second before to a
+        second after it and matched on ``v3Id``, at most V2_ID_LOOKUP_MAX_PAGES pages plus
+        one per hundred ids wanted.
+        A record without a schema or createdAt, or not matched, is left out.
+        """
+        by_schema: dict[str, list[tuple[datetime, str]]] = {}
+        for record in records:
+            v3_id, schema_id = record.get("id"), _result_schema_id(record)
+            created = _result_created_at(record)
+            if isinstance(v3_id, str) and schema_id is not None and created is not None:
+                by_schema.setdefault(schema_id, []).append((created, v3_id))
+        windows: list[tuple[str, datetime, datetime, set[str]]] = []
+        for schema_id, stamped in by_schema.items():
+            for created, v3_id in sorted(stamped):
+                last = windows[-1] if windows else None
+                if last and last[0] == schema_id and created - last[2] <= timedelta(seconds=2):
+                    windows[-1] = (schema_id, last[1], created, last[3] | {v3_id})
+                else:
+                    windows.append((schema_id, created, created, {v3_id}))
+        found: dict[str, dict[str, Any]] = {}
+        for schema_id, low, high, wanted in windows:
+            params: dict[str, Any] = {
+                "schemaId": schema_id,
+                "createdAt.gte": _rfc3339(low - timedelta(seconds=1)),
+                "createdAt.lte": _rfc3339(high + timedelta(seconds=1)),
+                "archiveReason": "ANY_ARCHIVED_OR_NOT_ARCHIVED",
+                "sort": "createdAt:asc",
+                "pageSize": 100,
+            }
+            for _page in range(V2_ID_LOOKUP_MAX_PAGES + len(wanted) // 100):
+                if wanted <= found.keys():
+                    break
+                payload = await self.api.request("GET", "/assay-results", version=2, params=params)
+                items = payload.get("assayResults")
+                if not isinstance(items, list):
+                    raise UpstreamError("Benchling returned an unexpected result list response")
+                for item in items:
+                    if isinstance(item, dict) and isinstance(item.get("id"), str):
+                        if item.get("v3Id") in wanted:
+                            found[str(item["v3Id"])] = item
+                token = payload.get("nextToken")
+                if not token:
+                    break
+                params["nextToken"] = token
+        return found
+
+    async def _v2_ids_for_v3(self, records: list[dict[str, Any]]) -> dict[str, str]:
+        """V2 UUID per V3 result id where it can be read; a refused V2 read gives none."""
+        try:
+            matched = await self._v2_results_for_v3(records)
+        except (AccessError, NotFoundError, ValidationError):
+            return {}
+        return {v3_id: str(record["id"]) for v3_id, record in matched.items()}
+
+    async def get_result_by_any_id(self, result_id: str) -> dict[str, Any]:
+        """Read one result by V3 ``result_…`` id or V2 assay result UUID.
+
+        Returns the V3 record with ``v2_id`` and ``v3_id`` added; ``v2_id`` is None when
+        Benchling does not return it. A V2 UUID is read with V2 bulk-get first to find its
+        ``v3Id``. An id that cannot be read is a not_found naming the namespace passed and
+        the lookup used.
+        """
+        if not isinstance(result_id, str) or not result_id.strip():
+            raise ValidationError("Result ID must be a non-empty string")
+        result_id = result_id.strip()
+        if result_id_namespace(result_id) == V2_ASSAY_RESULT_NAMESPACE:
+            found = await self._bulk_get_v2_results([result_id])
+            if result_id not in found:
+                raise _result_not_found(
+                    result_id, expected=V2_ASSAY_RESULT_NAMESPACE, lookup=V2_RESULT_LOOKUP
+                )
+            v3_id = found[result_id].get("v3Id")
+            if not isinstance(v3_id, str) or not v3_id:
+                raise _result_not_found(
+                    result_id,
+                    expected=V2_ASSAY_RESULT_NAMESPACE,
+                    lookup=V2_RESULT_LOOKUP,
+                    reason="has no V3 result id in Benchling",
+                )
+            lookup = f"{V2_RESULT_LOOKUP}, then {V3_RESULT_LOOKUP}"
+            record = await self._get_v3_result(v3_id, requested=result_id, lookup=lookup)
+            return with_result_ids(record, result_id, record.get("id") or v3_id)
+        record = await self._get_v3_result(result_id, requested=result_id, lookup=V3_RESULT_LOOKUP)
+        record_id = record.get("id")
+        v3_id = record_id if isinstance(record_id, str) else result_id
+        v2_ids = await self._v2_ids_for_v3([{**record, "id": v3_id}])
+        return with_result_ids(record, v2_ids.get(v3_id), v3_id)
+
+    async def _get_v3_result(self, v3_id: str, *, requested: str, lookup: str) -> dict[str, Any]:
+        try:
+            return await self.api.request("GET", f"/result/{quote(v3_id, safe='')}")
+        except NotFoundError as exc:
+            error = _result_not_found(requested, expected=V3_RESULT_NAMESPACE, lookup=lookup)
+            error.details["http_status"] = exc.details.get("status")
+            raise error from exc
+
+    async def list_results_by_any_id(
+        self,
+        *,
+        entry: str | None = None,
+        schema_id: str | None = None,
+        result_ids: list[str] | None = None,
+        page_size: int = 100,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        """One page of V3 results with ``v2_id`` and ``v3_id`` on each item.
+
+        ``result_ids`` may mix V3 ``result_…`` ids and V2 assay result UUIDs, at most 100,
+        and is sent as ``id.anyOf``. V2 ids are mapped to V3 with bulk-get; a V2 id that
+        cannot be mapped is listed in ``not_found`` with its namespace and lookup.
+        ``v2_id`` is None when Benchling does not return it.
+        """
+        requested = self._bulk_lookup_ids(result_ids, "result_ids")
+        v2_of: dict[str, str] = {}
+        not_found: list[dict[str, Any]] = []
+        v3_ids: list[str] | None = None
+        if requested is not None:
+            unique = list(dict.fromkeys(requested))
+            if len(unique) > RESULT_ID_FILTER_LIMIT:
+                raise ValidationError(
+                    f"Pass at most {RESULT_ID_FILTER_LIMIT} result ids to results list"
+                )
+            v2_requested = [
+                item for item in unique if result_id_namespace(item) != V3_RESULT_NAMESPACE
+            ]
+            found = await self._bulk_get_v2_results(v2_requested)
+            v3_ids = []
+            for item in unique:
+                if item not in v2_requested:
+                    v3_ids.append(item)
+                    continue
+                v3_id = (found.get(item) or {}).get("v3Id")
+                if isinstance(v3_id, str) and v3_id:
+                    v3_ids.append(v3_id)
+                    v2_of[v3_id] = item
+                else:
+                    not_found.append(assay_result_lookup(item))
+            v3_ids = list(dict.fromkeys(v3_ids))
+            if not v3_ids:
+                return {"items": [], "next_token": None, "not_found": not_found}
+        page = await self.list_results(
+            entry=entry, schema_id=schema_id, page_size=page_size, cursor=cursor, v3_ids=v3_ids
+        )
+        items = [item for item in page["items"] if isinstance(item, dict)]
+        missing = [item for item in items if item.get("id") not in v2_of]
+        if missing:
+            v2_of.update(await self._v2_ids_for_v3(missing))
+        page["items"] = [
+            with_result_ids(item, v2_of.get(str(item.get("id"))), item.get("id")) for item in items
+        ]
+        if requested is not None:
+            page["not_found"] = not_found
+        return page
 
     async def list_assay_results(
         self,

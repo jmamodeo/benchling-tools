@@ -237,6 +237,8 @@ async def test_verify_reports_mismatched_fields_by_system_name(runtime, fake) ->
             "table_id": TABLE,
             "plan_row_index": 1,
             "result_id": second,
+            "v2_id": second,
+            "v3_id": "result_up2",
             "state": "accepted",
             "fields": [{"field": "ct", "planned": 2, "actual": 20}],
         }
@@ -275,7 +277,15 @@ async def test_verify_reports_extra_and_not_found_records(runtime, fake) -> None
     )
     data = await runtime.planner.verify_results(planned.id)
     assert data["counts"]["matched"] == 2
-    assert data["extra"] == [{"table_id": TABLE, "result_id": "extra", "state": "pending"}]
+    assert data["extra"] == [
+        {
+            "table_id": TABLE,
+            "result_id": "extra",
+            "v2_id": "extra",
+            "v3_id": None,
+            "state": "pending",
+        }
+    ]
     assert first in {row["result_id"] for row in data["needs_accept"]}
 
 
