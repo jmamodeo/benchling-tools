@@ -305,6 +305,21 @@ async def test_barcodes_resolve_in_chunks_of_100_and_can_key_rows(runtime, fake)
     assert fake.writes() == []
 
 
+async def test_unknown_container_is_dropped_and_the_diff_still_returns(runtime, fake) -> None:
+    _first_and_rerun(fake)
+    fake.containers = [item for item in fake.containers if item["id"] != "con_t1"]
+    diff = await results_diff.diff_results(
+        runtime.service, left=ENTRY_ID, right=RERUN, key="Well", resolve_barcodes=True
+    )
+    assert diff["containers"] == {"requested": 3, "resolved": 2, "unresolved": ["con_t1"]}
+    assert [call.params["containerIds"] for call in _bulk_calls(fake)] == [
+        "con_t0,con_t1,con_t2",
+        "con_t0,con_t2",
+    ]
+    assert diff["tables"]
+    assert fake.writes() == []
+
+
 async def test_barcodes_show_next_to_changed_and_unpaired_tubes(runtime, fake) -> None:
     _first_and_rerun(fake)
     fake.containers = [item for item in fake.containers if item["id"] != "con_t2"]

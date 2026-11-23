@@ -78,7 +78,8 @@ async def test_invalid_field_values_are_rejected(runtime, fake, key, value) -> N
 async def test_entry_link_value_is_read_at_plan_time(runtime, fake) -> None:
     await plan(runtime, {"sample_link": {"value": ENTRY_ID}})
     assert any(
-        call.method == "GET" and call.path == f"/api/v3/entry/{ENTRY_ID}" for call in fake.calls
+        call.path == "/api/v2/entries:bulk-get" and call.params == {"entryIds": ENTRY_ID}
+        for call in fake.calls
     )
     assert fake.writes() == []
 

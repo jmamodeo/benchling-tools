@@ -226,15 +226,30 @@ class ResultsPlanning(ResultUpdatePlanning):
         plan_row_offset = 0
         row_problems: list[dict[str, Any]] = []
         linked_schema_cache: LinkCache = {}
+        schemas = [await self.service.get_schema(table["schema_id"]) for table in tables]
+        await self._prefetch_link_values(
+            [
+                (definition, field_input.get("value"))
+                for batch, schema in zip(batches, schemas, strict=True)
+                for record in batch["assay_results"]
+                if isinstance(record, dict) and isinstance(record.get("fields"), dict)
+                for key, field_input in record["fields"].items()
+                if isinstance(field_input, dict)
+                and isinstance(
+                    definition := _resolve_field(key, schema.get("field_definitions") or []),
+                    dict,
+                )
+            ],
+            linked_schema_cache,
+        )
         entry_project_id: str | None = None
         project_source = "entry_folder"
         project_resolved = False
         project_defaults: list[dict[str, Any]] = []
-        for batch, table in zip(batches, tables, strict=True):
+        for batch, table, schema in zip(batches, tables, schemas, strict=True):
             table_id = batch["table_id"]
             records = batch["assay_results"]
             schema_id = table["schema_id"]
-            schema = await self.service.get_schema(schema_id)
             definitions = schema.get("field_definitions") or []
             default_rows = [
                 i

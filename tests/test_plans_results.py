@@ -427,17 +427,16 @@ async def test_samples_schema_valid_row_reads_each_link_target(runtime, fake, sa
     assert planned.after["validation_summary"]["counts_by_reason"] == {}
     assert planned.after["records"][0]["fields"] == samples_schema
     link_reads = {
-        call.path
+        (call.path, tuple(call.params.items()))
         for call in fake.calls
-        if call.method == "GET"
-        and any(item in call.path for item in ("con_source1", "ent_target", "loc_room1"))
+        if ":bulk-get" in call.path or "/custom-entity/" in call.path
     }
     assert link_reads == {
-        "/api/v2/containers/con_source1",
-        "/api/v3/custom-entity/ent_target",
-        "/api/v2/locations/loc_room1",
+        ("/api/v2/containers:bulk-get", (("containerIds", "con_source1"),)),
+        ("/api/v2/locations:bulk-get", (("locationIds", "loc_room1"),)),
+        ("/api/v2/entries:bulk-get", (("entryIds", ENTRY_ID),)),
+        ("/api/v3/custom-entity/ent_target", ()),
     }
-    assert any(call.path == f"/api/v3/entry/{ENTRY_ID}" for call in fake.calls)
     assert not any("req_TEST1" in call.path or "category_TEST1" in call.path for call in fake.calls)
     assert fake.writes() == []
 
@@ -893,3 +892,103 @@ async def test_link_target_service_errors(runtime, fake) -> None:
             [record(fields={"ct": {"value": 12}, "sample": {"value": "ent_noschema"}})],
         )
     assert fake.writes() == []
+
+
+def _container_bulk_calls(fake) -> list:
+    return [call for call in fake.calls if call.path == "/api/v2/containers:bulk-get"]
+
+
+def _add_tubes(fake, count: int) -> None:
+    fake.containers += [
+        {"id": f"con_tube{index}", "name": f"Tube {index}", "archiveRecord": None}
+        for index in range(count)
+    ]
+
+
+@pytest.mark.parametrize(("rows", "requests"), [(150, 2), (360, 4)])
+async def test_storable_links_are_read_with_bulk_get(
+    runtime, fake, samples_schema, rows, requests
+) -> None:
+    _add_tubes(fake, rows)
+    records = [
+        record(fields={**samples_schema, "tube": {"value": f"con_tube{index}"}})
+        for index in range(rows)
+    ]
+    planned = await plan(runtime, records)
+    calls = _container_bulk_calls(fake)
+    assert len(calls) == requests
+    assert sum(len(call.params["containerIds"].split(",")) for call in calls) == rows
+    assert not any(call.path.startswith("/api/v2/containers/") for call in fake.calls)
+    assert planned.after["validation_summary"]["counts_by_reason"] == {}
+    assert fake.writes() == []
+
+
+async def test_missing_container_is_dropped_and_only_its_row_is_flagged(
+    runtime, fake, samples_schema
+) -> None:
+    _add_tubes(fake, 150)
+    fake.containers = [item for item in fake.containers if item["id"] != "con_tube42"]
+    records = [
+        record(fields={**samples_schema, "tube": {"value": f"con_tube{index}"}})
+        for index in range(150)
+    ]
+    with pytest.raises(ValidationError) as caught:
+        await plan(runtime, records)
+    calls = _container_bulk_calls(fake)
+    assert len(calls) == 3
+    assert "con_tube42" in calls[0].params["containerIds"]
+    assert "con_tube42" not in calls[1].params["containerIds"]
+    [problem] = caught.value.details["row_problems"]
+    assert problem["row_index"] == 42
+    assert problem["reason"] == "link_target_not_found"
+    assert problem["details"]["kind"] == "container"
+    assert problem["details"]["value"] == "con_tube42"
+    assert fake.writes() == []
+
+
+async def test_missing_entry_link_from_the_400_shape_flags_its_row(
+    runtime, fake, samples_schema
+) -> None:
+    records = [
+        record(fields=samples_schema),
+        record(fields={**samples_schema, "entry": {"value": "etr_missing"}}),
+    ]
+    with pytest.raises(ValidationError) as caught:
+        await plan(runtime, records)
+    [problem] = caught.value.details["row_problems"]
+    assert (problem["row_index"], problem["reason"]) == (1, "link_target_not_found")
+    assert problem["details"]["kind"] == "entry"
+    assert problem["details"]["value"] == "etr_missing"
+    entry_calls = [c for c in fake.calls if c.path == "/api/v2/entries:bulk-get"]
+    assert [c.params["entryIds"] for c in entry_calls] == [f"{ENTRY_ID},etr_missing", ENTRY_ID]
+
+
+async def test_archived_container_link_is_reported(runtime, fake, samples_schema) -> None:
+    fake.containers.append({"id": "con_old", "name": "Old", "archiveRecord": {"reason": "Retired"}})
+    samples_schema["tube"] = {"value": "con_old"}
+    with pytest.raises(ValidationError) as caught:
+        await plan(runtime, [record(fields=samples_schema)])
+    [problem] = caught.value.details["row_problems"]
+    assert problem["reason"] == "link_archived"
+    assert problem["details"]["kind"] == "container"
+    assert problem["details"]["value"] == "con_old"
+
+
+async def test_bulk_get_raises_errors_that_name_no_requested_id(runtime, fake) -> None:
+    fake.fail("GET", "/containers:bulk-get", 404)
+    with pytest.raises(NotFoundError):
+        await runtime.service.bulk_get_link_targets(["con_source1"])
+    fake.fail("GET", "/boxes:bulk-get", 200)
+    with pytest.raises(UpstreamError, match="unexpected bulk-get"):
+        await runtime.service.bulk_get_link_targets(["box_rack1"])
+
+
+async def test_link_value_with_a_comma_is_not_split_into_a_bulk_get(
+    runtime, fake, samples_schema
+) -> None:
+    samples_schema["tube"] = {"value": "con_source1,con_dest1"}
+    with pytest.raises(ValidationError) as caught:
+        await plan(runtime, [record(fields=samples_schema)])
+    [problem] = caught.value.details["row_problems"]
+    assert problem["reason"] == "link_target_not_found"
+    assert not any("con_source1" in str(call.params) for call in _container_bulk_calls(fake))

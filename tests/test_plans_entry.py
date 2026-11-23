@@ -157,7 +157,11 @@ async def test_entry_plan_reads_link_values_at_plan_time(runtime, fake) -> None:
             {**REQUEST, "schema_fields": {"sample_link": {"value": "etr_missing"}}},
         )
     assert caught.value.details["reason"] == "link_target_not_found"
-    assert any(call.path == "/api/v3/entry/etr_missing" for call in fake.calls)
+    assert caught.value.details["kind"] == "entry"
+    assert any(
+        call.path == "/api/v2/entries:bulk-get" and call.params == {"entryIds": "etr_missing"}
+        for call in fake.calls
+    )
     assert fake.writes() == []
 
 

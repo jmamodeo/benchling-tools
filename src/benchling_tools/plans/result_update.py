@@ -240,6 +240,17 @@ class ResultUpdatePlanning(FieldNormalization, BlobUploads):
     ) -> None:
         """Read every linked item a changed link cell names; report the ones that fail."""
         cache: LinkCache = {}
+        await self._prefetch_link_values(
+            [
+                (definition, field_input.get("value"))
+                for change in changes
+                for binding in [bindings.get(change["schema_id"] or "")]
+                if binding is not None
+                for _column, definition in binding.columns
+                if (field_input := change["schema_fields"].get(str(definition["id"])))
+            ],
+            cache,
+        )
         for change in changes:
             binding = bindings.get(change["schema_id"] or "")
             if binding is None:

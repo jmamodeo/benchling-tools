@@ -18,6 +18,7 @@ from ..models import (
 )
 from ..services import (
     ENTITY_LINK_PREFIXES,
+    LINK_TARGET_KINDS,
     STORABLE_LINK_PREFIXES,
     field_definition_type,
     is_attachment_field,
@@ -250,15 +251,45 @@ class FieldNormalization(PlannerBase):
                 )
         return normalized, targets, field_name_map
 
+    async def _prefetch_link_values(
+        self, pairs: list[tuple[dict[str, Any], Any]], cache: LinkCache
+    ) -> None:
+        """Read the distinct entry and storable link values of many rows with V2 bulk-get.
+
+        ``pairs`` are (field definition, value) for every row and batch of a plan. Only
+        unconstrained entry and storable links are collected; schema-constrained and
+        any-entity links keep their per-item read in ``_link_value_problems``.
+        """
+        wanted: dict[str, None] = {}
+        for definition, value in pairs:
+            if field_definition_type(definition) != "LINK":
+                continue
+            kind = link_kind(definition)
+            if kind not in {"entry", "storable"}:
+                continue
+            prefixes = ("etr_",) if kind == "entry" else STORABLE_LINK_PREFIXES
+            for item in value if isinstance(value, list) else [value]:
+                if (
+                    isinstance(item, str)
+                    and item not in cache
+                    and "," not in item
+                    and any(item.startswith(p) and len(item) > len(p) for p in prefixes)
+                ):
+                    wanted[item] = None
+        if wanted:
+            cache.update(await self.service.bulk_get_link_targets(list(wanted)))
+
     async def _link_value_problems(
         self, definition: dict[str, Any], value: Any, cache: LinkCache
     ) -> list[ValidationError]:
         """Read each item a link value names, at plan time, with read-only GETs.
 
         Entry, storable, and schema-constrained links must name an item that can be
-        read, and a schema-constrained link's item must use the field's allowed
-        schema. An any-entity link is read when its ID prefix has a read route.
-        Request and system-category links have no read route and are not looked up.
+        read and is not archived, and a schema-constrained link's item must use the
+        field's allowed schema. An any-entity link is read when its ID prefix has a
+        read route. Request and system-category links have no read route and are not
+        looked up. Values already in ``cache`` (see ``_prefetch_link_values``) are
+        not read again.
         """
         if (
             value is None
@@ -317,13 +348,17 @@ class FieldNormalization(PlannerBase):
                 except NotFoundError:
                     cache[item] = None
             target = cache[item]
-            if target is None:
+            target_kind = LINK_TARGET_KINDS.get(item[: item.index("_") + 1], "entity")
+            if target is None or target.get("archiveRecord"):
+                archived = target is not None
                 return [
                     ValidationError(
-                        "Linked item was not found",
+                        "Linked item is archived" if archived else "Linked item was not found",
                         details={
-                            "reason": "link_target_not_found",
+                            "reason": "link_archived" if archived else "link_target_not_found",
                             "field": field,
+                            "kind": target_kind,
+                            "value": item,
                             "entity_id": item,
                         },
                     )
@@ -358,6 +393,9 @@ class FieldNormalization(PlannerBase):
         """Raise the first link problem in field inputs keyed by field-definition ID."""
         by_id = {str(item["id"]): item for item in definitions if item.get("id")}
         cache: LinkCache = {}
+        await self._prefetch_link_values(
+            [(by_id[key], item.get("value")) for key, item in normalized.items()], cache
+        )
         for field_id, field_input in normalized.items():
             problems = await self._link_value_problems(
                 by_id[field_id], field_input.get("value"), cache
