@@ -31,6 +31,7 @@ from .blobs import (
     plan_upload_refs,
     stage_field_values,
 )
+from .fields import _resolve_field
 from .result_update import ResultUpdatePlanning, request_is_result_update
 
 PENDING_RESULTS_WARNING = (
@@ -189,7 +190,13 @@ class ResultsPlanning(ResultUpdatePlanning):
                         "source": project_source,
                     }
                 )
-            planned, client_record_ids, projects, problems = await self._prepare_result_records(
+            (
+                planned,
+                client_record_ids,
+                projects,
+                problems,
+                field_name_maps,
+            ) = await self._prepare_result_records(
                 records,
                 table_id,
                 schema_id,
@@ -206,6 +213,7 @@ class ResultsPlanning(ResultUpdatePlanning):
                     "schema_id": schema_id,
                     "table": table,
                     "records": planned,
+                    "field_name_maps": field_name_maps,
                     "client_record_ids": client_record_ids,
                     "projects": projects,
                     "row_count": len(planned),
@@ -224,6 +232,19 @@ class ResultsPlanning(ResultUpdatePlanning):
                     "validation_summary": validation_summary,
                 },
             )
+        if "batches" in request:
+            for source_batch, planned_batch in zip(
+                request["batches"], planned_batches, strict=True
+            ):
+                for source_record, planned_record in zip(
+                    source_batch["assay_results"], planned_batch["records"], strict=True
+                ):
+                    source_record["fields"] = planned_record["fields"]
+        else:
+            for source_record, planned_record in zip(
+                request["assay_results"], planned_batches[0]["records"], strict=True
+            ):
+                source_record["fields"] = planned_record["fields"]
         all_records = [record for batch in planned_batches for record in batch["records"]]
         all_projects = {
             project_id: project
@@ -268,6 +289,7 @@ class ResultsPlanning(ResultUpdatePlanning):
                     "table_id": only["table_id"],
                     "schema_id": only["schema_id"],
                     "records": only["records"],
+                    "field_name_maps": only["field_name_maps"],
                     "client_record_ids": only["client_record_ids"],
                 }
             )
@@ -307,14 +329,22 @@ class ResultsPlanning(ResultUpdatePlanning):
         plan_row_offset: int,
         stager: FileStager | None = None,
         default_project_id: str | None = None,
-    ) -> tuple[list[Any], list[str], dict[str, dict[str, Any]], list[dict[str, Any]]]:
+    ) -> tuple[
+        list[Any],
+        list[str],
+        dict[str, dict[str, Any]],
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+    ]:
         """Validate and normalize records; returns them with correlation IDs and referenced projects."""
         planned: list[Any] = []
         client_record_ids: list[str] = []
         projects: dict[str, dict[str, Any]] = {}
         problems: list[dict[str, Any]] = []
+        field_name_maps: list[dict[str, Any]] = []
         for row_index, raw_record in enumerate(records):
             record = deepcopy(raw_record)
+            field_name_map: dict[str, str] = {}
             try:
                 if (
                     not isinstance(record, dict)
@@ -332,19 +362,26 @@ class ResultsPlanning(ResultUpdatePlanning):
                         },
                     )
                 if stager is not None:
+                    stage_name_map = {
+                        key: resolved["systemName"]
+                        for key in raw_record["fields"]
+                        if isinstance((resolved := _resolve_field(key, definitions)), dict)
+                    }
                     stage_field_values(
                         raw_record["fields"],
                         definitions,
                         stager,
+                        field_name_map=stage_name_map,
                         table_id=table_id,
                         row_index=plan_row_offset + row_index,
                     )
                     record["fields"] = deepcopy(raw_record["fields"])
-                normalized, _ = self._normalize_schema_field_updates(
+                normalized, _, field_name_map = self._normalize_schema_field_updates(
                     record["fields"],
                     definitions,
                     require_all_required=True,
                     local_files=stager is not None,
+                    allow_display_names=True,
                 )
                 await self._validate_result_field_constraints(
                     normalized, definitions, linked_schema_cache
@@ -387,7 +424,13 @@ class ResultsPlanning(ResultUpdatePlanning):
                 )
             planned.append(record)
             client_record_ids.append(str(uuid.uuid4()))
-        return planned, client_record_ids, projects, problems
+            field_name_maps.append(
+                {
+                    "row_index": plan_row_offset + row_index,
+                    "field_name_map": field_name_map,
+                }
+            )
+        return planned, client_record_ids, projects, problems, field_name_maps
 
     async def _validate_result_field_constraints(
         self,

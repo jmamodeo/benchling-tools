@@ -30,7 +30,7 @@ from ..redact import redact_text
 from ..services import field_definition_type, is_attachment_field
 from .base import PlanParts, write_event_details
 from .blobs import UPLOAD_WARNINGS, BlobUploads, FileStager, stage_field_values
-from .fields import FieldNormalization
+from .fields import FieldNormalization, _resolve_field
 
 MAX_RESULT_UPDATES = 500
 _MAX_REPORTED_ERRORS = 50
@@ -255,7 +255,7 @@ class ResultUpdatePlanning(FieldNormalization, BlobUploads):
                     stage_field_values(
                         supplied, binding.definitions, stager, result_id=result_id, row=number
                     )
-                normalized, _targets = self._normalize_schema_field_updates(
+                normalized, _targets, _field_name_map = self._normalize_schema_field_updates(
                     supplied,
                     binding.definitions,
                     address_by="field_definition_id",
@@ -580,39 +580,6 @@ def _bind_columns(
         used[field_id] = column
         columns.append((column, resolved))
     return _Binding(definitions, columns)
-
-
-def _resolve_field(
-    token: str, definitions: list[dict[str, Any]]
-) -> dict[str, Any] | list[dict[str, Any]] | None:
-    """Match a field-definition id, then a system name, then one display name."""
-    by_id = [item for item in definitions if item.get("id") == token]
-    if len(by_id) == 1:
-        return by_id[0]
-    if len(by_id) > 1:
-        return by_id
-    by_system = _prefer_live([item for item in definitions if item.get("systemName") == token])
-    if len(by_system) == 1:
-        return by_system[0]
-    if len(by_system) > 1:
-        return by_system
-    by_name = _prefer_live(
-        [
-            item
-            for item in definitions
-            if isinstance(item.get("name"), str) and str(item["name"]).strip() == token
-        ]
-    )
-    if len(by_name) == 1:
-        return by_name[0]
-    if len(by_name) > 1:
-        return by_name
-    return None
-
-
-def _prefer_live(matches: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    live = [item for item in matches if not item.get("archived")]
-    return live or matches
 
 
 def _name_index(definitions: list[dict[str, Any]]) -> tuple[dict[str, str], dict[str, bool]]:

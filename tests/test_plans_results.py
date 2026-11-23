@@ -133,6 +133,119 @@ async def test_result_plan_validates_dropdown_and_link_values_without_writes(run
     assert fake.writes() == []
 
 
+async def test_result_plan_resolves_display_names_and_previews_the_mapping(runtime, fake) -> None:
+    planned = await plan(runtime, [record(fields={"Ct": {"value": 7}, "note": {"value": "ok"}})])
+    assert planned.after["records"][0]["fields"] == {
+        "ct": {"value": 7},
+        "note": {"value": "ok"},
+    }
+    assert planned.after["field_name_maps"] == [{"row_index": 0, "field_name_map": {"Ct": "ct"}}]
+    assert planned.request["assay_results"][0]["fields"] == planned.after["records"][0]["fields"]
+    applied = await runtime.planner.apply(planned.id)
+    assert fake.bulk_payloads[0]["assayResults"][0]["fields"] == {
+        "ct": {"value": 7},
+        "note": {"value": "ok"},
+    }
+    assert applied["journal"]["status"] == "succeeded"
+
+
+async def test_result_plan_resolves_mixed_keys_and_trimmed_case_insensitive_names(
+    runtime, fake
+) -> None:
+    planned = await plan(
+        runtime,
+        [
+            record(
+                fields={
+                    "ct": {"value": 7},
+                    "assayfield_note": {"value": "ok"},
+                    " Sample ": {"value": "ent_target"},
+                }
+            )
+        ],
+    )
+    assert planned.after["records"][0]["fields"] == {
+        "ct": {"value": 7},
+        "note": {"value": "ok"},
+        "sample": {"value": "ent_target"},
+    }
+    assert planned.after["field_name_maps"][0]["field_name_map"] == {
+        "assayfield_note": "note",
+        " Sample ": "sample",
+    }
+    case_insensitive = await plan(runtime, [record(fields={"cT": {"value": 8}})])
+    assert case_insensitive.after["records"][0]["fields"] == {"ct": {"value": 8}}
+
+
+async def test_result_plan_ignores_archived_duplicate_display_names(runtime, fake) -> None:
+    fake.field_defs["assaysch_abc123"].append(
+        {
+            "id": "assayfield_old_ct",
+            "systemName": "old_ct",
+            "name": "Ct",
+            "archived": True,
+            "type": "integer",
+        }
+    )
+    planned = await plan(runtime, [record(fields={"Ct": {"value": 7}})])
+    assert planned.after["records"][0]["fields"] == {"ct": {"value": 7}}
+
+
+async def test_result_plan_reports_ambiguous_display_names(runtime, fake) -> None:
+    fake.field_defs["assaysch_abc123"].append(
+        {
+            "id": "assayfield_ct_copy",
+            "systemName": "ct_copy",
+            "name": "Ct",
+            "type": "integer",
+        }
+    )
+    with pytest.raises(ValidationError) as caught:
+        await plan(runtime, [record(fields={"Ct": {"value": 7}})])
+    problem = caught.value.details["row_problems"][0]
+    assert problem["reason"] == "ambiguous_field"
+    assert problem["details"]["field"] == "Ct"
+    assert {candidate["system_name"] for candidate in problem["details"]["candidates"]} == {
+        "ct",
+        "ct_copy",
+    }
+
+
+async def test_result_plan_reports_display_name_system_name_collision(runtime, fake) -> None:
+    sample = next(
+        definition
+        for definition in fake.field_defs["assaysch_abc123"]
+        if definition["systemName"] == "note"
+    )
+    sample["name"] = "sample"
+    with pytest.raises(ValidationError) as caught:
+        await plan(runtime, [record(fields={"sample": {"value": "ent_target"}})])
+    problem = caught.value.details["row_problems"][0]
+    assert problem["reason"] == "ambiguous_field"
+    assert {candidate["system_name"] for candidate in problem["details"]["candidates"]} == {
+        "sample",
+        "note",
+    }
+
+
+async def test_result_plan_duplicate_system_and_display_keys_are_rejected(runtime) -> None:
+    with pytest.raises(ValidationError, match="supplied more than once"):
+        await plan(
+            runtime,
+            [record(fields={"ct": {"value": 7}, "Ct": {"value": 8}})],
+        )
+
+
+async def test_result_plan_unknown_fields_include_display_name_hints(runtime) -> None:
+    with pytest.raises(ValidationError) as caught:
+        await plan(runtime, [record(fields={"ct": {"value": 7}, "Missing": {"value": "x"}})])
+    details = caught.value.details["row_problems"][0]["details"]
+    assert details["unknown_fields"] == ["Missing"]
+    assert "ct" in details["available_system_names"]
+    assert "assayfield_ct" in details["available_field_ids"]
+    assert details["available_display_names"]["Ct"] == "ct"
+
+
 async def test_result_plan_reports_all_bad_rows_by_reason(runtime, fake) -> None:
     with pytest.raises(ValidationError, match="invalid rows") as caught:
         await plan(

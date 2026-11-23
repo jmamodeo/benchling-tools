@@ -91,6 +91,7 @@ Each CLI command is one tool named after its command path (`benchling-tools entr
 ## Safety model
 
 - **Read-only by default.** `changes plan` only reads Benchling and writes an immutable local plan. Nothing changes remotely until `changes apply`, which re-checks the plan's version preconditions, refuses stale or already-used plans, never retries a write, and records each stage in a local journal.
+- **Result upload fields.** Upload specs accept schema system names, field-definition IDs, or display names. Display names are translated to system names in the plan and payload; ambiguous names are rejected.
 - **Write guards on MCP.** The MCP server refuses `changes_apply` unless it was started with `--allow-writes ENV` for that environment. Reads, `export`, and `changes_plan` stay available.
 - **Protected environments.** An environment marked with `auth protect` refuses a write unless its name is typed twice: `--env prod --confirm-env prod` on the CLI, or `confirm_env` equal to `env` on MCP.
 

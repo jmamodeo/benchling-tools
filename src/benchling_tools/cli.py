@@ -1473,7 +1473,9 @@ _SPECIFICATION = McpParam(
     description=(
         "Typed change for family, as a JSON object. Document and table changes set "
         "operation. Field changes set schema_fields. Result uploads set table_id and "
-        'assay_results; an attachment field value may be {"file": PATH} to upload a '
+        "assay_results; result field keys may be system names, field-definition IDs, "
+        "or schema display names (translated to system names). An attachment field "
+        'value may be {"file": PATH} to upload a '
         "local file as a blob at apply. Result updates set operation to update and pass "
         "csv_path, id_column, and column_map. Omit it only when csv_path is set."
     ),
@@ -1529,7 +1531,9 @@ async def changes_plan(
     names a field by display name, system name, or field-definition id.
 
     Inline result uploads pass table_id and assay_results, or batches containing
-    table_id and assay_results for each table, up to 500 records per table.
+    table_id and assay_results for each table, up to 500 records per table. Result
+    fields accept system names, field-definition IDs, or display names. Display
+    names are translated to system names in the plan; ambiguous names are rejected.
     A missing projectId defaults to the entry's project; if unavailable, set
     projectId explicitly. Explicit null creates creator-only results and some
     tenants reject it with projectId is a required field.

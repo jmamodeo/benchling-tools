@@ -88,6 +88,21 @@ async def test_preview_hashes_the_file_and_never_shows_its_path(
     assert sidecar.stat().st_mode & 0o077 == 0
 
 
+async def test_display_name_attachment_field_is_staged_and_normalized(
+    runtime, fake, tmp_path, attachments
+) -> None:
+    path = _write(tmp_path / "plot.png", b"synthetic plot")
+    planned = await runtime.planner.plan(
+        ENTRY_ID, "results", _upload({"Plot": {"value": {"file": str(path)}}})
+    )
+    assert planned.after["field_name_maps"][0]["field_name_map"] == {"Plot": "plot"}
+    assert planned.after["records"][0]["fields"]["plot"]["value"]["local_file"]["name"] == (
+        "plot.png"
+    )
+    await runtime.planner.apply(planned.id)
+    assert fake.bulk_payloads[0]["assayResults"][0]["fields"]["plot"]["value"] == BLOB_1
+
+
 async def test_apply_uploads_once_then_links_the_blob_id(
     runtime, fake, tmp_path, attachments
 ) -> None:
