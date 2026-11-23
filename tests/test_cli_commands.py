@@ -1195,3 +1195,48 @@ def test_other_click_failures_keep_their_text_and_exit_code(monkeypatch) -> None
     result = CliRunner().invoke(cli.app, ["entry", "get", ENTRY_ID, "--env", "dev"])
     assert result.exit_code == 1
     assert "Aborted!" in result.stderr
+
+
+def test_container_find_many_barcodes_reports_invalid_and_missing(invoke, fake) -> None:
+    fake.invalid_barcodes = {"BAR-BAD"}
+    code, payload, _ = invoke(
+        "container",
+        "find",
+        "--barcode",
+        "BAR-SOURCE",
+        "--barcode",
+        "BAR-BAD",
+        "--barcode",
+        "BAR-NONE",
+    )
+    assert code == 0, payload
+    data = payload["data"]
+    assert data["requested"] == 3
+    assert [item["barcode"] for item in data["found"]] == ["BAR-SOURCE"]
+    assert data["invalid_barcodes"] == ["BAR-BAD"]
+    assert data["missing_barcodes"] == ["BAR-NONE"]
+    assert data["empty_containers"] == []
+    assert len([call for call in fake.calls if call.path == "/api/v2/containers"]) == 2
+
+
+def test_container_find_single_invalid_barcode_is_validation_error(invoke, fake) -> None:
+    fake.invalid_barcodes = {"BAR-BAD"}
+    code, payload, _ = invoke("container", "find", "--barcode", "BAR-BAD")
+    assert code == 2
+    error = payload["error"]
+    assert error["code"] == "validation_error"
+    assert error["details"]["invalid_barcodes"] == ["BAR-BAD"]
+    assert error["details"]["hint"] == "Benchling did not recognise these barcodes: BAR-BAD"
+
+
+def test_container_find_rejects_comma_in_one_barcode(invoke, fake) -> None:
+    code, payload, _ = invoke("container", "find", "--barcode", "BAR-SOURCE,BAR-DEST")
+    assert code == 2
+    assert "repeat --barcode" in payload["error"]["message"]
+    assert fake.calls == []
+
+
+def test_container_find_help_cites_list_containers() -> None:
+    help_text = plain_stdout(["container", "find", "--help"])
+    for token in ("100 per request", "invalidBarcodes", "List containers"):
+        assert token in help_text, token

@@ -64,19 +64,27 @@ def is_placeholder_row(row: Any) -> bool:
 
 
 async def read_table_usage(
-    service: BenchlingService, entry_id: str, table_ids: Collection[str] | None = None
+    service: BenchlingService,
+    entry_id: str,
+    table_ids: Collection[str] | None = None,
+    *,
+    tables: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Rows used by each V2 results table on the entry, or by those in ``table_ids``.
 
-    The entry's V2 tables and V3 parts are each read once. A matched part is read
-    with ``GET /document-part-results-table/{id}`` for ``rowCount``. Only when
-    ``rowCount`` is 1 is the first row read, to tell a blank placeholder row from a
-    real one. A table with no single matching part has ``row_count`` null.
+    The entry's V2 tables and V3 parts are each read once; ``tables`` skips the V2
+    read when the caller already listed them. ``rowCount`` and ``submissionStatus``
+    come from the parts listing (``DocumentPartResultsTable`` carries both); a part
+    listed without a usable ``rowCount`` is read with
+    ``GET /document-part-results-table/{id}``. Only when ``rowCount`` is 1 and the table is not ``SUBMITTED`` is the
+    first row read, to tell a blank placeholder row from a real one. A table with
+    no single matching part has ``row_count`` null.
     """
-    entry = service._v2_object(
-        await service.api.request("GET", f"/entries/{entry_id}", version=2), "entry"
-    )
-    tables = service._result_tables_from_entry(entry)
+    if tables is None:
+        entry = service._v2_object(
+            await service.api.request("GET", f"/entries/{entry_id}", version=2), "entry"
+        )
+        tables = service._result_tables_from_entry(entry)
     if table_ids is not None:
         wanted = set(table_ids)
         tables = [table for table in tables if table["table_id"] in wanted]
@@ -88,6 +96,7 @@ async def read_table_usage(
             f"/entry/{entry_id}/parts/items", params={"pageSize": 100}
         )
     ]
+    by_id = {str(part["id"]): part for part in parts if isinstance(part.get("id"), str)}
     usage: list[dict[str, Any]] = []
     for table in tables:
         part_id = await service.document_part_for_listed_table(
@@ -104,7 +113,9 @@ async def read_table_usage(
             "used_rows": None,
         }
         if part_id is not None:
-            detail = await service.api.request("GET", f"/document-part-results-table/{part_id}")
+            detail = by_id.get(part_id, {})
+            if not _usable_row_count(detail.get("rowCount")) or not detail.get("rows"):
+                detail = await service.api.request("GET", f"/document-part-results-table/{part_id}")
             row_count = detail.get("rowCount")
             if isinstance(row_count, bool) or not isinstance(row_count, int) or row_count < 0:
                 raise UpstreamError(
@@ -113,7 +124,8 @@ async def read_table_usage(
                 )
             item["row_count"] = row_count
             item["submission_status"] = detail.get("submissionStatus")
-            if row_count == 1:
+            # A placeholder row is UNSUBMITTED, so a SUBMITTED table cannot hold one.
+            if row_count == 1 and item["submission_status"] != "SUBMITTED":
                 path = rows_items_path(
                     service.api.environment.base_url,
                     part_id,
@@ -127,6 +139,53 @@ async def read_table_usage(
             item["used_rows"] = row_count - item["placeholder_rows"]
         usage.append(item)
     return usage
+
+
+def _usable_row_count(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+async def add_table_counts(
+    service: BenchlingService, entry_id: str, tables: list[dict[str, Any]]
+) -> None:
+    """Add ``part_id``, ``row_count``, ``used_rows``, ``submission_status`` and
+    ``placeholder_rows`` to each listed V2 results table, in place.
+
+    This is ``read_table_usage`` over tables the caller already listed, so
+    ``results tables`` reports the same numbers as ``results capacity``. A table
+    no single part matches gets null counts and ``count_note``.
+    """
+    if not tables:
+        return
+    usage = {
+        item["table_id"]: item for item in await read_table_usage(service, entry_id, tables=tables)
+    }
+    for table in tables:
+        item = usage.get(table["table_id"], {})
+        if item.get("part_id") is None:
+            table.update(
+                {
+                    "part_id": None,
+                    "row_count": None,
+                    "used_rows": None,
+                    "submission_status": None,
+                    "placeholder_rows": None,
+                    "count_note": (
+                        "No single v3_document_part matched this table, so it was not counted."
+                    ),
+                }
+            )
+            continue
+        status = item.get("submission_status")
+        table.update(
+            {
+                "part_id": item["part_id"],
+                "row_count": item["row_count"],
+                "used_rows": item["used_rows"],
+                "submission_status": status if isinstance(status, str) else None,
+                "placeholder_rows": item["placeholder_rows"],
+            }
+        )
 
 
 def table_capacity(usage: Mapping[str, Any], pending_known: int, planned: int) -> dict[str, Any]:
