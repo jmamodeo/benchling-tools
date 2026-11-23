@@ -302,9 +302,10 @@ def test_skill_places_the_order_before_the_result_upload_spec() -> None:
 
 
 def test_changelog_records_the_plan_time_error() -> None:
-    unreleased = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8").split("\n## [", 2)[1]
-    assert "results_table_missing" in unreleased
-    assert UPLOADING_RESULTS in unreleased
+    text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    section = text.split("## [0.8.0]", 1)[1].split("\n## [", 1)[0]
+    assert "results_table_missing" in section
+    assert UPLOADING_RESULTS in section
 
 
 def test_cli_help_states_the_order() -> None:
