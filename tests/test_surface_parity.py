@@ -151,6 +151,16 @@ def _without_clock(value):
             {"part_id": "docpart_rt1", "limit": 2},
         ),
         (
+            ["container", "find", "--barcode", "BAR-SOURCE"],
+            "container_find",
+            {"barcodes": ["BAR-SOURCE"]},
+        ),
+        (
+            ["container", "find", "--barcode", "BAR-SOURCE", "--barcode", "BAR-NONE"],
+            "container_find",
+            {"barcodes": ["BAR-SOURCE", "BAR-NONE"]},
+        ),
+        (
             [
                 "results",
                 "diff",

@@ -28,6 +28,136 @@ async def test_container_read_and_find_operations(runtime, fake) -> None:
     assert not any(call.method != "GET" for call in fake.calls)
 
 
+def _container_lists(fake) -> list:
+    return [call for call in fake.calls if call.path == "/api/v2/containers"]
+
+
+async def test_find_containers_many_barcodes_reports_each_outcome(runtime, fake) -> None:
+    fake.invalid_barcodes = {"BAR-BAD"}
+    found = await runtime.service.find_containers(
+        barcode=["BAR-BATCH", "BAR-BAD", "BAR-SOURCE", "BAR-NONE", "BAR-DEST", "BAR-SOURCE"]
+    )
+    assert found == {
+        "requested": 5,
+        "found": [
+            {
+                "barcode": "BAR-BATCH",
+                "container_id": "con_batch1",
+                "schema_id": "contsch_abc123",
+                "contents": [
+                    {
+                        "entity_id": "ent_sample1",
+                        "entity_registry_id": None,
+                        "batch_id": "bat_sample1",
+                    },
+                    {
+                        "entity_id": "ent_registered1",
+                        "entity_registry_id": "REG-0001",
+                        "batch_id": None,
+                    },
+                ],
+                "archived": False,
+            },
+            {
+                "barcode": "BAR-SOURCE",
+                "container_id": "con_source1",
+                "schema_id": "contsch_abc123",
+                "contents": [
+                    {"entity_id": "ent_sample1", "entity_registry_id": None, "batch_id": None}
+                ],
+                "archived": False,
+            },
+            {
+                "barcode": "BAR-DEST",
+                "container_id": "con_dest1",
+                "schema_id": "contsch_abc123",
+                "contents": [],
+                "archived": False,
+            },
+        ],
+        "invalid_barcodes": ["BAR-BAD"],
+        "missing_barcodes": ["BAR-NONE"],
+        "empty_containers": ["BAR-DEST"],
+    }
+    requests = _container_lists(fake)
+    assert [call.params["barcodes"] for call in requests] == [
+        "BAR-BATCH,BAR-BAD,BAR-SOURCE,BAR-NONE,BAR-DEST",
+        "BAR-BATCH,BAR-SOURCE,BAR-NONE,BAR-DEST",
+    ]
+    assert {call.params["pageSize"] for call in requests} == {"100"}
+
+
+async def test_find_containers_chunks_barcodes_at_100_and_follows_pages(runtime, fake) -> None:
+    barcodes = [f"BAR-{index:03d}" for index in range(150)]
+    found = await runtime.service.find_containers(barcode=barcodes)
+    assert found["requested"] == 150
+    assert found["missing_barcodes"] == barcodes
+    requests = _container_lists(fake)
+    assert [len(call.params["barcodes"].split(",")) for call in requests] == [100, 50]
+
+    fake.container_page_size = 2
+    fake.calls.clear()
+    paged = await runtime.service.find_containers(barcode=["BAR-SOURCE", "BAR-DEST", "BAR-BATCH"])
+    assert [item["container_id"] for item in paged["found"]] == [
+        "con_source1",
+        "con_dest1",
+        "con_batch1",
+    ]
+    assert [call.params.get("nextToken") for call in _container_lists(fake)] == [None, "2"]
+
+
+@pytest.mark.parametrize(("count", "chunks"), [(100, [100]), (101, [100, 1])])
+async def test_find_containers_chunk_boundary(runtime, fake, count, chunks) -> None:
+    barcodes = [f"BAR-{index:03d}" for index in range(count)]
+    found = await runtime.service.find_containers(barcode=barcodes)
+    assert found["requested"] == count
+    assert found["missing_barcodes"] == barcodes
+    requests = _container_lists(fake)
+    assert [len(call.params["barcodes"].split(",")) for call in requests] == chunks
+    sent = [item for call in requests for item in call.params["barcodes"].split(",")]
+    assert sent == barcodes
+
+
+async def test_find_containers_all_invalid_chunk_is_not_retried(runtime, fake) -> None:
+    fake.invalid_barcodes = {"BAR-BAD1", "BAR-BAD2"}
+    found = await runtime.service.find_containers(barcode=["BAR-BAD1", "BAR-BAD2"])
+    assert found["invalid_barcodes"] == ["BAR-BAD1", "BAR-BAD2"]
+    assert found["found"] == found["missing_barcodes"] == []
+    assert len(_container_lists(fake)) == 1
+
+
+async def test_find_containers_other_400_is_raised(runtime, fake) -> None:
+    fake.fail("GET", "/api/v2/containers", 400)
+    with pytest.raises(ValidationError, match="Benchling rejected") as raised:
+        await runtime.service.find_containers(barcode=["BAR-SOURCE", "BAR-DEST"])
+    assert "invalid_barcodes" not in raised.value.details
+    assert len(_container_lists(fake)) == 1
+
+
+async def test_find_containers_single_invalid_barcode_names_it(runtime, fake) -> None:
+    fake.invalid_barcodes = {"BAR-BAD"}
+    with pytest.raises(ValidationError) as raised:
+        await runtime.service.find_containers(barcode="BAR-BAD")
+    assert raised.value.details["invalid_barcodes"] == ["BAR-BAD"]
+    assert raised.value.details["hint"] == "Benchling did not recognise these barcodes: BAR-BAD"
+    assert len(_container_lists(fake)) == 1
+
+
+async def test_find_containers_barcode_input_is_checked(runtime) -> None:
+    with pytest.raises(ValidationError, match="repeat --barcode"):
+        await runtime.service.find_containers(barcode="BAR-SOURCE,BAR-DEST")
+    with pytest.raises(ValidationError, match="repeat --barcode"):
+        await runtime.service.find_containers(barcode=["BAR-SOURCE", "BAR-A,BAR-B"])
+    with pytest.raises(ValidationError, match="non-empty"):
+        await runtime.service.find_containers(barcode=[])
+    with pytest.raises(ValidationError, match="non-empty"):
+        await runtime.service.find_containers(barcode=["BAR-SOURCE", " "])
+    with pytest.raises(ValidationError, match="cursor"):
+        await runtime.service.find_containers(barcode=["BAR-SOURCE", "BAR-DEST"], cursor="50")
+    single = await runtime.service.find_containers(barcode=["BAR-SOURCE", "BAR-SOURCE"])
+    assert [item["id"] for item in single["items"]] == ["con_source1"]
+
+
 async def test_container_create_is_preview_then_single_apply(runtime, fake) -> None:
     specification = {
         "operation": "create",

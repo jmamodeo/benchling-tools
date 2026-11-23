@@ -175,6 +175,7 @@ benchling-tools results diff --left etr_abc123:research --right etr_abc123:regul
 benchling-tools results diff --left EXP-1 --right EXP-2 --key Tube --resolve-barcodes --output diff.csv --format csv --env dev
 benchling-tools container get con_example --env dev
 benchling-tools container find --barcode VIAL-001 --env dev
+benchling-tools container find --barcode VIAL-001 --barcode VIAL-002 --barcode VIAL-003 --env dev
 benchling-tools container find --name "Sample vial" --env dev
 benchling-tools container schema list --limit 50 --env dev
 benchling-tools export --kind table --part docpart_table1 --format csv --output measurements.csv --env dev
@@ -195,7 +196,7 @@ Entry references may be canonical IDs, display IDs, or URLs for the selected ten
 
 To find a person's entries, first call `benchling-tools users get HANDLE --env dev`, then pass the returned ID to `benchling-tools entry list --creator USER_ID --folder lib_example --env dev`. Alternatively, pass handles directly. Repeat `--creator` or `--author` for any-of matching; both filters together restrict the same query. Handles are resolved together first and `resolved_users` echoes the IDs. Creator and author can differ because authors can be changed. V3 uses `creator.anyOf` and `authors.anyOf`; V2 uses `creatorIds` and `authorIds.anyOf`. At most 100 creators and 100 authors are accepted.
 
-`container get` reads one inventory container. `container find` requires exactly one exact `--barcode` or `--name` filter and returns one page; pass `next_token` back with `--cursor`. `container schema list` returns one page of container schemas with their embedded field definitions.
+`container get` reads one inventory container. `container find` requires exact `--barcode` or `--name`, not both. With `--name` or one `--barcode` it returns one page; pass `next_token` back with `--cursor`. Repeat `--barcode` to look up many barcodes in one call (one barcode per value, no commas; duplicates are dropped and order is kept). They are sent to V2 `GET /containers` 100 per request, every page is read, and the reply is `requested`, `found` (each with `barcode`, `container_id`, `schema_id`, `contents` of `entity_id`, `entity_registry_id`, and `batch_id`, and `archived`), `invalid_barcodes`, `missing_barcodes` (valid, but no container matched), and `empty_containers` (found with no contents). Barcodes Benchling names in `invalidBarcodes` are reported instead of failing the call. With one barcode the reply is still one page, and an invalid barcode is a `validation_error` with `details.invalid_barcodes` and a hint. See [List containers](https://docs.benchling.com/docs/api/v2/benchling-api/containers/list-containers). The MCP tool `container_find` takes `barcodes` as a list. `container schema list` returns one page of container schemas with their embedded field definitions.
 
 Every `entry list` filter is applied by Benchling. `routing.client_side` is always empty.
 

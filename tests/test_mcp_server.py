@@ -258,8 +258,18 @@ async def test_resolve_entry_by_id_and_display_id(client) -> None:
 async def test_container_read_tools_and_plans_keep_default_read_only(client, writer, fake) -> None:
     container = await call(client, "container_get", env="sandbox", container_id="con_source1")
     assert container["data"]["name"] == "Source vial"
-    found = await call(client, "container_find", env="sandbox", barcode="BAR-SOURCE", limit=10)
+    found = await call(client, "container_find", env="sandbox", barcodes=["BAR-SOURCE"], limit=10)
     assert found["data"]["items"][0]["id"] == "con_source1"
+    many = await call(
+        client, "container_find", env="sandbox", barcodes=["BAR-SOURCE", "BAR-DEST", "BAR-NONE"]
+    )
+    assert [item["container_id"] for item in many["data"]["found"]] == ["con_source1", "con_dest1"]
+    assert many["data"]["missing_barcodes"] == ["BAR-NONE"]
+    assert many["data"]["empty_containers"] == ["BAR-DEST"]
+    tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+    barcodes_schema = tools["container_find"].inputSchema["properties"]["barcodes"]
+    assert "array" in json.dumps(barcodes_schema)
+    assert "List containers" in (tools["container_find"].description or "")
     schemas = await call(client, "container_schema_list", env="sandbox")
     assert schemas["data"]["items"][0]["fieldDefinitions"][0]["name"] == "Storage note"
 
