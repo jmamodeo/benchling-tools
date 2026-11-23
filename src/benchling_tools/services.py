@@ -1546,16 +1546,31 @@ class BenchlingService:
                 )
         return tables
 
-    async def list_result_tables(self, reference: str) -> dict[str, Any]:
-        """List the V2 Results tables embedded in an entry, with its project ID."""
+    async def list_result_tables(
+        self, reference: str, *, name_prefix: str | None = None
+    ) -> dict[str, Any]:
+        """List the V2 Results tables embedded in an entry, with its project ID.
+
+        ``name_prefix`` keeps tables whose name starts with it (exact,
+        case-sensitive). Row counts come from ``capacity.add_table_counts``.
+        """
         resolved = await self.resolve_entry(reference)
         entry = self._v2_object(
             await self.api.request("GET", f"/entries/{resolved['entry_id']}", version=2), "entry"
         )
+        items = self._result_tables_from_entry(entry)
+        if name_prefix is not None:
+            if not isinstance(name_prefix, str) or not name_prefix:
+                raise ValidationError("name_prefix must be a non-empty string")
+            items = [
+                item
+                for item in items
+                if isinstance(item.get("name"), str) and item["name"].startswith(name_prefix)
+            ]
         return {
             "resolved": resolved,
             "project_id": await self._entry_project_id(entry),
-            "items": self._result_tables_from_entry(entry),
+            "items": items,
             "complete": True,
             "id_namespace": "v2_structured_table",
         }
@@ -1596,6 +1611,7 @@ class BenchlingService:
         note: dict[str, Any],
         *,
         unstructured: bool,
+        parts: list[dict[str, Any]] | None = None,
     ) -> str | None:
         """Return the V3 document-part id for a V2 ``strtbl_`` note, when one part matches.
 
@@ -1603,17 +1619,19 @@ class BenchlingService:
         otherwise matches its result schema, and its name when several parts share
         that schema. The only results part is used when the note has no schema.
         An unstructured table matches only by handle. ``strtbl_`` is not itself a
-        document-part id.
+        document-part id. ``parts`` are the entry's V3 parts when the caller has
+        already read them; otherwise they are read here.
         """
         table_id = note.get("table_id")
         if not isinstance(table_id, str) or not table_id:
             return None
-        parts = [
-            item
-            async for item in self.api.paginate(
-                f"/entry/{entry_id}/parts/items", params={"pageSize": 100}
-            )
-        ]
+        if parts is None:
+            parts = [
+                item
+                async for item in self.api.paginate(
+                    f"/entry/{entry_id}/parts/items", params={"pageSize": 100}
+                )
+            ]
         predicate = is_unstructured_table if unstructured else is_results_table
         typed = [part for part in parts if predicate(part) and isinstance(part.get("id"), str)]
         direct = [part for part in typed if table_id in table_handle_ids(part)]

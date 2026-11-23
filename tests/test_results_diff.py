@@ -429,12 +429,25 @@ def test_parse_side_keeps_a_url_scheme() -> None:
     assert results_diff.parse_side("EXP-1", "left") == ("EXP-1", None)
 
 
-def test_rows_where_matches_the_written_value() -> None:
-    rows = [{"Run": "a", "N": 2}, {"Run": "b", "N": 2.5}, {"Run": None, "N": True}]
-    assert results_diff.rows_where(rows, "Run", "a") == [rows[0]]
-    assert results_diff.rows_where(rows, "N", "2.5") == [rows[1]]
-    assert results_diff.rows_where(rows, "N", "true") == [rows[2]]
-    assert results_diff.rows_where(rows, "Missing", "a") == []
+def test_run_filter_is_the_where_filter() -> None:
+    def row(*values: object, status: str = "SUBMITTED", archived: bool = False) -> dict:
+        cells = [{"inputValue": {"type": "text_value", "value": v}} for v in values]
+        return {"submissionStatus": status, "isArchived": archived, "cells": cells}
+
+    table = {
+        "columns": ["Run", "N"],
+        "rows": [{"Run": "a"}, {"Run": "b"}, {"Run": "a"}, {"Run": None}],
+        "raw_rows": [
+            row("a", "1"),
+            row("b", "2"),
+            row("a", "3", archived=True),
+            {"submissionStatus": "UNSUBMITTED", "cells": [{}, {}]},
+        ],
+    }
+    picked = results_diff._records(table, [], "Run", "a")
+    assert [record["index"] for record in picked] == [0]
+    # Without a run value, archived rows and the empty placeholder row are still left out.
+    assert [record["index"] for record in results_diff._records(table, [], None, None)] == [0, 1]
 
 
 async def test_an_unreadable_schema_still_resolves_display_names(runtime, fake) -> None:

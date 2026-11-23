@@ -7,6 +7,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from .. import capacity
 from ..errors import (
     AccessError,
     BenchlingAgentError,
@@ -91,6 +92,50 @@ def pending_results_next_step(
     )
 
 
+def result_upload_batches(request: dict[str, Any]) -> list[dict[str, Any]]:
+    """The table batches of a result upload spec, checked for shape and size.
+
+    A spec passes ``table_id`` and ``assay_results``, or ``batches`` of them. Each
+    table is a ``strtbl_`` id, appears once, and has 1 to 500 records, this
+    toolkit's own per-table batch size. Nothing is read from Benchling.
+    """
+    if "batches" in request:
+        if "table_id" in request or "assay_results" in request:
+            raise ValidationError("Pass batches or table_id and assay_results, not both")
+        batches = request["batches"]
+    else:
+        batches = [
+            {"table_id": request.get("table_id"), "assay_results": request.get("assay_results")}
+        ]
+    if not isinstance(batches, list) or not batches:
+        raise ValidationError("Result plan requires non-empty batches")
+    seen_tables: set[str] = set()
+    for batch in batches:
+        if not isinstance(batch, dict):
+            raise ValidationError("Each result batch requires table_id and assay_results")
+        if set(batch) != {"table_id", "assay_results"}:
+            raise ValidationError("Each result batch only accepts table_id and assay_results")
+        table_id = batch.get("table_id")
+        records = batch.get("assay_results")
+        if not isinstance(table_id, str) or not table_id.startswith("strtbl_"):
+            raise ValidationError("Each result batch requires an explicit V2 result table ID")
+        if table_id in seen_tables:
+            raise ValidationError("A result plan cannot include the same table more than once")
+        seen_tables.add(table_id)
+        if not isinstance(records, list) or not records:
+            raise ValidationError("Each result batch requires non-empty assay_results")
+        if len(records) > capacity.TOOLKIT_RESULTS_PER_TABLE:
+            raise ValidationError(
+                capacity.TOOLKIT_BATCH_MESSAGE,
+                details={
+                    "table_id": table_id,
+                    "records": len(records),
+                    "limit": capacity.TOOLKIT_RESULTS_PER_TABLE,
+                },
+            )
+    return batches
+
+
 class ResultsPlanning(ResultUpdatePlanning):
     """Planning of new result records and updates to existing ones."""
 
@@ -108,21 +153,76 @@ class ResultsPlanning(ResultUpdatePlanning):
             stager.discard()
             raise
 
+    async def _entry_pending_records(self, entry_id: str) -> list[dict[str, Any]]:
+        """Pending records of this home's applied upload plans for the entry.
+
+        ``ChangePlanner`` provides it from the same read-back as ``results pending --entry``.
+        """
+        raise NotImplementedError
+
+    async def results_table_capacity(
+        self, entry_id: str, planned: dict[str, int], *, all_tables: bool = False
+    ) -> dict[str, Any]:
+        """The capacity check shared by ``changes plan`` and ``results capacity``.
+
+        Reads each table's used rows, counts the still-pending records this home's
+        applied upload plans put in it, and adds ``planned`` rows per ``strtbl_`` id.
+        With ``all_tables`` every results table on the entry is reported; otherwise
+        only the planned ones. A planned table that is not on the entry is not_found.
+        """
+        usage = await capacity.read_table_usage(
+            self.service, entry_id, None if all_tables else list(planned)
+        )
+        known = {item["table_id"] for item in usage}
+        missing = sorted(set(planned) - known)
+        if missing:
+            raise NotFoundError(
+                "Result table was not found on the selected entry",
+                details={"entry_id": entry_id, "table_id": missing[0]},
+            )
+        pending: dict[str, int] = {}
+        for record in await self._entry_pending_records(entry_id):
+            table_id = record.get("table_id")
+            if isinstance(table_id, str):
+                pending[table_id] = pending.get(table_id, 0) + 1
+        return capacity.combine(usage, pending, planned)
+
+    async def _check_results_capacity(self, entry_id: str, planned: dict[str, int]) -> list[str]:
+        """Refuse rows that would push a table past the row limit; return warnings."""
+        report = await self.results_table_capacity(entry_id, planned)
+        full = capacity.over_limit(report)
+        if full:
+            first = full[0]
+            raise ValidationError(
+                f"Results table {capacity.label(first)} would exceed Benchling's "
+                f"{capacity.RESULTS_TABLE_ROW_LIMIT:,}-row table limit: {first['used_rows']} "
+                f"rows used and {first['planned']} planned",
+                details={
+                    "reason": "table_capacity_exceeded",
+                    "limit": report["limit"],
+                    "tables": report["tables"],
+                    "hint": capacity.next_step(report),
+                },
+            )
+        return list(report["warnings"])
+
     async def _plan_result_uploads(
         self, entry_id: str, request: dict[str, Any], stager: FileStager
     ) -> PlanParts:
-        if "batches" in request:
-            if "table_id" in request or "assay_results" in request:
-                raise ValidationError("Pass batches or table_id and assay_results, not both")
-            batches = request["batches"]
-        else:
-            batches = [
-                {"table_id": request.get("table_id"), "assay_results": request.get("assay_results")}
-            ]
-        if not isinstance(batches, list) or not batches:
-            raise ValidationError("Result plan requires non-empty batches")
+        batches = result_upload_batches(request)
+        tables: list[dict[str, Any]] = []
+        for batch in batches:
+            table = await self.service.get_result_table(entry_id, batch["table_id"])
+            if not isinstance(table.get("schema_id"), str):
+                raise UnsupportedError(
+                    "The selected result table does not expose a result schema",
+                    details={"table_id": batch["table_id"]},
+                )
+            tables.append(table)
+        capacity_warnings = await self._check_results_capacity(
+            entry_id, {batch["table_id"]: len(batch["assay_results"]) for batch in batches}
+        )
         planned_batches: list[dict[str, Any]] = []
-        seen_tables: set[str] = set()
         plan_row_offset = 0
         row_problems: list[dict[str, Any]] = []
         linked_schema_cache: dict[str, str | None] = {}
@@ -130,31 +230,10 @@ class ResultsPlanning(ResultUpdatePlanning):
         project_source = "entry_folder"
         project_resolved = False
         project_defaults: list[dict[str, Any]] = []
-        for batch in batches:
-            if not isinstance(batch, dict):
-                raise ValidationError("Each result batch requires table_id and assay_results")
-            if set(batch) != {"table_id", "assay_results"}:
-                raise ValidationError("Each result batch only accepts table_id and assay_results")
-            table_id = batch.get("table_id")
-            records = batch.get("assay_results")
-            if not isinstance(table_id, str) or not table_id.startswith("strtbl_"):
-                raise ValidationError("Each result batch requires an explicit V2 result table ID")
-            if table_id in seen_tables:
-                raise ValidationError("A result plan cannot include the same table more than once")
-            seen_tables.add(table_id)
-            if not isinstance(records, list) or not records:
-                raise ValidationError("Each result batch requires non-empty assay_results")
-            if len(records) > 500:
-                raise ValidationError(
-                    "Benchling accepts at most 500 results per notebook table upload"
-                )
-            table = await self.service.get_result_table(entry_id, table_id)
-            schema_id = table.get("schema_id")
-            if not isinstance(schema_id, str):
-                raise UnsupportedError(
-                    "The selected result table does not expose a result schema",
-                    details={"table_id": table_id},
-                )
+        for batch, table in zip(batches, tables, strict=True):
+            table_id = batch["table_id"]
+            records = batch["assay_results"]
+            schema_id = table["schema_id"]
             schema = await self.service.get_schema(schema_id)
             definitions = schema.get("field_definitions") or []
             default_rows = [
@@ -301,6 +380,7 @@ class ResultsPlanning(ResultUpdatePlanning):
                 }
             )
         warnings = self._result_plan_warnings(all_records)
+        warnings.extend(capacity_warnings)
         guarantees = [
             "verified entry-to-table and table-to-schema relationships",
             "local correlation UUIDs and persisted task IDs for reconciliation",

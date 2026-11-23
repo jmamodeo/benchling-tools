@@ -2,7 +2,9 @@
 
 Rows come from V3 ``GET /document-part-results-table/{id}/rows/items``, read
 through the same loader ``export`` uses. Benchling has no server-side filter on a
-text value, so a run value selects rows here, with ``rows_where``. Field tokens use
+text value, so a run value selects rows client-side with ``row_filter.row_matches``,
+the same match ``results tables --where`` and ``results rows --where`` use; archived
+rows and the empty placeholder row are left out on both sides. Field tokens use
 the planner's field resolver, and pairs are compared with ``readback`` helpers.
 Container barcodes come from V2 ``GET /containers:bulk-get``. Benchling is only read.
 """
@@ -16,7 +18,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from . import export
+from . import export, row_filter
 from .blob_download import download_blob
 from .errors import AccessError, NotFoundError, ValidationError
 from .plans.fields import _resolve_field
@@ -45,16 +47,6 @@ FILE_COLUMNS = [
     "right_barcode",
 ]
 _SAMPLE_MAX = 200
-
-
-def rows_where(rows: list[dict[str, Any]], column: str, value: str) -> list[dict[str, Any]]:
-    """Rows whose flattened ``column`` value is written as ``value``.
-
-    ``rows`` are flattened table rows (column name to value) as ``export`` writes
-    them. A number or boolean matches its CSV text, and a link matches its id.
-    Benchling has no server-side text-value filter on results-table rows.
-    """
-    return [row for row in rows if export._csv_cell(row.get(column)) == value]
 
 
 def parse_side(value: object, label: str) -> tuple[str, str | None]:
@@ -427,10 +419,12 @@ def _records(
     run_value: str | None,
 ) -> list[dict[str, Any]]:
     rows = table["rows"]
+    bound: list[tuple[int, str]] = []
     if run_value is not None and run_column is not None:
-        kept = {id(row) for row in rows_where(rows, run_column, run_value)}
-    else:
-        kept = {id(row) for row in rows}
+        bound = [(table["columns"].index(run_column), run_value)]
+    kept = {
+        id(row) for row, raw in zip(rows, table["raw_rows"]) if row_filter.row_matches(raw, bound)
+    }
     attachment_columns = {item["column"] for item in definitions if item["attachment"]}
     records = []
     for index, (row, raw) in enumerate(zip(rows, table["raw_rows"])):

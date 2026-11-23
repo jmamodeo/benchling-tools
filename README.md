@@ -57,6 +57,7 @@ benchling-tools entry resolve EXP-0001 --env dev
 benchling-tools entry inspect etr_abc123 --env dev
 benchling-tools entry list --project src_example --modified-after 2026-01-01 --env dev
 benchling-tools results tables etr_abc123 --env dev
+benchling-tools results tables etr_abc123 --name-prefix "Panel Testing" --where "Processing run=RUN_ID" --env dev
 benchling-tools results diff --left EXP-1 --right EXP-2 --key Well --resolve-barcodes --env dev
 benchling-tools export --kind table --part docpart_table1 --format csv --output measurements.csv --env dev
 
@@ -72,6 +73,7 @@ Every command, the six change families, spec shapes, result uploads and attachme
 | `users list` | List visible users by handle, email, name, ID, or organization. |
 | `users get` | Read a visible user by ID or exact handle. |
 | `entry list` | List entries with server-side filters, including creator and author. |
+| `results capacity` | Report each results table's used rows, known pending results, planned rows, and remaining room under Benchling's 1,000-row limit. Read-only. |
 
 For example, resolve a handle with `benchling-tools users get HANDLE --env dev`, then use the returned ID with `benchling-tools entry list --creator USER_ID --folder lib_example --env dev`. Handles may also be passed directly to `--creator` or `--author`.
 
@@ -79,6 +81,12 @@ For result uploads, preview defaults a missing `projectId` to the entry's projec
 the plan if none is available. An explicit `projectId: null` requests creator-only access,
 but some tenants reject it. Apply checks every batch before uploading attachments; if a
 result creation fails after an upload, the error identifies unlinked blobs.
+
+Preview also refuses a result upload that would push any results table past Benchling's
+1,000-row table limit, with `details.reason` `table_capacity_exceeded`, before any file
+is staged. Run `benchling-tools results capacity ENTRY --spec FILE --env dev` to see the
+same numbers first. 500 records per table in one plan is this toolkit's own batch size;
+Benchling documents 4,000 results per bulk-create request.
 
 ## MCP server
 

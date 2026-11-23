@@ -18,7 +18,7 @@ import typer
 from pydantic import WithJsonSchema
 from typer.core import TyperGroup
 
-from . import __version__, listing
+from . import __version__, capacity, listing
 from .blob_download import download_blob
 from .change_spec import CHANGE_SPECIFICATION_SCHEMA, parse_change_specification
 from .commands import CLI_ONLY_ATTR, TOOL_ATTR, Call, Command, McpParam, declare, surface_text
@@ -44,6 +44,7 @@ from .keychain import Keychain, bind_login_fix
 from .models import Envelope, PlanFamily
 from .redact import redact_text
 from .results_diff import diff_results
+from .row_filter import count_tables, filter_page, parse_where
 from .runtime import Runtime
 from .services import part_content
 from .skill import find_skill_md
@@ -1295,21 +1296,70 @@ async def results_tables(
     limit: int = typer.Option(
         100, "--limit", min=1, max=100, help="Most result tables to return, from 1 to 100."
     ),
+    counts: bool = typer.Option(
+        True,
+        "--counts/--no-counts",
+        help=(
+            "Add part_id, row_count, used_rows, submission_status and placeholder_rows "
+            "from one V3 parts listing, as results capacity reports them. When off, "
+            "only the V2 entry is read."
+        ),
+    ),
+    name_prefix: str | None = typer.Option(
+        None,
+        "--name-prefix",
+        help="Keep only tables whose name starts with this text (exact, case-sensitive).",
+    ),
+    where: list[str] | None = typer.Option(
+        None,
+        "--where",
+        help=(
+            "FIELD=VALUE; repeatable, all must match. FIELD is a column display name, "
+            "system name, or field-definition id. Adds matching_rows per table."
+        ),
+    ),
 ) -> Any:
     """Discover explicit V2 result-table IDs and assigned schemas on one entry.
 
     Each table_id is a v2_structured_table id (strtbl_…), not a v3_document_part
     id (docpart_…). results rows maps it with --entry; table get does not take it.
 
+    By default each table also gets part_id (docpart_…), row_count, used_rows,
+    submission_status and placeholder_rows, read from one GET
+    /entry/{id}/parts/items listing instead of a full entry inspect. These are
+    the numbers results capacity reports (same helper). placeholder_rows is 1
+    when the only row is the empty UNSUBMITTED row of a new table, and
+    used_rows is row_count minus placeholder_rows. A table no single part
+    matches gets null counts and count_note.
+
+    --where reads every row of each selected table and adds matching_rows and
+    rows_scanned per table, and rows_scanned in total. The filter is
+    client-side: Benchling has no server-side filter on text field values.
+    A cell matches when its value is exactly VALUE as text; a link cell matches
+    on the linked id. A table without FIELD gets matching_rows null and
+    where_note; a FIELD no table has is a validation_error listing the available
+    names. Pending results are not table rows and are not counted; use
+    results pending for them. Reads only.
+
     CLI: Export it with ``export --kind results-table --part TABLE_ID --entry ENTRY``.
 
     MCP: Export it with the export tool: kind results-table, part_id TABLE_ID, and entry.
     """
-    result = await call.runtime.service.list_result_tables(reference)
+    conditions = parse_where(where)
+    if conditions and not counts:
+        raise ValidationError("--where needs counts; drop --no-counts")
+    service = call.runtime.service
+    result = await service.list_result_tables(reference, name_prefix=name_prefix)
+    if counts:
+        await capacity.add_table_counts(
+            service, str(result["resolved"]["entry_id"]), result["items"]
+        )
     items = result["items"]
     page = items[offset : offset + limit]
     result["items"] = page
     result["pagination"] = _pagination(offset, len(page), len(items))
+    if conditions:
+        await count_tables(service, result, conditions)
     return result
 
 
@@ -1334,6 +1384,14 @@ async def results_rows(
     ),
     limit: int = typer.Option(50, "--limit", min=1, max=100, help=_LIMIT_HELP),
     cursor: str | None = typer.Option(None, "--cursor", help=_CURSOR_HELP),
+    where: list[str] | None = typer.Option(
+        None,
+        "--where",
+        help=(
+            "FIELD=VALUE; repeatable, all must match. FIELD is a column display name, "
+            "system name, or field-definition id. Keeps only matching rows of the page."
+        ),
+    ),
 ) -> Any:
     """Read one page of rows from a results table.
 
@@ -1350,9 +1408,19 @@ async def results_rows(
     carries warning and stale_cells, and the page carries warnings: the notebook
     cell is stale, so ask the person to use Re-sync table in the Benchling UI,
     which the API cannot do. stale_check counts compared and stale rows. Reads only.
+
+    --where keeps only the rows of this page that match, and adds scanned (rows
+    read) and matched; next_token still pages the underlying table. The filter
+    is client-side: Benchling has no server-side filter on text field values.
+    A cell matches when its value is exactly VALUE as text; a link cell matches
+    on the linked id. An unknown FIELD is a validation_error listing the
+    available names. Pending results are not table rows; use results pending.
     """
+    conditions = parse_where(where)
     service = call.runtime.service
     page = await service.list_results_table_rows(part_id, entry=entry, limit=limit, cursor=cursor)
+    if conditions:
+        page = await filter_page(service, page, conditions)
     return await annotate_rows(service, page)
 
 
@@ -1473,7 +1541,7 @@ async def results_diff(
         "--run-field",
         help=(
             "Field holding the run value: display name, system name, or field-definition "
-            "id. Required when a side has :RUN_VALUE."
+            "id. Required when a side has :RUN_VALUE. Matched like results rows --where."
         ),
     ),
     table: list[str] | None = typer.Option(
@@ -1707,6 +1775,83 @@ _SPECIFICATION = McpParam(
 )
 
 
+_RESULTS_SPECIFICATION = McpParam(
+    annotation=Annotated[Any, WithJsonSchema(CHANGE_SPECIFICATION_SCHEMA)],
+    description=(
+        "Result upload spec as a JSON object, the same one changes plan takes for the "
+        "results family: table_id and assay_results, or batches of them. Only the "
+        "number of records per table is used; nothing is saved."
+    ),
+    convert=_mcp_specification,
+)
+
+
+@results_app.command("capacity")
+@command(read_only=True, cli_only=("spec_json",), mcp_params={"spec": _RESULTS_SPECIFICATION})
+async def results_capacity(
+    call: Call,
+    reference: str = typer.Argument(..., help=_ENTRY_REF_HELP),
+    plan_id: str | None = typer.Option(
+        None,
+        "--plan",
+        help="Result upload plan ID in this home, or a portable plan JSON file.",
+    ),
+    spec: str | None = typer.Option(
+        None, "--spec", help="Result upload spec JSON file path, or '-' for stdin."
+    ),
+    spec_json: str | None = typer.Option(
+        None, "--spec-json", help="The result upload spec as inline JSON text."
+    ),
+    include_schema_pending: bool = typer.Option(
+        False,
+        "--include-schema-pending",
+        help=(
+            "Also count pending results of each table's schema on any entry since "
+            "--created-after. Reported only; not used for fits."
+        ),
+    ),
+    created_after: str | None = typer.Option(
+        None,
+        "--created-after",
+        help="RFC 3339 time, e.g. 2026-11-19T00:00:00Z. Used with --include-schema-pending.",
+    ),
+) -> Any:
+    """Report how many rows each results table on an entry can still take.
+
+    It is the same check changes plan --family results runs before staging
+    anything, run on its own. Benchling limits a results table to 1,000 rows
+    ("Result tables cannot have more than 1000 rows", Benchling Help, Capture
+    data with Results). Pass --plan, or a result upload spec with --spec or
+    --spec-json, to count planned rows; with neither it reports current usage.
+    Nothing is saved.
+
+    MCP: spec is the result upload spec as a JSON object.
+
+    Each table has table_id, part_id, name, schema_id, row_count (V3 rowCount),
+    submission_status, placeholder_rows, used_rows, pending_known, planned, limit,
+    remaining_without_pending, remaining_with_pending, and fits. A table whose
+    only row is an empty unsubmitted placeholder uses 0 rows. pending_known
+    counts still-pending records from this home's applied upload plans for the
+    entry. Benchling does not document whether pending results count toward the
+    limit, so fits is unknown_pending when the rows fit only if they do not
+    count; fits is unknown when no single V3 part matches the table. An already
+    applied --plan adds no planned rows. It exits 0 even when a table does not
+    fit; relay next_step. Reads only.
+    """
+    request = (
+        None
+        if spec is None and spec_json is None
+        else _plan_request(PlanFamily.RESULTS, spec, None, None, [], spec_json)
+    )
+    return await call.runtime.planner.results_capacity(
+        reference,
+        plan_id=plan_id,
+        spec=request,
+        include_schema_pending=include_schema_pending,
+        created_after=created_after,
+    )
+
+
 @changes_app.command("plan")
 @command(read_only=False, cli_only=("spec_json",), mcp_params={"spec": _SPECIFICATION})
 async def changes_plan(
@@ -1755,7 +1900,11 @@ async def changes_plan(
     names a field by display name, system name, or field-definition id.
 
     Inline result uploads pass table_id and assay_results, or batches containing
-    table_id and assay_results for each table, up to 500 records per table. Result
+    table_id and assay_results for each table. This toolkit takes up to 500
+    records per table in one plan (Benchling documents 4,000 results per
+    bulk-create request). The plan is refused with reason table_capacity_exceeded,
+    before any file is staged, when existing plus planned rows would pass a
+    table's 1,000-row limit; see results capacity. Result
     fields accept system names, field-definition IDs, or display names. Display
     names are translated to system names in the plan; ambiguous names are rejected.
     Dropdown values are option IDs (sfso_…), not labels. Schema-constrained
