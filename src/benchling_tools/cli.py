@@ -8,6 +8,7 @@ import inspect
 import io
 import json
 import os
+import re
 import sys
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
@@ -17,7 +18,7 @@ import typer
 from pydantic import WithJsonSchema
 from typer.core import TyperGroup
 
-from . import __version__
+from . import __version__, listing
 from .blob_download import download_blob
 from .change_spec import CHANGE_SPECIFICATION_SCHEMA, parse_change_specification
 from .commands import CLI_ONLY_ATTR, TOOL_ATTR, Call, Command, McpParam, declare, surface_text
@@ -84,6 +85,56 @@ class RootGroup(TyperGroup):
         sys.exit(code if isinstance(code, int) else 0)
 
 
+_PENDING_SOURCES_HINT = (
+    "Pass exactly one of --entry, --plan, --id, or --schema with --created-after."
+)
+
+# Curated hints for an unknown option, keyed by (command path, option). An option of
+# None matches every unknown option on that command.
+_OPTION_HINTS: dict[tuple[str, str | None], str] = {
+    ("results list", "--plan"): (
+        "results list takes no plan; use results pending --plan PLAN or results verify PLAN."
+    ),
+    ("results pending", None): _PENDING_SOURCES_HINT,
+}
+
+_ENTRY_LIKE_REF = re.compile(r"^(etr_\w+|[A-Za-z][A-Za-z0-9]*-?\d+|https?://\S+)$")
+_PLAN_ID = re.compile(r"^[0-9a-f]{32}$")
+_EXTRA_ARGUMENTS = re.compile(r"^Got unexpected extra argument(?:s|\(s\))? \((.*)\)$")
+
+
+def _long_options(ctx: Any) -> list[str]:
+    """The command's long options, in declaration order, without --help."""
+    options: list[str] = []
+    for param in ctx.command.get_params(ctx):
+        if getattr(param, "param_type_name", None) != "option":
+            continue
+        for name in [*param.opts, *param.secondary_opts]:
+            if name.startswith("--") and name != "--help" and name not in options:
+                options.append(name)
+    return options
+
+
+def _usage_hints(exc: Any, ctx: Any) -> dict[str, Any]:
+    """valid_options and a hint that name the right alternative for this command."""
+    path = " ".join(ctx.command_path.split()[1:])
+    option_name = getattr(exc, "option_name", None)
+    if ctx.parent is None and option_name in ("--env", "-e"):
+        return {"hint": "--env is a command option: benchling-tools entry get REF --env NAME"}
+    options = _long_options(ctx)
+    if type(exc).__name__ == "NoSuchOption":
+        hint = _OPTION_HINTS.get((path, option_name)) or _OPTION_HINTS.get((path, None))
+        return {"valid_options": options, **({"hint": hint} if hint else {})}
+    extra = _EXTRA_ARGUMENTS.match(getattr(exc, "message", "") or "")
+    if extra and "--entry" in options:
+        for value in extra.group(1).split():
+            if _PLAN_ID.fullmatch(value) and "--plan" in options:
+                return {"hint": f"Pass the plan with --plan {value}"}
+            if _ENTRY_LIKE_REF.fullmatch(value):
+                return {"hint": f"Pass the entry with --entry {value}"}
+    return {}
+
+
 def _usage_failure(exc: Any) -> int:
     """Print the usage_error envelope for a click usage error and return its exit code."""
     ctx = exc.ctx
@@ -96,9 +147,8 @@ def _usage_failure(exc: Any) -> int:
             "command": ctx.command_path,
             "usage": ctx.get_usage(),
             "help": f"{ctx.command_path} --help",
+            **_usage_hints(exc, ctx),
         }
-        if ctx.parent is None and getattr(exc, "option_name", None) in ("--env", "-e"):
-            details["hint"] = "--env is a command option: benchling-tools entry get REF --env NAME"
     error = UsageError(exc.format_message(), details=details)
     _emit(Envelope.failure(error))
     return int(error.exit_code)
@@ -117,6 +167,7 @@ entry_app = typer.Typer(help="Resolve, list, fetch, and inspect entries.")
 entry_fields_app = typer.Typer(help="Read entry schema fields.")
 template_app = typer.Typer(help="List and inspect entry templates.")
 folder_app = typer.Typer(help="Read notebook folders.")
+users_app = typer.Typer(help="List and read users.")
 section_app = typer.Typer(help="Read entry sections.")
 part_app = typer.Typer(help="Read document parts.")
 table_app = typer.Typer(help="Read unstructured tables.")
@@ -137,6 +188,7 @@ app.add_typer(entry_app, name="entry")
 entry_app.add_typer(entry_fields_app, name="fields")
 app.add_typer(template_app, name="template")
 app.add_typer(folder_app, name="folder")
+app.add_typer(users_app, name="users")
 app.add_typer(section_app, name="section")
 app.add_typer(part_app, name="part")
 app.add_typer(table_app, name="table")
@@ -823,6 +875,47 @@ async def folder_get(
     return await call.runtime.service.get_folder(folder_id)
 
 
+@users_app.command("list")
+@command(read_only=True)
+async def users_list(
+    call: Call,
+    handle: list[str] | None = typer.Option(None, "--handle", help="Exact handle; repeatable."),
+    email: list[str] | None = typer.Option(
+        None, "--email", help="Exact email; repeatable, max 100."
+    ),
+    name: str | None = typer.Option(None, "--name", help="Exact user name."),
+    name_includes: str | None = typer.Option(None, "--name-includes", help="User name substring."),
+    id: list[str] | None = typer.Option(None, "--id", help="User ID (ent_…); repeatable."),
+    member_of: list[str] | None = typer.Option(
+        None, "--member-of", help="Organization ID; repeatable."
+    ),
+    limit: int = typer.Option(50, "--limit", min=1, max=100, help=_LIMIT_HELP),
+    cursor: str | None = typer.Option(None, "--cursor", help=_CURSOR_HELP),
+) -> Any:
+    """List one page of visible users using V2 server-side filters."""
+    return await listing.list_users(
+        call.runtime.api,
+        handles=handle,
+        emails=email,
+        name=name,
+        name_includes=name_includes,
+        ids=id,
+        member_of=member_of,
+        limit=limit,
+        cursor=cursor,
+    )
+
+
+@users_app.command("get")
+@command(read_only=True)
+async def users_get(
+    call: Call,
+    user_id_or_handle: str = typer.Argument(..., help="User ID (ent_…) or exact handle."),
+) -> Any:
+    """Get one visible user by ID or exact handle."""
+    return await listing.get_user(call.runtime.api, user_id_or_handle)
+
+
 @entry_app.command("list")
 @command(read_only=True)
 async def entry_list(
@@ -861,6 +954,12 @@ async def entry_list(
             "a timestamp must include a time zone."
         ),
     ),
+    creator: list[str] | None = typer.Option(
+        None, "--creator", help="Creator user ID (ent_…) or exact handle; repeatable."
+    ),
+    author: list[str] | None = typer.Option(
+        None, "--author", help="Author user ID (ent_…) or exact handle; repeatable."
+    ),
     limit: int = typer.Option(50, "--limit", min=1, max=100, help=_LIMIT_HELP),
     cursor: str | None = typer.Option(None, "--cursor", help=_CURSOR_HELP),
 ) -> Any:
@@ -875,6 +974,8 @@ async def entry_list(
         name=name,
         modified_after=modified_after,
         modified_before=modified_before,
+        creator=creator,
+        author=author,
         limit=limit,
         cursor=cursor,
     )
@@ -1258,6 +1359,14 @@ async def results_rows(
 @command(read_only=True)
 async def results_pending(
     call: Call,
+    entry: str | None = typer.Option(
+        None,
+        "--entry",
+        help=(
+            "Entry ID (etr_…), display ID, or URL. Reads back the records of every "
+            "applied result upload plan for that entry in this home."
+        ),
+    ),
     plan_id: str | None = typer.Option(
         None,
         "--plan",
@@ -1288,8 +1397,17 @@ async def results_pending(
 
     Pending results have no entry until a person accepts them with the plug icon
     in the results table, so listing results by entry does not find them. Pass
-    exactly one of --plan, --id, or --schema with --created-after. Relay
+    exactly one of --entry, --plan, --id, or --schema with --created-after. Relay
     next_step. Reads only.
+
+    --entry is answered from this home's plans and journals, not by Benchling:
+    Benchling has no API filter for pending results by entry, and its result
+    lists leave a pending result's entry empty until it is accepted. It reads
+    back every applied result upload plan (not result updates, and not plans
+    that were never applied or failed) whose entry matches, newest first, and
+    lists each under plans with plan_id, applied_at, and record_count. Plans
+    applied from another home are not known; read those with --plan BUNDLE.json
+    or with --schema and --created-after.
 
     Each item has id and v2_id (the V2 assay result UUID) and v3_id (result_…).
     A V3 id is read with V3 GET /result/{id} and matched to its V2 record; it is
@@ -1297,6 +1415,7 @@ async def results_pending(
     not_found, and in not_found_details with id_namespace and lookup.
     """
     return await call.runtime.planner.read_back_results(
+        entry=entry,
         plan_id=plan_id,
         result_ids=result_ids or None,
         schema_id=schema_id,

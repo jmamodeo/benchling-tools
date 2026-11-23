@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 from benchling_tools import cli
 from benchling_tools.config import ConfigStore
 from benchling_tools.errors import ValidationError
+from benchling_tools.models import PlanStatus
 from benchling_tools.plans import readback
 from benchling_tools.plans.repository import checksum_for
 
@@ -142,6 +143,102 @@ async def test_accepted_rows_are_not_reported_as_needing_accept(runtime, fake) -
     assert data["counts"]["pending"] == 0 and data["next_step"] is None
 
 
+def rewrite_plan(runtime, plan_id, **changes):
+    """Edit a stored plan and re-checksum it, as if it had been planned that way."""
+    path = runtime.repository.config.plans_dir / f"{plan_id}.json"
+    plan = json.loads(path.read_text())
+    for key, value in changes.items():
+        if key == "operation":
+            plan["preconditions"]["operation"] = value
+        else:
+            plan[key] = value
+    plan["checksum"] = checksum_for(plan)
+    path.write_text(json.dumps(plan))
+
+
+async def test_pending_by_entry_reads_every_applied_upload_plan_newest_first(runtime, fake) -> None:
+    fake.bulk_responses = [{"taskId": "task_first"}, {"taskId": "task_second"}]
+    first_plan = await applied_plan(runtime, fake, [record(1)])
+    second_plan = await applied_plan(runtime, fake, [record(2), record(3)])
+    (first,) = fake.complete_upload("task_first", payload_index=0)
+    second_ids = fake.complete_upload("task_second", payload_index=1)
+    fake.accept_results([first])
+    writes = len(fake.writes())
+
+    for reference in (ENTRY_ID, "EXP-1", entry_web_url(ENTRY_ID)):
+        data = await runtime.planner.read_back_results(entry=reference)
+
+        assert data["source"] == {
+            "mode": "entry",
+            "entry_id": ENTRY_ID,
+            "display_id": "EXP-1",
+            "web_url": entry_web_url(ENTRY_ID),
+        }
+        assert [plan["plan_id"] for plan in data["plans"]] == [second_plan.id, first_plan.id]
+        assert [plan["record_count"] for plan in data["plans"]] == [2, 1]
+        assert all(plan["applied_at"] for plan in data["plans"])
+        assert data["counts"] == {
+            "read": 3,
+            "pending": 2,
+            "accepted": 1,
+            "archived": 0,
+            "not_found": 0,
+        }
+        assert data["needs_accept"] == second_ids
+        assert [item["state"] for item in data["items"]] == ["pending", "pending", "accepted"]
+        assert all(item["v2_id"] and item["v3_id"] for item in data["items"])
+        assert all(item["table_id"] == TABLE for item in data["items"])
+        assert '"Assay results"' in data["next_step"]
+    assert len(fake.writes()) == writes
+
+
+async def test_pending_by_entry_skips_updates_other_entries_and_unapplied_plans(
+    runtime, fake
+) -> None:
+    fake.bulk_responses = [
+        {"taskId": "task_kept"},
+        {"taskId": "task_update"},
+        {"taskId": "task_failed"},
+        {"taskId": "task_other"},
+    ]
+    kept = await applied_plan(runtime, fake, [record(1)])
+    update = await applied_plan(runtime, fake, [record(2)])
+    failed = await applied_plan(runtime, fake, [record(3)])
+    other = await applied_plan(runtime, fake, [record(4)])
+    await runtime.planner.plan(
+        ENTRY_ID, "results", {"table_id": TABLE, "assay_results": [record()]}
+    )
+    (kept_id,) = fake.complete_upload("task_kept", payload_index=0)
+    for index, task in enumerate(("task_update", "task_failed", "task_other"), start=1):
+        fake.complete_upload(task, payload_index=index)
+    rewrite_plan(runtime, update.id, operation="update")
+    rewrite_plan(runtime, other.id, entry_id="etr_other123")
+    journal = runtime.repository.load_journal(failed.id)
+    journal.status = PlanStatus.FAILED
+    runtime.repository.save_journal(journal)
+    (runtime.repository.config.plans_dir / "notes.json").write_text("{}")
+    (runtime.repository.config.plans_dir / f"{'f' * 32}.json").write_text("not json")
+
+    data = await runtime.planner.read_back_results(entry=ENTRY_ID)
+
+    assert [plan["plan_id"] for plan in data["plans"]] == [kept.id]
+    assert data["needs_accept"] == [kept_id]
+
+
+async def test_pending_by_entry_without_plans_explains_what_this_home_knows(
+    runtime, fake, tmp_path
+) -> None:
+    runtime.repository.config = ConfigStore(tmp_path / "empty-home")
+    data = await runtime.planner.read_back_results(entry=ENTRY_ID)
+
+    assert data["plans"] == [] and data["items"] == []
+    assert data["counts"]["read"] == 0
+    assert "BENCHLING_TOOLS_HOME" in data["next_step"]
+    assert "results pending --plan BUNDLE.json" in data["next_step"]
+    assert "--schema SCHEMA_ID --created-after TIME" in data["next_step"]
+    assert bulk_get_calls(fake) == []
+
+
 async def test_pending_by_ids_chunks_bulk_get_at_200_and_lists_not_found(runtime, fake) -> None:
     fake.assay_results = [
         {"id": f"id{n}", "entryId": None, "schema": {"id": "assaysch_abc123"}, "fields": {}}
@@ -213,6 +310,11 @@ async def test_pending_by_schema_and_time_uses_v2_list_without_an_entry_filter(
     [
         ({}, "exactly one"),
         ({"plan_id": "abc", "result_ids": ["x"]}, "exactly one"),
+        ({"entry": ENTRY_ID, "plan_id": "abc"}, "exactly one"),
+        ({"entry": ENTRY_ID, "result_ids": ["x"]}, "exactly one"),
+        ({"entry": ENTRY_ID, "schema_id": "assaysch_abc123"}, "exactly one"),
+        ({"entry": ENTRY_ID, "cursor": "1"}, "cursor applies only"),
+        ({"entry": " "}, "entry must be"),
         ({"schema_id": "assaysch_abc123"}, "passed together"),
         ({"created_after": "2026-11-19"}, "passed together"),
         ({"result_ids": ["x"], "cursor": "1"}, "cursor applies only"),
@@ -468,6 +570,13 @@ def test_cli_pending_and_verify_read_back_a_plan(invoke, fake, tmp_path) -> None
     assert verified["data"]["sample_limit"] == 3
     code, failed = invoke("results", "pending")
     assert code == 2 and failed["error"]["code"] == "validation_error"
+    code, by_entry = invoke("results", "pending", "--entry", "EXP-1")
+    assert code == 0, by_entry
+    assert [plan["plan_id"] for plan in by_entry["data"]["plans"]] == [plan_id]
+    assert by_entry["data"]["needs_accept"] == [result_id]
+    code, failed = invoke("results", "pending", "--entry", ENTRY_ID, "--plan", plan_id)
+    assert code == 2 and failed["error"]["code"] == "validation_error"
+    assert "exactly one of entry" in failed["error"]["message"]
 
 
 def test_cli_pending_and_verify_accept_portable_plan_file(

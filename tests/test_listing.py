@@ -38,7 +38,7 @@ async def test_v3_filters_are_server_side_and_folder_is_not_sent(runtime, fake) 
     assert page["routing"] == {
         "api_version": 3,
         "path": "/entry/items",
-        "server_side": ["project", "schema", "name", "modified_at"],
+        "server_side": ["project", "schema", "name", "modified_at", "creator", "author"],
         "client_side": [],
     }
     (params,) = _params(fake, "/entry/items")
@@ -64,7 +64,15 @@ async def test_folder_filter_uses_v2_for_the_whole_query(runtime, fake) -> None:
     )
     assert [item["id"] for item in page["items"]] == ["etr_list4"]
     assert page["routing"]["api_version"] == 2
-    assert page["routing"]["server_side"] == ["folder", "project", "schema", "name", "modified_at"]
+    assert page["routing"]["server_side"] == [
+        "folder",
+        "project",
+        "schema",
+        "name",
+        "modified_at",
+        "creator",
+        "author",
+    ]
     assert page["routing"]["client_side"] == []
     assert _params(fake, "/api/v3/entry/items") == []
     (params,) = _params(fake, "/api/v2/entries")

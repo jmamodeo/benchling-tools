@@ -154,6 +154,17 @@ class PlanRepository:
             "journal_status": journal.status.value,
         }
 
+    def list_plan_ids(self) -> list[str]:
+        """IDs of the plans stored in this home, sorted; other files are ignored."""
+        directory = self.config.plans_dir
+        if not directory.is_dir():
+            return []
+        return sorted(
+            path.stem
+            for path in directory.glob("*.json")
+            if path.is_file() and SAFE_ID.fullmatch(path.stem)
+        )
+
     def _load_plan_path(self, path: Path, plan_id: str) -> ChangePlan:
         plan = ChangePlan.model_validate_json(path.read_text("utf-8"))
         if checksum_for(plan.model_dump(mode="json")) != plan.checksum:

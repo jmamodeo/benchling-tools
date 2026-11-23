@@ -70,6 +70,21 @@ def _without_clock(value):
 @pytest.mark.parametrize(
     ("args", "tool", "arguments"),
     [
+        (
+            ["users", "list", "--handle", "fixture_handle_1"],
+            "users_list",
+            {"handle": ["fixture_handle_1"]},
+        ),
+        (
+            ["users", "get", "fixture_handle_1"],
+            "users_get",
+            {"user_id_or_handle": "fixture_handle_1"},
+        ),
+        (
+            ["entry", "list", "--creator", "fixture_handle_1"],
+            "entry_list",
+            {"creator": ["fixture_handle_1"]},
+        ),
         (["entry", "resolve", ENTRY_ID], "entry_resolve", {"reference": ENTRY_ID}),
         (["entry", "resolve", "EXP-99"], "entry_resolve", {"reference": "EXP-99"}),
         (
@@ -96,6 +111,11 @@ def _without_clock(value):
                 "result_limit": 2,
                 "table_row_limit": 1,
             },
+        ),
+        (
+            ["results", "pending", "--entry", "EXP-1", "--limit", "2"],
+            "results_pending",
+            {"entry": "EXP-1", "limit": 2},
         ),
         (
             ["results", "rows", "docpart_rt1", "--limit", "2"],

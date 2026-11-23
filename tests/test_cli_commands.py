@@ -1046,6 +1046,48 @@ def test_unknown_option_is_a_usage_error_envelope(fake) -> None:
     assert fake.calls == []
 
 
+def test_unknown_option_lists_the_command_options(fake) -> None:
+    error = _usage_failure(["entry", "get", ENTRY_ID, "--bogus"])
+    options = error["details"]["valid_options"]
+    assert "--full" in options and "--env" in options and "--help" not in options
+    assert "hint" not in error["details"]
+
+
+def test_unknown_option_on_results_commands_names_the_alternatives(fake) -> None:
+    error = _usage_failure(["results", "pending", "--bogus", "x", "--env", "sandbox"])
+    assert error["details"]["hint"] == (
+        "Pass exactly one of --entry, --plan, --id, or --schema with --created-after."
+    )
+    assert {"--entry", "--plan", "--id", "--schema", "--created-after"} <= set(
+        error["details"]["valid_options"]
+    )
+    error = _usage_failure(["results", "list", "--plan", "x", "--env", "sandbox"])
+    assert "results pending --plan" in error["details"]["hint"]
+    assert "results verify PLAN" in error["details"]["hint"]
+    assert "--plan" not in error["details"]["valid_options"]
+    assert fake.calls == []
+
+
+@pytest.mark.parametrize("command", ["pending", "list"])
+@pytest.mark.parametrize(
+    "reference", ["EXP-12", ENTRY_ID, "https://your-tenant-dev.benchling.com/x/etr_abc123/edit"]
+)
+def test_positional_entry_reference_suggests_the_entry_option(fake, command, reference) -> None:
+    error = _usage_failure(["results", command, reference, "--env", "sandbox"])
+    assert error["message"].startswith("Got unexpected extra argument")
+    assert error["details"]["hint"] == f"Pass the entry with --entry {reference}"
+    assert fake.calls == []
+
+
+def test_positional_plan_id_suggests_the_plan_option(fake) -> None:
+    error = _usage_failure(["results", "pending", "0" * 32, "--env", "sandbox"])
+    assert error["details"]["hint"] == f"Pass the plan with --plan {'0' * 32}"
+    error = _usage_failure(["results", "pending", "not:a-ref", "--env", "sandbox"])
+    assert "hint" not in error["details"]
+    error = _usage_failure(["entry", "get", ENTRY_ID, "EXP-12"])
+    assert "hint" not in error["details"]
+
+
 def test_unknown_command_is_a_usage_error_envelope() -> None:
     error = _usage_failure(["nope"])
     assert error["message"] == "No such command 'nope'."
