@@ -702,6 +702,7 @@ async def test_results_tables_and_rows_tools_count_and_filter(client, fake) -> N
         )
     )["data"]
     assert (rows["scanned"], rows["matched"]) == (1, 1)
+    assert (rows["where_scope"], rows["complete"]) == ("page", True)
     assert fake.writes() == []
 
 
