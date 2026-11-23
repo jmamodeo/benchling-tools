@@ -43,6 +43,7 @@ from .issues import REPOSITORY, build_issue_draft
 from .keychain import Keychain, bind_login_fix
 from .models import Envelope, PlanFamily
 from .redact import redact_text
+from .results_diff import diff_results
 from .row_filter import count_tables, filter_page, parse_where
 from .runtime import Runtime
 from .services import part_content
@@ -1536,6 +1537,113 @@ async def results_verify(
     either id can be passed to results get or results pending --id.
     """
     return await call.runtime.planner.verify_results(plan_id, sample=sample)
+
+
+@results_app.command("diff")
+@command(read_only=True, cli_only=("output", "file_format", "overwrite"))
+async def results_diff(
+    call: Call,
+    left: str = typer.Option(
+        ...,
+        "--left",
+        help=(
+            "Left side: entry ID (etr_…), display ID, or same-tenant URL, optionally "
+            "followed by :RUN_VALUE to compare only that run's rows."
+        ),
+    ),
+    right: str = typer.Option(
+        ...,
+        "--right",
+        help=(
+            "Right side, in the same form as --left. It may be the same entry "
+            "with a different run value."
+        ),
+    ),
+    run_field: str | None = typer.Option(
+        None,
+        "--run-field",
+        help=(
+            "Field holding the run value: display name, system name, or field-definition "
+            "id. Required when a side has :RUN_VALUE. Matched like results rows --where."
+        ),
+    ),
+    table: list[str] | None = typer.Option(
+        None, "--table", help="Exact results-table name to compare; repeatable. Default: all."
+    ),
+    key: str | None = typer.Option(
+        None,
+        "--key",
+        help=(
+            "Field or comma-separated fields that pair rows. A link field keys on its "
+            "linked id, or its barcode with --resolve-barcodes. Default: row position."
+        ),
+    ),
+    fields: list[str] | None = typer.Option(
+        None,
+        "--fields",
+        help="Field to compare; repeatable. Default: every column except the run field.",
+    ),
+    resolve_barcodes: bool = typer.Option(
+        False,
+        "--resolve-barcodes",
+        help="Read container barcodes (100 ids per call) and show them next to container ids.",
+    ),
+    compare_blobs: bool = typer.Option(
+        False,
+        "--compare-blobs",
+        help="Compare attachment cells by downloaded SHA-256 instead of by id. Downloads.",
+    ),
+    sample: int = typer.Option(
+        20, "--sample", min=1, max=200, help="Rows to list per category, from 1 to 200."
+    ),
+    output: str | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Write every difference to this file. An existing file is kept unless --overwrite.",
+    ),
+    file_format: str | None = typer.Option(
+        None, "--format", help="File format with --output: json or csv."
+    ),
+    overwrite: bool = typer.Option(
+        False, "--overwrite", help="Replace the --output file if it already exists."
+    ),
+) -> Any:
+    """Diff the results-table rows of two entries, or two runs, table by table.
+
+    Tables pair by exact name, including a trailing number. A name on one side
+    only is listed in tables_only_left or tables_only_right. Paired tables with
+    different result schemas are listed in schema_mismatch and not compared.
+    Rows pair by the key fields, or by position with a warning. A key used more
+    than once on either side is not paired; duplicate_keys lists it with the
+    row count on each side (key, left, right, left_row_indexes,
+    right_row_indexes), so a key unique on one side and repeated on the other
+    is still reported. Each table reports counts (left, right, matched,
+    only_left, only_right, changed, duplicate_keys) and samples of
+    only_left, only_right, and changed fields. Benchling has no server-side
+    text-value filter, so run values select rows locally. Reads only.
+
+    Pending (unaccepted) results are not table rows; use results pending and
+    results verify for those.
+
+    CLI: --output FILE --format json|csv writes every difference to a file, like
+    export, and adds its path, row count, and SHA-256 checksum to the reply.
+    """
+    return await diff_results(
+        call.runtime.service,
+        left=left,
+        right=right,
+        run_field=run_field,
+        tables=table,
+        key=key,
+        fields=fields,
+        resolve_barcodes=resolve_barcodes,
+        compare_blobs=compare_blobs,
+        sample=sample,
+        output=output,
+        file_format=file_format,
+        overwrite=overwrite,
+    )
 
 
 @app.command("export")
