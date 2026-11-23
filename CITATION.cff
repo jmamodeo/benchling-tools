@@ -2,8 +2,8 @@ cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 type: software
 title: "benchling-tools"
-version: 0.6.0
-date-released: "2026-11-20"
+version: 0.7.0
+date-released: "2026-11-22"
 abstract: >-
   Safe, auditable tools for AI agents working in Benchling: a JSON-first CLI
   and a read-only-by-default MCP server. Every change is first recorded as an

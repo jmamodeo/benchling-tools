@@ -6,8 +6,11 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-22
+
 ### Breaking
 
+- To upgrade from 0.6.0: install the `benchling-tools` package and command (there is no `benchlingtk` command or `import benchlingtk` alias), pass `--env` after the command name (`benchling-tools entry get REF --env NAME`, not `benchling-tools --env NAME entry get REF`), and move the state directory from `benchlingtk` to `benchling-tools` under the same platform config root, or set `BENCHLING_TOOLS_HOME` to the existing path. Existing keychain logins carry over; the keychain service name remains `benchlingtk`.
 - Renamed the distribution and command from `benchlingtk` to `benchling-tools` and the Python
   module to `benchling_tools`; there is no old command or import alias. Update scripts and MCP
   client launch configurations. The MCP skill resource is now `skill://benchling-tools/SKILL.md`.
@@ -43,17 +46,17 @@ All notable changes to this project are documented here. The format is based on
 - **Breaking:** the MCP dependency is limited to versions before 2.0.
 - **Breaking:** `results get`, `results list`, `results pending --id` and `results verify` (and their MCP tools) accept either a V2 assay result UUID or a V3 result id (`result_…`), and return both. `results get` maps a UUID to its V3 record with V2 `GET /assay-results:bulk-get` and its `v3Id`; `results pending --id` reads a `result_…` id with V3 `GET /result/{id}` and finds its V2 record by schema, creation time and `v3Id`, so a V3 id is never sent to `assayResultIds`. `results get` and each `results list` item add `v2_id` and `v3_id` (`v2_id` is null when Benchling does not return it); each `results pending` item adds `v2_id` beside `id` and `v3_id`; `results verify` rows and `needs_accept` add `v2_id` and `v3_id` beside `result_id`. A plan whose task returned only V3 ids is read back too.
 - **Breaking:** an id that cannot be read is reported with its namespace. `results get` returns a `not_found` envelope whose message and `details` give `id_namespace` (the namespace passed: `v3_result`, `v2_assay_result`, or `unknown`), `expected_id_namespace`, `lookup` (the API path used) and `accepted_id_namespaces`. A V2 bulk-get 400 is a `validation_error` with the same fields, and `results pending` adds `not_found_details` with them for each id in `not_found`.
-- **Breaking:** `--env` (`-e`) is an option of each command that needs an environment, and the root `--env` is removed. Write `benchlingtk entry get REF --env NAME` (the option may come anywhere after the command name), not `benchlingtk --env NAME entry get REF`; the old form is a `usage_error` whose `details.hint` says where `--env` goes. `changes apply` on a protected environment still needs `--env` typed on the command line and `--confirm-env` repeating it. MCP tools keep their required `env` argument.
-- **Breaking:** usage errors exit 9, not 2, and print a `usage_error` envelope, not a text help box. Exit 2 now means only `validation_error`. CLI-enforced limits and choices (for example `--limit 0` or `--family magic`) are usage errors; the same values passed to an MCP tool stay a `validation_error`. A bare `benchlingtk` still prints the help, and exits 9.
+- **Breaking:** `--env` (`-e`) is an option of each command that needs an environment, and the root `--env` is removed. Write `benchling-tools entry get REF --env NAME` (the option may come anywhere after the command name), not `benchling-tools --env NAME entry get REF`; the old form is a `usage_error` whose `details.hint` says where `--env` goes. `changes apply` on a protected environment still needs `--env` typed on the command line and `--confirm-env` repeating it. MCP tools keep their required `env` argument.
+- **Breaking:** usage errors exit 9, not 2, and print a `usage_error` envelope, not a text help box. Exit 2 now means only `validation_error`. CLI-enforced limits and choices (for example `--limit 0` or `--family magic`) are usage errors; the same values passed to an MCP tool stay a `validation_error`. A bare `benchling-tools` still prints the help, and exits 9.
 - **Breaking:** the `--install-completion` and `--show-completion` options are removed.
-- Docs repositioned: README.md and SKILL.md describe benchlingtk as a CLI for coding agents and humans, directly mirrored as an MCP server for chat agents. Both state that there is no public Python API, that the Python modules are internal (the package docstring says so too), and point Python scripting to the official Benchling SDK; a public API may be added if enough people ask in a GitHub issue. The README is shorter: the full CLI and MCP reference moved to `docs/reference.md`, the demo transcript to `docs/demo.md`, the module map to `ARCHITECTURE.md`, and the test details and sandbox exercise to `CONTRIBUTING.md`. No command, tool, argument, or behavior changed.
+- Docs repositioned: README.md and SKILL.md describe benchling-tools as a CLI for coding agents and humans, directly mirrored as an MCP server for chat agents. Both state that there is no public Python API, that the Python modules are internal (the package docstring says so too), and point Python scripting to the official Benchling SDK; a public API may be added if enough people ask in a GitHub issue. The README is shorter: the full CLI and MCP reference moved to `docs/reference.md`, the demo transcript to `docs/demo.md`, the module map to `ARCHITECTURE.md`, and the test details and sandbox exercise to `CONTRIBUTING.md`. No command, tool, argument, or behavior changed.
 - **Breaking:** MCP `changes_apply` takes `confirm_env`. A protected environment needs `confirm_env` equal to `env` even when it is listed in `--allow-writes`, the same rule as `changes apply --confirm-env`, and a `confirm_env` naming another environment is refused for any environment. Agents set it only after the person confirms the environment name.
 - **Breaking:** the MCP server is generated from the CLI. Each command declared in `cli.py` is one tool named after its command path, with the same arguments, defaults, limits, and help text, so no tool is written by hand and the two cannot drift. Commands that need a terminal or change local credentials (`auth login`, `auth logout`, `auth protect`, `auth unprotect`, `skill path`, `skill show`, `mcp serve`) have no tool. Tool renames: `list_environments` → `auth_status`, `get_capabilities` → `doctor`, `resolve_entry` → `entry_resolve`, `get_entry` → `entry_get`, `inspect_entry` → `entry_inspect`, `get_entries` → `entry_bulk_get`, `list_entries` → `entry_list`, `get_entry_fields` → `entry_fields_get`, `get_folder` → `folder_get`, `get_template` → `template_get`, `list_templates` → `template_list`, `get_section` → `section_get`, `get_part` → `part_get`, `get_table` → `table_get`, `get_schema` → `schema_get`, `list_schemas` → `schema_list`, `find_schema` → `schema_find`, `list_results` → `results_list`, `get_result` → `results_get`, `list_result_tables` → `results_tables`, `list_results_table_rows` → `results_rows`, `read_back_results` → `results_pending`, `verify_results` → `results_verify`, `get_blob` → `blob_get`, `get_container` → `container_get`, `find_containers` → `container_find`, `list_container_schemas` → `container_schema_list`, `get_change_status` → `changes_status`, `plan_changes` → `changes_plan`, `apply_changes` → `changes_apply`. `export` and `issue_draft` keep their names.
-- **Breaking:** tool arguments follow the CLI flags. `changes_plan` takes `spec` (was `specification`), `export` takes `output` (was `path`), `issue_draft` takes `attempted`, `solution`, and matching `cite_url` and `cite_quote` lists (were `attempted_action`, `proposed_solution`, and `citations`), and `results_list` takes `page_size`. `auth_status` returns the same rows as `benchlingtk auth status`, plus `writes_allowed`.
+- **Breaking:** tool arguments follow the CLI flags. `changes_plan` takes `spec` (was `specification`), `export` takes `output` (was `path`), `issue_draft` takes `attempted`, `solution`, and matching `cite_url` and `cite_quote` lists (were `attempted_action`, `proposed_solution`, and `citations`), and `results_list` takes `page_size`. `auth_status` returns the same rows as `benchling-tools auth status`, plus `writes_allowed`.
 - `doctor` and the `doctor` tool return an `authentication_error` envelope, with the checks in `details`, when a check fails. CLI failures after the environment was opened carry `env` and `tenant_url` in `meta`, as MCP failures do. An out-of-range paging argument on a tool is a `validation_error` envelope.
 - Every CLI argument and option has help text.
-- **Breaking:** the package no longer ships `py.typed` and drops the `Typing :: Typed` classifier, because benchlingtk has no public Python API. Type checkers no longer read its inline types; script Benchling from Python with the official Benchling SDK.
-- The docs offer one install route, `uv tool install benchlingtk` (or `uvx benchlingtk` without installing); the `pip install` instructions are removed. A checkout still installs with `uv tool install .`. The 0.6.0 notes no longer present `import benchlingtk` as a supported API.
+- **Breaking:** the package no longer ships `py.typed` and drops the `Typing :: Typed` classifier, because benchling-tools has no public Python API. Type checkers no longer read its inline types; script Benchling from Python with the official Benchling SDK.
+- The docs offer one install route, `uv tool install benchling-tools` (or `uvx benchling-tools` without installing); the `pip install` instructions are removed. A checkout still installs with `uv tool install .`. The 0.6.0 notes no longer present `import benchlingtk` as a supported API.
 
 ### Fixed
 
@@ -311,15 +314,16 @@ All notable changes to this project are documented here. The format is based on
 - Versioned JSON envelope, stable exit codes, and published JSON schemas.
 - Operating-system trust-store TLS verification.
 
-[Unreleased]: https://github.com/jmamodeo/benchlingtk/compare/v0.6.0...HEAD
-[0.6.0]: https://github.com/jmamodeo/benchlingtk/compare/v0.5.3...v0.6.0
-[0.5.3]: https://github.com/jmamodeo/benchling-toolkit/compare/v0.5.2...v0.5.3
-[0.5.2]: https://github.com/jmamodeo/benchling-toolkit/compare/v0.5.1...v0.5.2
-[0.5.1]: https://github.com/jmamodeo/benchling-toolkit/compare/v0.5.0...v0.5.1
-[0.5.0]: https://github.com/jmamodeo/benchling-toolkit/compare/v0.4.1...v0.5.0
-[0.4.1]: https://github.com/jmamodeo/benchling-toolkit/compare/v0.4.0...v0.4.1
-[0.4.0]: https://github.com/jmamodeo/benchling-toolkit/compare/v0.2.0...v0.4.0
-[0.2.0]: https://github.com/jmamodeo/benchling-toolkit/compare/v0.1.2...v0.2.0
-[0.1.2]: https://github.com/jmamodeo/benchling-toolkit/compare/v0.1.1...v0.1.2
-[0.1.1]: https://github.com/jmamodeo/benchling-toolkit/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/jmamodeo/benchling-toolkit/releases/tag/v0.1.0
+[Unreleased]: https://github.com/jmamodeo/benchling-tools/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/jmamodeo/benchling-tools/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/jmamodeo/benchling-tools/compare/v0.5.3...v0.6.0
+[0.5.3]: https://github.com/jmamodeo/benchling-tools/compare/v0.5.2...v0.5.3
+[0.5.2]: https://github.com/jmamodeo/benchling-tools/compare/v0.5.1...v0.5.2
+[0.5.1]: https://github.com/jmamodeo/benchling-tools/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/jmamodeo/benchling-tools/compare/v0.4.1...v0.5.0
+[0.4.1]: https://github.com/jmamodeo/benchling-tools/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/jmamodeo/benchling-tools/compare/v0.2.0...v0.4.0
+[0.2.0]: https://github.com/jmamodeo/benchling-tools/compare/v0.1.2...v0.2.0
+[0.1.2]: https://github.com/jmamodeo/benchling-tools/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/jmamodeo/benchling-tools/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/jmamodeo/benchling-tools/releases/tag/v0.1.0

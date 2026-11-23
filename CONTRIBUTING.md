@@ -70,7 +70,7 @@ Use the bug or feature form. Both ask what you tried, the expected and actual be
 
 ## Releasing
 
-Only the maintainer releases. Set the same version in `src/benchling-tools/__init__.py`, `CITATION.cff`, and `SKILL.md`, move the `CHANGELOG.md` entries under the new version, and merge that pull request. Then publish a GitHub release from `main` whose tag is `v` plus the version. The `Publish to PyPI` workflow builds the package and uploads it with PyPI trusted publishing (GitHub environment `pypi`); no token is stored in the repository.
+Only the maintainer releases. Set the same version in `src/benchling_tools/__init__.py`, `CITATION.cff`, and `SKILL.md`, move the `CHANGELOG.md` entries under the new version, and merge that pull request. Then publish a GitHub release from `main` whose tag is `v` plus the version. The `Publish to PyPI` workflow builds the package and uploads it with PyPI trusted publishing (GitHub environment `pypi`); no token is stored in the repository.
 
 ## No secrets or real tenant data
 
