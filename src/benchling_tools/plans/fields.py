@@ -7,7 +7,9 @@ from datetime import date, datetime
 from typing import Any, Literal
 
 from ..errors import (
+    NotFoundError,
     UnsupportedError,
+    UpstreamError,
     ValidationError,
 )
 from ..models import (
@@ -15,11 +17,17 @@ from ..models import (
     ChangePlan,
 )
 from ..services import (
+    ENTITY_LINK_PREFIXES,
+    STORABLE_LINK_PREFIXES,
     field_definition_type,
     is_attachment_field,
+    link_kind,
 )
 from .base import PlannerBase, PlanParts, write_event_details
 from .blobs import local_file_descriptor
+
+# Linked item already read during this plan: the item, or None when it was not found.
+LinkCache = dict[str, dict[str, Any] | None]
 
 
 def _resolve_field(
@@ -242,6 +250,121 @@ class FieldNormalization(PlannerBase):
                 )
         return normalized, targets, field_name_map
 
+    async def _link_value_problems(
+        self, definition: dict[str, Any], value: Any, cache: LinkCache
+    ) -> list[ValidationError]:
+        """Read each item a link value names, at plan time, with read-only GETs.
+
+        Entry, storable, and schema-constrained links must name an item that can be
+        read, and a schema-constrained link's item must use the field's allowed
+        schema. An any-entity link is read when its ID prefix has a read route.
+        Request and system-category links have no read route and are not looked up.
+        """
+        if (
+            value is None
+            or field_definition_type(definition) != "LINK"
+            or is_attachment_field(definition)
+        ):
+            return []
+        field = str(definition.get("systemName") or definition.get("id"))
+        values = value if isinstance(value, list) else [value]
+        kind = link_kind(definition)
+        allowed_schema_id: str | None = None
+        if kind == "schema_constrained":
+            link_definition = definition.get("linkDefinition")
+            allowed = link_definition.get("id") if isinstance(link_definition, dict) else None
+            if not isinstance(allowed, str) or not allowed:
+                return [
+                    ValidationError(
+                        "Linked field does not expose an allowed schema",
+                        details={"reason": "link_definition_unavailable", "field": field},
+                    )
+                ]
+            allowed_schema_id = allowed
+            prefixes: tuple[str, ...] = ENTITY_LINK_PREFIXES
+        elif kind == "entry":
+            prefixes = ("etr_",)
+        elif kind == "storable":
+            prefixes = STORABLE_LINK_PREFIXES
+        elif kind == "any_entity":
+            prefixes = ENTITY_LINK_PREFIXES
+        else:
+            return []
+        for item in values:
+            if not any(item.startswith(prefix) and len(item) > len(prefix) for prefix in prefixes):
+                if kind == "any_entity":
+                    continue
+                if kind == "schema_constrained":
+                    return [
+                        ValidationError(
+                            "Linked entity ID has an unsupported namespace",
+                            details={
+                                "reason": "unresolvable_link_target",
+                                "field": field,
+                                "entity_id": item,
+                            },
+                        )
+                    ]
+                return [
+                    ValidationError(
+                        "Schema field value has an invalid link ID",
+                        details={"reason": "invalid_field_value", "field": field, "value": value},
+                    )
+                ]
+            if item not in cache:
+                try:
+                    cache[item] = await self.service.get_link_target(item)
+                except NotFoundError:
+                    cache[item] = None
+            target = cache[item]
+            if target is None:
+                return [
+                    ValidationError(
+                        "Linked item was not found",
+                        details={
+                            "reason": "link_target_not_found",
+                            "field": field,
+                            "entity_id": item,
+                        },
+                    )
+                ]
+            if allowed_schema_id is None:
+                continue
+            schema = target.get("typedSchema") or target.get("schema")
+            actual_schema_id = schema.get("id") if isinstance(schema, dict) else None
+            if not isinstance(actual_schema_id, str) or not actual_schema_id:
+                raise UpstreamError(
+                    "Linked entity response did not include its schema",
+                    details={"entity_id": item},
+                )
+            if actual_schema_id != allowed_schema_id:
+                return [
+                    ValidationError(
+                        "Linked entity does not use a schema allowed by this field",
+                        details={
+                            "reason": "invalid_link_target",
+                            "field": field,
+                            "entity_id": item,
+                            "expected_schema_id": allowed_schema_id,
+                            "actual_schema_id": actual_schema_id,
+                        },
+                    )
+                ]
+        return []
+
+    async def _check_link_values(
+        self, normalized: dict[str, Any], definitions: list[dict[str, Any]]
+    ) -> None:
+        """Raise the first link problem in field inputs keyed by field-definition ID."""
+        by_id = {str(item["id"]): item for item in definitions if item.get("id")}
+        cache: LinkCache = {}
+        for field_id, field_input in normalized.items():
+            problems = await self._link_value_problems(
+                by_id[field_id], field_input.get("value"), cache
+            )
+            if problems:
+                raise problems[0]
+
     def _field_definition_fingerprints(
         self,
         definitions: list[dict[str, Any]],
@@ -364,6 +487,7 @@ class FieldsPlanning(FieldNormalization):
         normalized, targets, _field_name_map = self._normalize_schema_field_updates(
             updates, definitions, address_by="field_definition_id"
         )
+        await self._check_link_values(normalized, definitions)
         request["schema_fields"] = normalized
         fields = current.get("fields_by_system_name") or {}
         before_fields = {

@@ -124,6 +124,17 @@ STORAGE_KINDS = {
     "box_": ("box", "/boxes"),
     "plt_": ("plate", "/plates"),
 }
+# Read-only GET routes for link field values, by ID prefix: (API version, route, wrapper key).
+ENTITY_LINK_PREFIXES = ("ent_", "seq_", "aaseq_")
+STORABLE_LINK_PREFIXES = ("con_", *STORAGE_KINDS)
+LINK_TARGET_ROUTES: dict[str, tuple[int, str, str]] = {
+    "ent_": (3, "/custom-entity", "customEntity"),
+    "seq_": (3, "/dna-sequence", "dnaSequence"),
+    "aaseq_": (3, "/aa-sequence", "aaSequence"),
+    "etr_": (3, "/entry", "entry"),
+    "con_": (2, "/containers", "container"),
+    **{prefix: (2, route, kind) for prefix, (kind, route) in STORAGE_KINDS.items()},
+}
 V2_ID_LOOKUP_MAX_PAGES = 5
 TEMPLATE_TEXT_PREVIEW_LIMIT = 160
 
@@ -2632,38 +2643,32 @@ class BenchlingService:
             )
         return identifier, namespace, payload
 
-    async def get_linked_entity_schema_id(self, entity_id: str) -> str:
-        """Read a linked entity and return its entity schema ID for result-plan validation."""
-        entity_routes = {
-            "ent_": ("custom-entity", "customEntity"),
-            "seq_": ("dna-sequence", "dnaSequence"),
-            "aaseq_": ("aa-sequence", "aaSequence"),
-        }
+    async def get_link_target(self, item_id: str) -> dict[str, Any]:
+        """Read the item a link field value names, choosing the GET route by ID prefix.
+
+        Raises NotFoundError when Benchling has no such item, and ValidationError
+        (reason ``unresolvable_link_target``) for a prefix with no read route here.
+        """
         route = next(
-            (value for prefix, value in entity_routes.items() if entity_id.startswith(prefix)),
+            (value for prefix, value in LINK_TARGET_ROUTES.items() if item_id.startswith(prefix)),
             None,
         )
         if route is None:
             raise ValidationError(
-                "Linked entity ID has an unsupported namespace",
-                details={"reason": "unresolvable_link_target", "entity_id": entity_id},
+                "Linked item ID has an unsupported namespace",
+                details={"reason": "unresolvable_link_target", "entity_id": item_id},
             )
-        collection, wrapper = route
-        payload = await self.api.request("GET", f"/{collection}/{quote(entity_id, safe='')}")
-        entity = payload.get(wrapper, payload)
-        if not isinstance(entity, dict) or entity.get("id") != entity_id:
+        version, collection, wrapper = route
+        payload = await self.api.request(
+            "GET", f"{collection}/{quote(item_id, safe='')}", version=version
+        )
+        target = payload.get(wrapper, payload)
+        if not isinstance(target, dict) or target.get("id") != item_id:
             raise UpstreamError(
-                "Benchling returned an unexpected linked entity",
-                details={"entity_id": entity_id},
+                "Benchling returned an unexpected linked item",
+                details={"entity_id": item_id},
             )
-        schema = entity.get("typedSchema") or entity.get("schema")
-        schema_id = schema.get("id") if isinstance(schema, dict) else None
-        if not isinstance(schema_id, str) or not schema_id:
-            raise UpstreamError(
-                "Linked entity response did not include its schema",
-                details={"entity_id": entity_id},
-            )
-        return schema_id
+        return target
 
     async def doctor(self) -> dict[str, Any]:
         """Probe V3 and V2 entry endpoints; failures are reported per check rather than raised."""

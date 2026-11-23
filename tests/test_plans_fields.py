@@ -75,6 +75,28 @@ async def test_invalid_field_values_are_rejected(runtime, fake, key, value) -> N
     assert caught.value.details["field"] == key
 
 
+async def test_entry_link_value_is_read_at_plan_time(runtime, fake) -> None:
+    await plan(runtime, {"sample_link": {"value": ENTRY_ID}})
+    assert any(
+        call.method == "GET" and call.path == f"/api/v3/entry/{ENTRY_ID}" for call in fake.calls
+    )
+    assert fake.writes() == []
+
+
+@pytest.mark.parametrize(
+    ("value", "reason"),
+    [("etr_missing", "link_target_not_found"), ("con_source1", "invalid_field_value")],
+)
+async def test_unreadable_entry_link_value_is_rejected_at_plan_time(
+    runtime, fake, value, reason
+) -> None:
+    with pytest.raises(ValidationError) as caught:
+        await plan(runtime, {"sample_link": {"value": value}})
+    assert caught.value.details["field"] == "sample_link"
+    assert caught.value.details["reason"] == reason
+    assert fake.writes() == []
+
+
 @pytest.mark.parametrize("key", ["weird", "calculated", "old"])
 async def test_unsupported_or_read_only_fields_cannot_be_planned(runtime, key) -> None:
     with pytest.raises(UnsupportedError) as caught:

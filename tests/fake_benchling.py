@@ -250,7 +250,7 @@ def field_definitions() -> list[dict[str, Any]]:
             "id": "tsf_link",
             "systemName": "sample_link",
             "name": "Sample link",
-            "__typename": "EntityLinkFieldDefinition",
+            "__typename": "EntryLinkFieldDefinition",
         },
         {
             **base,

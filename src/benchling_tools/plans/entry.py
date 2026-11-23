@@ -62,11 +62,13 @@ class EntryPlanning(FieldNormalization):
             if not isinstance(schema_id, str) or not schema_id:
                 raise ValidationError("The selected entry template has no schema for schema_fields")
             schema_detail = await self.service.get_schema(schema_id)
+            definitions = schema_detail.get("field_definitions") or []
             normalized, targets, _field_name_map = self._normalize_schema_field_updates(
                 schema_fields,
-                schema_detail.get("field_definitions") or [],
+                definitions,
                 address_by="field_definition_id",
             )
+            await self._check_link_values(normalized, definitions)
             payload["schemaFields"] = normalized
 
         template_preview = {

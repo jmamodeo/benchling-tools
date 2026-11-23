@@ -30,7 +30,7 @@ from ..redact import redact_text
 from ..services import field_definition_type, is_attachment_field
 from .base import PlanParts, write_event_details
 from .blobs import UPLOAD_WARNINGS, BlobUploads, FileStager, stage_field_values
-from .fields import FieldNormalization, _resolve_field
+from .fields import FieldNormalization, LinkCache, _resolve_field
 
 MAX_RESULT_UPDATES = 500
 _MAX_REPORTED_ERRORS = 50
@@ -88,6 +88,7 @@ class ResultUpdatePlanning(FieldNormalization, BlobUploads):
         changes, unchanged = self._row_changes(
             entry_id, rows, id_column, records, bindings, problems, stager
         )
+        await self._check_change_links(changes, bindings, problems)
         _raise_problems(problems)
         if not changes:
             raise ValidationError(
@@ -230,6 +231,35 @@ class ResultUpdatePlanning(FieldNormalization, BlobUploads):
                 continue
             changes.append(change)
         return changes, unchanged
+
+    async def _check_change_links(
+        self,
+        changes: list[dict[str, Any]],
+        bindings: dict[str, _Binding | None],
+        problems: list[dict[str, Any]],
+    ) -> None:
+        """Read every linked item a changed link cell names; report the ones that fail."""
+        cache: LinkCache = {}
+        for change in changes:
+            binding = bindings.get(change["schema_id"] or "")
+            if binding is None:
+                continue
+            for column, definition in binding.columns:
+                field_input = change["schema_fields"].get(str(definition["id"]))
+                if field_input is None:
+                    continue
+                for exc in await self._link_value_problems(
+                    definition, field_input.get("value"), cache
+                ):
+                    problems.append(
+                        {
+                            "row": change["row"],
+                            "id": change["id"],
+                            "column": column,
+                            "message": exc.message,
+                            "details": exc.details,
+                        }
+                    )
 
     def _one_row(
         self,

@@ -295,6 +295,44 @@ async def test_float_boolean_date_and_multi_cells_keep_their_types(runtime, fake
 
 
 @pytest.mark.parametrize(
+    ("value", "reason"),
+    [
+        ("ent_missing", "link_target_not_found"),
+        ("ent_wrong_schema", "invalid_link_target"),
+        ("con_source1", "unresolvable_link_target"),
+    ],
+)
+async def test_link_cells_are_read_at_plan_time(runtime, fake, tmp_path, value, reason) -> None:
+    fake.results = [make_result(), make_result("result_2")]
+    path = write_csv(
+        tmp_path / "assay.csv",
+        ["id", "Sample"],
+        [["result_1", "ent_target"], ["result_2", value]],
+    )
+    with pytest.raises(ValidationError) as caught:
+        await plan_csv(runtime, path, {"Sample": "Sample"})
+    errors = caught.value.details["errors"]
+    assert [(item["id"], item["column"], item["details"]["reason"]) for item in errors] == [
+        ("result_2", "Sample", reason)
+    ]
+    assert fake.writes() == []
+
+    fake.results = [make_result(), make_result("result_2")]
+    path = write_csv(
+        tmp_path / "ok.csv",
+        ["id", "Sample"],
+        [["result_1", "ent_target"], ["result_2", "ent_target"]],
+    )
+    start = len(fake.calls)
+    planned = await plan_csv(runtime, path, {"Sample": "Sample"})
+    assert [item["schema_fields"] for item in planned.after["results"]] == [
+        {"assayfield_sample": {"value": "ent_target"}},
+        {"assayfield_sample": {"value": "ent_target"}},
+    ]
+    assert len([call for call in fake.calls[start:] if call.path.endswith("/ent_target")]) == 1
+
+
+@pytest.mark.parametrize(
     ("mutate", "match"),
     [
         ("version", "version"),

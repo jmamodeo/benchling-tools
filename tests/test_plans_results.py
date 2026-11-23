@@ -10,6 +10,7 @@ from benchling_tools.errors import (
     NotFoundError,
     PartialCompletionError,
     UnsupportedError,
+    UpstreamError,
     ValidationError,
 )
 
@@ -408,10 +409,10 @@ def samples_schema(fake):
     }
     fake.dropdowns["sfs_empty"] = {"id": "sfs_empty", "name": "Empty", "options": []}
     return {
-        "tube": {"value": "con_TEST1"},
-        "contents": {"value": "ent_TEST1"},
-        "entry": {"value": "etr_TEST1"},
-        "destination": {"value": "loc_TEST1"},
+        "tube": {"value": "con_source1"},
+        "contents": {"value": "ent_target"},
+        "entry": {"value": ENTRY_ID},
+        "destination": {"value": "loc_room1"},
         "request": {"value": "req_TEST1"},
         "category": {"value": "category_TEST1"},
         "quantity": {"value": 2.5},
@@ -421,12 +422,53 @@ def samples_schema(fake):
     }
 
 
-async def test_samples_schema_valid_row_needs_no_link_lookup(runtime, fake, samples_schema):
+async def test_samples_schema_valid_row_reads_each_link_target(runtime, fake, samples_schema):
     planned = await plan(runtime, [record(fields=samples_schema)])
     assert planned.after["validation_summary"]["counts_by_reason"] == {}
     assert planned.after["records"][0]["fields"] == samples_schema
-    assert not any("/custom-entity/" in call.path for call in fake.calls)
+    link_reads = {
+        call.path
+        for call in fake.calls
+        if call.method == "GET"
+        and any(item in call.path for item in ("con_source1", "ent_target", "loc_room1"))
+    }
+    assert link_reads == {
+        "/api/v2/containers/con_source1",
+        "/api/v3/custom-entity/ent_target",
+        "/api/v2/locations/loc_room1",
+    }
+    assert any(call.path == f"/api/v3/entry/{ENTRY_ID}" for call in fake.calls)
+    assert not any("req_TEST1" in call.path or "category_TEST1" in call.path for call in fake.calls)
     assert fake.writes() == []
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "reason"),
+    [
+        ("tube", "con_missing", "link_target_not_found"),
+        ("tube", "box_missing", "link_target_not_found"),
+        ("entry", "etr_missing", "link_target_not_found"),
+        ("contents", "ent_missing", "link_target_not_found"),
+        ("sample", "bat_TEST1", "unresolvable_link_target"),
+    ],
+)
+async def test_samples_schema_reports_unreadable_link_targets(
+    runtime, fake, samples_schema, field, value, reason
+):
+    samples_schema[field] = {"value": value}
+    with pytest.raises(ValidationError) as caught:
+        await plan(runtime, [record(fields=samples_schema)])
+    problems = caught.value.details["row_problems"]
+    assert [(p["reason"], p["details"]["field"]) for p in problems] == [(reason, field)]
+    assert problems[0]["details"]["entity_id"] == value
+    assert fake.writes() == []
+
+
+async def test_any_entity_link_without_a_read_route_is_not_looked_up(runtime, fake, samples_schema):
+    samples_schema["contents"] = {"value": "bat_TEST1"}
+    planned = await plan(runtime, [record(fields=samples_schema)])
+    assert planned.after["validation_summary"]["counts_by_reason"] == {}
+    assert not any("bat_TEST1" in call.path for call in fake.calls)
 
 
 async def test_samples_schema_reports_all_field_problems(runtime, fake, samples_schema):
@@ -835,3 +877,19 @@ async def test_non_entry_apply_has_no_web_url(runtime) -> None:
     )
     applied = await runtime.planner.apply(planned.id)
     assert "web_url" not in applied
+
+
+async def test_link_target_service_errors(runtime, fake) -> None:
+    with pytest.raises(ValidationError) as caught:
+        await runtime.service.get_link_target("bat_TEST1")
+    assert caught.value.details["reason"] == "unresolvable_link_target"
+    fake.linked_entities["ent_other"] = {"id": "ent_elsewhere"}
+    with pytest.raises(UpstreamError, match="unexpected linked item"):
+        await runtime.service.get_link_target("ent_other")
+    fake.linked_entities["ent_noschema"] = {"id": "ent_noschema"}
+    with pytest.raises(UpstreamError, match="did not include its schema"):
+        await plan(
+            runtime,
+            [record(fields={"ct": {"value": 12}, "sample": {"value": "ent_noschema"}})],
+        )
+    assert fake.writes() == []
