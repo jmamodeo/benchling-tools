@@ -237,6 +237,8 @@ def stage_field_values(
     fields: dict[str, Any],
     definitions: list[dict[str, Any]],
     stager: FileStager,
+    *,
+    field_name_map: dict[str, str] | None = None,
     **context: Any,
 ) -> None:
     """Replace file references on attachment fields in place.
@@ -249,7 +251,7 @@ def stage_field_values(
             if isinstance(key, str) and key:
                 by_key.setdefault(key, item)
     for key, field_input in fields.items():
-        definition = by_key.get(key)
+        definition = by_key.get(key) or by_key.get((field_name_map or {}).get(key, ""))
         if definition is None or not isinstance(field_input, dict) or "value" not in field_input:
             continue
         value = field_input["value"]

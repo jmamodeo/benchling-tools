@@ -22,6 +22,62 @@ from .base import PlannerBase, PlanParts, write_event_details
 from .blobs import local_file_descriptor
 
 
+def _resolve_field(
+    token: str, definitions: list[dict[str, Any]]
+) -> dict[str, Any] | list[dict[str, Any]] | None:
+    """Match a field-definition id, system name, or display name."""
+    by_id = [item for item in definitions if item.get("id") == token]
+    if by_id:
+        return by_id[0] if len(by_id) == 1 else by_id
+
+    by_system = _prefer_live([item for item in definitions if item.get("systemName") == token])
+    display_exact = _prefer_live(
+        [
+            item
+            for item in definitions
+            if isinstance(item.get("name"), str) and item["name"].strip() == token.strip()
+        ]
+    )
+    if by_system and display_exact:
+        collisions = [item for item in display_exact if item not in by_system]
+        if collisions:
+            return list({id(item): item for item in [*by_system, *display_exact]}.values())
+    if by_system:
+        return by_system[0] if len(by_system) == 1 else by_system
+    if display_exact:
+        return display_exact[0] if len(display_exact) == 1 else display_exact
+
+    by_name = _prefer_live(
+        [
+            item
+            for item in definitions
+            if isinstance(item.get("name"), str)
+            and item["name"].strip().casefold() == token.strip().casefold()
+        ]
+    )
+    return by_name[0] if len(by_name) == 1 else by_name or None
+
+
+def _prefer_live(matches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    live = [item for item in matches if not item.get("archived")]
+    return live or matches
+
+
+def _available_display_names(definitions: list[dict[str, Any]]) -> dict[str, str]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for item in definitions:
+        name = item.get("name")
+        if isinstance(name, str) and name.strip() and item.get("systemName"):
+            grouped.setdefault(name.strip(), []).append(item)
+    available: dict[str, str] = {}
+    for name, matches in grouped.items():
+        matches = _prefer_live(matches)
+        system_names = {str(item["systemName"]) for item in matches}
+        if len(system_names) == 1:
+            available[name] = next(iter(system_names))
+    return dict(sorted(available.items()))
+
+
 class FieldNormalization(PlannerBase):
     """Validation and normalization of schema field values shared by fields and results planners."""
 
@@ -33,8 +89,9 @@ class FieldNormalization(PlannerBase):
         require_all_required: bool = False,
         address_by: Literal["system_name", "field_definition_id"] = "system_name",
         local_files: bool = False,
+        allow_display_names: bool = False,
         value_errors: list[ValidationError | UnsupportedError] | None = None,
-    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    ) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, str]]:
         by_system = {
             str(item["systemName"]): item for item in definitions if item.get("systemName")
         }
@@ -45,8 +102,10 @@ class FieldNormalization(PlannerBase):
             )
         normalized: dict[str, Any] = {}
         targets: list[dict[str, Any]] = []
+        field_name_map: dict[str, str] = {}
         unknown: list[str] = []
         seen_systems: set[str] = set()
+        ambiguous_systems: set[str] = set()
 
         def report(exc: ValidationError | UnsupportedError) -> None:
             if value_errors is None:
@@ -54,11 +113,39 @@ class FieldNormalization(PlannerBase):
             value_errors.append(exc)
 
         for supplied_key, field_input in updates.items():
-            definition = by_system.get(supplied_key) or by_id.get(supplied_key)
+            if allow_display_names:
+                resolved = _resolve_field(supplied_key, definitions)
+                if isinstance(resolved, list):
+                    ambiguous_systems.update(
+                        str(item["systemName"]) for item in resolved if item.get("systemName")
+                    )
+                    report(
+                        ValidationError(
+                            "Schema field name is ambiguous",
+                            details={
+                                "reason": "ambiguous_field",
+                                "field": supplied_key,
+                                "candidates": [
+                                    {
+                                        "system_name": item.get("systemName"),
+                                        "field_definition_id": item.get("id"),
+                                        "name": item.get("name"),
+                                    }
+                                    for item in resolved
+                                ],
+                            },
+                        )
+                    )
+                    continue
+                definition = resolved
+            else:
+                definition = by_system.get(supplied_key) or by_id.get(supplied_key)
             if definition is None:
                 unknown.append(supplied_key)
                 continue
             system_name = str(definition["systemName"])
+            if supplied_key != system_name:
+                field_name_map[supplied_key] = system_name
             if system_name in seen_systems:
                 report(
                     ValidationError(
@@ -122,14 +209,17 @@ class FieldNormalization(PlannerBase):
                 }
             )
         if unknown:
+            unknown_details: dict[str, Any] = {
+                "unknown_fields": unknown,
+                "available_system_names": sorted(by_system),
+                "available_field_ids": sorted(by_id),
+            }
+            if allow_display_names:
+                unknown_details["available_display_names"] = _available_display_names(definitions)
             report(
                 ValidationError(
                     "Schema fields must be addressed by system name or field-definition ID",
-                    details={
-                        "unknown_fields": unknown,
-                        "available_system_names": sorted(by_system),
-                        "available_field_ids": sorted(by_id),
-                    },
+                    details=unknown_details,
                 )
             )
         if require_all_required:
@@ -141,6 +231,7 @@ class FieldNormalization(PlannerBase):
                 and not item.get("archived")
                 and item.get("derivationType") in {None, "DIRECT"}
                 and str(item["systemName"]) not in seen_systems
+                and str(item["systemName"]) not in ambiguous_systems
             )
             if missing_required:
                 report(
@@ -149,7 +240,7 @@ class FieldNormalization(PlannerBase):
                         details={"missing_required_fields": missing_required},
                     )
                 )
-        return normalized, targets
+        return normalized, targets, field_name_map
 
     def _field_definition_fingerprints(
         self,
@@ -270,7 +361,7 @@ class FieldsPlanning(FieldNormalization):
         if not current.get("schema"):
             raise UnsupportedError("Entry has no assigned schema")
         definitions = current.get("field_definitions") or []
-        normalized, targets = self._normalize_schema_field_updates(
+        normalized, targets, _field_name_map = self._normalize_schema_field_updates(
             updates, definitions, address_by="field_definition_id"
         )
         request["schema_fields"] = normalized

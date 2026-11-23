@@ -14,6 +14,7 @@ All notable changes to this project are documented here. The format is based on
 ### Changed
 
 - A `usage_error` for an unknown option lists that command's long options in `details.valid_options` and, where known, the right alternative in `details.hint`: `results pending` names its four sources, and `results list --plan` points to `results pending --plan` or `results verify`. An extra positional argument that looks like an entry reference (`results pending EXP-1`, `results list etr_…`) gets the hint `Pass the entry with --entry REF`, and a plan ID gets `--plan`.
+- Result upload plans accept schema display names as field keys, translate them to system names, and show the mapping in the preview. An ambiguous name is reported as an `ambiguous_field` row problem alongside the row's other problems, and unknown-field errors list `available_display_names` only where display names are accepted (not entry field updates).
 
 ### Fixed
 

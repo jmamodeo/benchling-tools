@@ -100,6 +100,16 @@ async def test_unknown_fields_list_available_addresses(runtime) -> None:
     assert "tsf_temp" in details["available_field_ids"]
 
 
+async def test_entry_field_unknown_errors_omit_display_name_hints(runtime) -> None:
+    # Entry field updates address fields by system name or ID only, so the
+    # error must not suggest display names that would be rejected.
+    with pytest.raises(ValidationError) as caught:
+        await plan(runtime, {"Temperature": {"value": 1}})
+    details = caught.value.details
+    assert details["unknown_fields"] == ["Temperature"]
+    assert "available_display_names" not in details
+
+
 @pytest.mark.parametrize(
     "fields",
     [
