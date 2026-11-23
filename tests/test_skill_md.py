@@ -111,6 +111,18 @@ def test_listing_lists_stay_out_of_the_skill_frontmatter() -> None:
         assert all(isinstance(item, str) and item.strip() for item in items)
 
 
+def test_listing_covers_current_result_workflows() -> None:
+    loaded = yaml.safe_load(LISTING.read_text(encoding="utf-8"))
+    keywords = "\n".join(loaded["keywords"]).casefold()
+    use_cases = "\n".join(loaded["use_cases"]).casefold()
+    assert "include-pending" in keywords
+    assert "pending results" in keywords
+    assert "results table exists before writing results" in use_cases
+    assert "document plan" in use_cases
+    assert "comments heading" in use_cases
+    assert "not a text box" in use_cases
+
+
 def test_body_covers_the_read_and_preview_workflows() -> None:
     body = SKILL.split("\n---\n", 1)[1]
     for phrase in (

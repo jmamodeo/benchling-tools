@@ -9,4 +9,4 @@ https://docs.benchling.com/docs/getting-started-with-the-sdk
 from .models import Envelope
 
 __all__ = ["Envelope"]
-__version__ = "0.7.0"
+__version__ = "0.8.0"
