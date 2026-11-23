@@ -530,6 +530,50 @@ class FakeBenchling:
                 ],
             },
         ]
+        # V2 storage: locations, boxes and plates by ID, each with a parentStorageId.
+        self.storage: dict[str, dict[str, Any]] = {
+            "loc_room1": {
+                "id": "loc_room1",
+                "name": "Synthetic room",
+                "barcode": "LOC-ROOM",
+                "schema": {"id": "locsch_abc123"},
+                "parentStorageId": None,
+            },
+            "loc_freezer1": {
+                "id": "loc_freezer1",
+                "name": "Synthetic freezer",
+                "barcode": "LOC-FREEZER",
+                "schema": {"id": "locsch_abc123"},
+                "parentStorageId": "loc_room1",
+            },
+            "box_rack1": {
+                "id": "box_rack1",
+                "name": "Synthetic box",
+                "barcode": "BOX-1",
+                "schema": {"id": "boxsch_abc123"},
+                "parentStorageId": "loc_freezer1",
+            },
+            "plt_plate1": {
+                "id": "plt_plate1",
+                "name": "Synthetic plate",
+                "barcode": "PLT-1",
+                "schema": {"id": "pltsch_abc123"},
+                "type": "well_plate",
+                "parentStorageId": "loc_freezer1",
+            },
+        }
+        self.registries: list[dict[str, Any]] = [
+            {"id": "src_registry1", "name": "Synthetic registry"}
+        ]
+        self.registered_entities: list[dict[str, Any]] = [
+            {
+                "id": "ent_registered1",
+                "entityRegistryId": "REG-0001",
+                "name": "Registered sample",
+                "registryId": "src_registry1",
+                "schema": {"id": "ts_sample"},
+            }
+        ]
         # Barcodes V2 GET /containers rejects with a 400 naming them in invalidBarcodes.
         self.invalid_barcodes: set[str] = set()
         self.container_page_size: int | None = None
@@ -767,12 +811,65 @@ class FakeBenchling:
             items = [item for item in items if item.get("barcode") in barcodes]
         if call.params.get("name"):
             items = [item for item in items if item.get("name") == call.params["name"]]
+        if call.params.get("storageContentsIds"):
+            wanted = set(call.params["storageContentsIds"].split(","))
+            items = [item for item in items if wanted & _content_entity_ids(item)]
+        if call.params.get("ancestorStorageId"):
+            ancestor = call.params["ancestorStorageId"]
+            items = [item for item in items if ancestor in self._ancestors(item)]
         return self._page(
             deepcopy(items),
             call,
             self._limited_page(call, self.container_page_size),
             key="containers",
         )
+
+    def _ancestors(self, record: dict[str, Any]) -> list[str]:
+        """Storage IDs above a record, nearest first; a well counts as its plate."""
+        found: list[str] = []
+        parent = record.get("parentStorageId")
+        while isinstance(parent, str) and parent and len(found) < 20:
+            storage_id = parent.split(":")[0]
+            found.append(storage_id)
+            parent = (self.storage.get(storage_id) or {}).get("parentStorageId")
+        return found
+
+    def _get_storage(self, call: Call, storage_id: str) -> tuple[int, dict[str, Any]]:
+        found = self.storage.get(storage_id)
+        if found is None:
+            return 404, {"error": {"message": "storage not found"}}
+        return 200, deepcopy(found)
+
+    def _list_registries(self, call: Call) -> tuple[int, dict[str, Any]]:
+        return 200, {"registries": deepcopy(self.registries)}
+
+    def _bulk_get_registered_entities(
+        self, call: Call, registry_id: str
+    ) -> tuple[int, dict[str, Any]]:
+        if not any(item["id"] == registry_id for item in self.registries):
+            return 404, {"error": {"message": "registry not found"}}
+        wanted = call.params.get("entityRegistryIds", "").split(",")
+        known = {
+            item["entityRegistryId"]
+            for item in self.registered_entities
+            if item["registryId"] == registry_id
+        }
+        invalid = [item for item in wanted if item not in known]
+        if invalid:
+            # Benchling rejects the whole request and lists the unregistered ids.
+            return 400, {
+                "error": {
+                    "invalidIds": invalid,
+                    "message": "Invalid entityRegistryId: " + ", ".join(invalid),
+                    "type": "invalid_request_error",
+                }
+            }
+        entities = [
+            item
+            for item in self.registered_entities
+            if item["registryId"] == registry_id and item["entityRegistryId"] in wanted
+        ]
+        return 200, {"entities": deepcopy(entities)}
 
     def _bulk_get_containers(self, call: Call) -> tuple[int, dict[str, Any]]:
         """V2 containers:bulk-get: the containers whose ids are in containerIds."""
@@ -924,6 +1021,7 @@ class FakeBenchling:
                 "id": ENTRY_ID,
                 "name": self.entry_name,
                 "displayId": self.display_id,
+                "createdAt": "2025-09-01T09:00:00Z",
                 "modifiedAt": "2026-06-15T12:00:00Z",
                 "schemaId": self.entry_schema_id,
                 "projectId": "src_abc123",
@@ -933,6 +1031,7 @@ class FakeBenchling:
                 "id": "etr_list2",
                 "name": "Other experiment",
                 "displayId": "EXP-2",
+                "createdAt": "2025-12-15T00:00:00Z",
                 "modifiedAt": "2026-01-01T00:00:00Z",
                 "schemaId": "entsch_other",
                 "projectId": "src_other",
@@ -942,6 +1041,7 @@ class FakeBenchling:
                 "id": "etr_list3",
                 "name": "Third note",
                 "displayId": "EXP-3",
+                "createdAt": "2025-11-20T00:00:00Z",
                 "modifiedAt": "2025-12-01T00:00:00Z",
                 "schemaId": "entsch_abc123",
                 "projectId": "src_abc123",
@@ -951,6 +1051,7 @@ class FakeBenchling:
                 "id": "etr_list4",
                 "name": "Late note",
                 "displayId": "EXP-4",
+                "createdAt": "2026-03-01T00:00:00Z",
                 "modifiedAt": "2026-11-01T08:30:00Z",
                 "schemaId": "entsch_other",
                 "projectId": "src_abc123",
@@ -1009,6 +1110,13 @@ class FakeBenchling:
                     for row in rows
                     if self._modified_matches(str(row["modifiedAt"]), params["modifiedAt"])
                 ]
+            if params.get("sort"):
+                key, _, direction = params["sort"].partition(":")
+                rows = sorted(
+                    rows,
+                    key=lambda row: str(row.get(key) or row["modifiedAt"]),
+                    reverse=direction != "asc",
+                )
             return rows
         # V3 entry listing does not apply folderId. Leave it unread on purpose.
         if params.get("project.eq"):
@@ -1056,6 +1164,7 @@ class FakeBenchling:
                     "id": row["id"],
                     "name": row["name"],
                     "displayId": row["displayId"],
+                    "createdAt": _offset_stamp(str(row.get("createdAt") or row["modifiedAt"])),
                     "modifiedAt": _offset_stamp(str(row["modifiedAt"])),
                     "schemaId": row["schemaId"],
                     "projectId": row["projectId"],
@@ -1081,6 +1190,7 @@ class FakeBenchling:
                     "id": row["id"],
                     "name": row["name"],
                     "displayId": row["displayId"],
+                    "createdAt": _offset_stamp(str(row.get("createdAt") or row["modifiedAt"])),
                     "modifiedAt": _offset_stamp(str(row["modifiedAt"])),
                     "schemaId": row["schemaId"],
                     "projectId": row["projectId"],
@@ -1603,6 +1713,29 @@ class FakeBenchling:
             self.results_parts[part_id]["row_count"] = row_count
         return part_id
 
+    def add_stored_containers(self) -> None:
+        """Add a tube in well A1 of plt_plate1 and a tube in box_rack1."""
+        self.containers += [
+            {
+                "id": "con_well1",
+                "name": "Well tube",
+                "barcode": "BAR-WELL",
+                "modifiedAt": "2026-01-04T00:00:00Z",
+                "schema": {"id": "contsch_abc123"},
+                "parentStorageId": "plt_plate1:A1",
+                "contents": [{"entity": {"id": "ent_registered1", "entityRegistryId": "REG-0001"}}],
+            },
+            {
+                "id": "con_boxed1",
+                "name": "Boxed tube",
+                "barcode": "BAR-BOXED",
+                "modifiedAt": "2026-01-05T00:00:00Z",
+                "schema": {"id": "contsch_abc123"},
+                "parentStorageId": "box_rack1",
+                "contents": [{"entity": {"id": "ent_sample1"}}],
+            },
+        ]
+
     def add_results_table(self, part_id: str = "docpart_rt1") -> str:
         """Install a synthetic results table the rows endpoint can page."""
         rows = default_results_rows()
@@ -1949,14 +2082,17 @@ class FakeBenchling:
     def complete_upload(
         self, task_id: str = "task_abc123", *, payload_index: int = -1
     ) -> list[str]:
-        """Create pending V2 results from a bulk-create payload and finish its task."""
+        """Create pending V2 results from a bulk-create payload and finish its task.
+
+        A record's optional client ``id`` (a UUID) becomes its V2 id.
+        """
         payload = self.bulk_payloads[payload_index]
         created = []
         for record in payload["assayResults"]:
             number = len(self.assay_results) + len(created) + 1
             created.append(
                 {
-                    "id": f"00000000-0000-4000-8000-{number:012d}",
+                    "id": record.get("id") or f"00000000-0000-4000-8000-{number:012d}",
                     "v3Id": f"result_up{number}",
                     "entryId": None,
                     "isReviewed": False,
@@ -2067,6 +2203,16 @@ class FakeBenchling:
         return 404, {"error": {"message": "result not found"}}
 
 
+def _content_entity_ids(container: dict[str, Any]) -> set[str]:
+    """Entity IDs a container holds, directly or through a batch."""
+    found: set[str] = set()
+    for content in container.get("contents") or []:
+        for holder in (content.get("entity"), (content.get("batch") or {}).get("entity")):
+            if isinstance(holder, dict) and holder.get("id"):
+                found.add(holder["id"])
+    return found
+
+
 ROUTES: list[tuple[str, str]] = [
     (r"/users", "GET v2|list_users"),
     (r"/users/(\w+)", "GET v2|get_user"),
@@ -2077,6 +2223,11 @@ ROUTES: list[tuple[str, str]] = [
     (r"/containers", "POST v2|create_container"),
     (r"/containers/(\w+):transfer", "POST v2|transfer_container"),
     (r"/containers/(\w+)", "GET v2|get_container"),
+    (r"/registries", "GET v2|list_registries"),
+    (r"/registries/(\w+)/registered-entities:bulk-get", "GET v2|bulk_get_registered_entities"),
+    (r"/locations/(loc_\w+)", "GET v2|get_storage"),
+    (r"/boxes/(box_\w+)", "GET v2|get_storage"),
+    (r"/plates/(plt_\w+)", "GET v2|get_storage"),
     (r"/entry/items", "GET v3|list_entries_v3"),
     (r"/entry-template/(\w+)", "GET v3|get_entry_template"),
     (r"/folder/(\w+)", "GET v3|get_folder_v3"),
@@ -2112,7 +2263,7 @@ ROUTES: list[tuple[str, str]] = [
     (r"/entries/(\w+)", "GET v2|get_entry_v2"),
     (r"/folders/(\w+)", "GET v2|get_folder"),
     (r"/projects/(\w+)", "GET v2|get_project"),
-    (r"/tasks/(\w+)", "GET v2|get_task"),
+    (r"/tasks/([\w-]+)", "GET v2|get_task"),
     (r"/assay-results:bulk-create", "POST v2|bulk_create"),
     (r"/blobs", "POST v2|create_blob"),
     (r"/blobs:start-multipart-upload", "POST v2|start_blob"),

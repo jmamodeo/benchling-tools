@@ -9,12 +9,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..errors import ValidationError
 from ..models import ChangeJournal, ChangePlan
 from .blobs import local_file_descriptor
 
 PENDING = "pending"
 ACCEPTED = "accepted"
 ARCHIVED = "archived"
+# "Limit of 4000 results per request" (V2 Bulk create assay results).
+BULK_CREATE_LIMIT = 4000
 _STATE_ORDER = {PENDING: 0, ACCEPTED: 1, ARCHIVED: 2}
 
 NO_ENTRY_PLANS_NEXT_STEP = (
@@ -254,15 +257,23 @@ def diff_batch(
     Exact field matches are paired first, so the result does not depend on the order
     Benchling returns records in. Remaining rows are paired in order and reported as
     mismatched; unpaired planned rows are missing and unpaired records are extra.
+    A batch with ``row_indexes`` reports each row's index from that list instead of
+    ``plan_row_offset`` plus its position.
     """
     table_id = batch.get("table_id")
     schema_id = batch.get("schema_id")
     offset = batch.get("plan_row_offset", 0)
     offset = offset if isinstance(offset, int) and not isinstance(offset, bool) else 0
+    indexes = batch.get("row_indexes")
     remaining = list(fetched)
     matched: list[dict[str, Any]] = []
     unmatched: list[tuple[int, dict[str, Any]]] = []
-    for row_index, planned in enumerate(batch.get("records") or []):
+    for position, planned in enumerate(batch.get("records") or []):
+        row_index = (
+            indexes[position]
+            if isinstance(indexes, list) and position < len(indexes)
+            else offset + position
+        )
         fields = planned.get("fields") if isinstance(planned, dict) else None
         fields = fields if isinstance(fields, dict) else {}
         hit = next(
@@ -274,13 +285,13 @@ def diff_batch(
             None,
         )
         if hit is None:
-            unmatched.append((offset + row_index, fields))
+            unmatched.append((row_index, fields))
             continue
         record = remaining.pop(hit)
         matched.append(
             {
                 "table_id": table_id,
-                "plan_row_index": offset + row_index,
+                "plan_row_index": row_index,
                 **result_ids(record),
                 "state": result_state(record),
             }
@@ -304,3 +315,145 @@ def diff_batch(
         for record in remaining[len(unmatched) :]
     ]
     return {"matched": matched, "mismatched": mismatched, "missing": missing, "extra": extra}
+
+
+def _payload_bodies(payload: Any) -> list[dict[str, Any]]:
+    """The bulk-create bodies in a payload: one body, a bare result list, or a list of bodies."""
+    if isinstance(payload, dict):
+        return [payload]
+    if isinstance(payload, list):
+        if payload and all(isinstance(item, dict) and "assayResults" in item for item in payload):
+            return list(payload)
+        if any(isinstance(item, dict) and "assayResults" in item for item in payload):
+            raise ValidationError(
+                "A payload list must hold only result objects or only bulk-create bodies"
+            )
+        return [{"assayResults": payload}]
+    raise ValidationError(
+        "A payload must be a bulk-create body {assayResults: [...]}, a list of result "
+        "objects, or a list of bulk-create bodies"
+    )
+
+
+def payload_batches(payload: Any) -> list[dict[str, Any]]:
+    """Batches in the shape ``planned_batches`` returns, from an SDK bulk-create payload.
+
+    ``payload`` is a V2 bulk-create body (``assayResults`` and an optional ``tableId``),
+    a bare list of result objects, or a list of bodies. Rows are grouped by ``schemaId``
+    across bodies, in order; ``row_indexes`` gives each row's index in the whole payload,
+    counting from 0 across bodies. ``table_id`` is the bodies' ``tableId`` when they
+    agree, otherwise None. Fields are used as given, by system name. Error details name
+    positions only, never values.
+    """
+    groups: dict[str, dict[str, Any]] = {}
+    row_index = 0
+    for body_index, body in enumerate(_payload_bodies(payload)):
+        records = body.get("assayResults") if isinstance(body, dict) else None
+        if not isinstance(records, list):
+            raise ValidationError(
+                "A bulk-create body needs an assayResults list", details={"body_index": body_index}
+            )
+        if len(records) > BULK_CREATE_LIMIT:
+            raise ValidationError(
+                f"A bulk-create body holds at most {BULK_CREATE_LIMIT} results",
+                details={"body_index": body_index, "records": len(records)},
+            )
+        table_id = body.get("tableId")
+        if table_id is not None and (not isinstance(table_id, str) or not table_id.strip()):
+            raise ValidationError(
+                "tableId must be a results table ID string", details={"body_index": body_index}
+            )
+        for record_index, record in enumerate(records):
+            where = {"body_index": body_index, "record_index": record_index}
+            if not isinstance(record, dict):
+                raise ValidationError("Each payload result must be an object", details=where)
+            schema_id = record.get("schemaId")
+            if not isinstance(schema_id, str) or not schema_id.strip():
+                raise ValidationError("A payload result is missing schemaId", details=where)
+            if not isinstance(record.get("fields"), dict):
+                raise ValidationError("A payload result's fields must be an object", details=where)
+            client_id = record.get("id")
+            if client_id is not None and (not isinstance(client_id, str) or not client_id):
+                raise ValidationError("A payload result's id must be a string", details=where)
+            group = groups.setdefault(
+                schema_id, {"schema_id": schema_id, "table_ids": [], "records": [], "indexes": []}
+            )
+            group["table_ids"].append(table_id)
+            group["records"].append(
+                {
+                    "schemaId": schema_id,
+                    "fields": record["fields"],
+                    **({"id": client_id} if client_id is not None else {}),
+                }
+            )
+            group["indexes"].append(row_index)
+            row_index += 1
+    if not row_index:
+        raise ValidationError("The payload has no results")
+    batches: list[dict[str, Any]] = []
+    for group in groups.values():
+        table_ids = set(group["table_ids"])
+        table_id = table_ids.pop() if len(table_ids) == 1 else None
+        batches.append(
+            {
+                "table_id": table_id,
+                "schema_id": group["schema_id"],
+                "table_name": table_id,
+                "records": group["records"],
+                "plan_row_offset": group["indexes"][0],
+                "row_indexes": group["indexes"],
+            }
+        )
+    return batches
+
+
+def diff_payload_batch(
+    batch: dict[str, Any], fetched: list[dict[str, Any]], *, missing_reason: str
+) -> dict[str, list[dict[str, Any]]]:
+    """``diff_batch``, after pairing each row that carries a client ``id`` with that record.
+
+    A row whose ``id`` matches a fetched record's V2 or V3 id is diffed against that
+    record alone. Every other row, and every unclaimed record, goes through one
+    ``diff_batch`` call, which pairs by fields.
+    """
+    offset = batch.get("plan_row_offset", 0)
+    offset = offset if isinstance(offset, int) and not isinstance(offset, bool) else 0
+    raw_indexes = batch.get("row_indexes")
+    records = list(batch.get("records") or [])
+    indexes = (
+        list(raw_indexes)
+        if isinstance(raw_indexes, list) and len(raw_indexes) == len(records)
+        else [offset + position for position in range(len(records))]
+    )
+    by_id = {
+        key: position
+        for position, record in enumerate(fetched)
+        for key in (record.get("id"), record.get("v3Id"))
+        if isinstance(key, str)
+    }
+    claimed: set[int] = set()
+    parts: list[dict[str, list[dict[str, Any]]]] = []
+    rest: list[Any] = []
+    rest_indexes: list[int] = []
+    for row, index in zip(records, indexes):
+        client_id = row.get("id") if isinstance(row, dict) else None
+        position = by_id.get(client_id) if isinstance(client_id, str) else None
+        if position is None or position in claimed:
+            rest.append(row)
+            rest_indexes.append(index)
+            continue
+        claimed.add(position)
+        single = {**batch, "records": [row], "row_indexes": [index]}
+        parts.append(diff_batch(single, [fetched[position]], missing_reason=missing_reason))
+    if not parts:
+        return diff_batch(batch, fetched, missing_reason=missing_reason)
+    unclaimed = [record for position, record in enumerate(fetched) if position not in claimed]
+    remainder = {**batch, "records": rest, "row_indexes": rest_indexes}
+    parts.append(diff_batch(remainder, unclaimed, missing_reason=missing_reason))
+    merged: dict[str, list[dict[str, Any]]] = {}
+    for key in ("matched", "mismatched", "missing", "extra"):
+        rows = [row for part in parts for row in part[key]]
+        if key != "extra":
+            rows.sort(key=lambda row: int(row["plan_row_index"]))
+        merged[key] = rows
+    return merged

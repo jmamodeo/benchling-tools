@@ -360,6 +360,31 @@ def test_results_status_wait_is_available_through_cli(invoke, fake, tmp_path) ->
     assert status["data"]["tasks"][0]["task_status"] == "SUCCEEDED"
 
 
+def test_changes_status_reads_a_task_by_id(invoke, fake) -> None:
+    created = [{"id": "00000000-0000-4000-8000-000000000001", "v3Id": "result_cli1"}]
+    fake.tasks["task_cli1"] = {"status": "SUCCEEDED", "response": {"assayResults": created}}
+    code, status, _ = invoke("changes", "status", "--task", "task_cli1", "--wait", "--timeout", "1")
+    assert code == 0, status
+    assert status["data"]["record_ids"] == [created[0]["id"]]
+    assert f"results pending --id {created[0]['id']}" in status["data"]["next_step"]
+    assert fake.writes() == []
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("changes", "status"),
+        ("changes", "status", "0" * 32, "--task", "task_cli1"),
+        ("changes", "status", "--task", "task/cli1"),
+    ],
+)
+def test_changes_status_needs_exactly_one_valid_plan_or_task(invoke, fake, args) -> None:
+    code, payload, _ = invoke(*args)
+    assert code == 2
+    assert payload["error"]["code"] == "validation_error"
+    assert fake.task_requests == []
+
+
 def test_plan_reads_spec_from_stdin(invoke) -> None:
     code, planned, _ = invoke(
         "changes",
@@ -752,6 +777,50 @@ def test_entry_list_sends_a_comma_name_as_the_v2_name_parameter(invoke, fake) ->
     assert call.params["name"] == "Assay, replicate 1"
     assert "names.anyOf" not in call.params
     assert fake.writes() == []
+
+
+def test_entry_list_sort_finds_the_newest_entry_a_user_created(invoke, fake) -> None:
+    for number, created in ((1, "2026-04-01T00:00:00Z"), (2, "2026-05-01T00:00:00Z")):
+        fake.extra_entries.append(
+            {
+                "id": f"etr_fixture{number}",
+                "name": f"Fixture entry {number}",
+                "displayId": f"EXP-F{number}",
+                "createdAt": created,
+                "modifiedAt": "2026-01-01T00:00:00Z",
+                "schemaId": "entsch_abc123",
+                "projectId": "src_abc123",
+                "folderId": "lib_abc123",
+                "creatorId": "ent_fixture",
+            }
+        )
+    code, payload, _ = invoke(
+        "entry", "list", "--creator", "ent_fixture", "--sort", "created-desc", "--limit", "1"
+    )
+    assert code == 0, payload
+    assert [item["id"] for item in payload["data"]["items"]] == ["etr_fixture2"]
+    assert payload["data"]["sort"] == "createdAt:desc"
+    assert payload["data"]["next_token"]
+    (call,) = fake.calls
+    assert call.path == "/api/v2/entries"
+    assert call.params == {"sort": "createdAt:desc", "creatorIds": "ent_fixture", "pageSize": "1"}
+    assert fake.writes() == []
+
+
+def test_entry_list_rejects_an_unknown_sort_with_the_choices(invoke, fake) -> None:
+    code, payload, _ = invoke("entry", "list", "--sort", "newest")
+    assert code == ExitCode.USAGE
+    assert payload["error"]["code"] == "usage_error"
+    for choice in (
+        "created-desc",
+        "created-asc",
+        "modified-desc",
+        "modified-asc",
+        "name-asc",
+        "name-desc",
+    ):
+        assert choice in payload["error"]["message"]
+    assert fake.calls == []
 
 
 def test_entry_list_rejects_a_timestamp_without_a_zone(invoke, fake) -> None:
@@ -1240,3 +1309,72 @@ def test_container_find_help_cites_list_containers() -> None:
     help_text = plain_stdout(["container", "find", "--help"])
     for token in ("100 per request", "invalidBarcodes", "List containers"):
         assert token in help_text, token
+
+
+def test_container_find_by_registry_id_and_storage(invoke, fake) -> None:
+    fake.add_stored_containers()
+    code, payload, _ = invoke(
+        "container",
+        "find",
+        "--registry-id",
+        "REG-0001",
+        "--registry-id",
+        "REG-9999",
+        "--registry",
+        "src_registry1",
+        "--in",
+        "plt_plate1",
+    )
+    assert code == 0, payload
+    data = payload["data"]
+    assert [item["entity_id"] for item in data["entities"]] == ["ent_registered1"]
+    assert data["unregistered_ids"] == ["REG-9999"]
+    assert [item["container_id"] for item in data["found"]] == ["con_well1"]
+    assert data["truncated"] is False
+    listed = [call for call in fake.calls if call.path == "/api/v2/containers"]
+    assert listed[-1].params["ancestorStorageId"] == "plt_plate1"
+    assert listed[-1].params["storageContentsIds"] == "ent_registered1"
+
+    code, payload, _ = invoke("container", "find", "--contents", "ent_sample1", "--limit", "500")
+    assert code == 0, payload
+    assert [item["container_id"] for item in payload["data"]["found"]] == [
+        "con_source1",
+        "con_batch1",
+        "con_boxed1",
+    ]
+
+
+def test_container_find_conflicting_filters_are_validation_errors(invoke, fake) -> None:
+    code, payload, _ = invoke(
+        "container", "find", "--barcode", "BAR-SOURCE", "--contents", "ent_sample1"
+    )
+    assert code == 2
+    assert payload["error"]["code"] == "validation_error"
+    assert "exactly one" in payload["error"]["message"]
+    code, payload, _ = invoke("container", "find", "--name", "Source vial", "--limit", "500")
+    assert code == 2
+    assert payload["error"]["code"] == "validation_error"
+    assert fake.calls == []
+
+
+def test_container_get_location_returns_the_parent_chain(invoke, fake) -> None:
+    fake.add_stored_containers()
+    code, payload, _ = invoke("container", "get", "con_well1", "--location")
+    assert code == 0, payload
+    path = payload["data"]["location_path"]
+    assert [(item["id"], item["kind"]) for item in path] == [
+        ("plt_plate1:A1", "well"),
+        ("plt_plate1", "plate"),
+        ("loc_freezer1", "location"),
+        ("loc_room1", "location"),
+    ]
+    assert fake.writes() == []
+
+
+def test_container_find_and_get_help_cite_the_inventory_docs() -> None:
+    find_help = plain_stdout(["container", "find", "--help"])
+    for token in ("storageContentsIds", "ancestorStorageId", "Bulk get registered", "--in"):
+        assert token in find_help, token
+    get_help = plain_stdout(["container", "get", "--help"])
+    for token in ("--location", "Get location", "Get box", "Get plate", "10 levels"):
+        assert token in get_help, token

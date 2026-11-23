@@ -10,6 +10,8 @@ from fake_benchling import ENTRY_ID, Call
 
 from benchling_tools.errors import UpstreamError, ValidationError
 from benchling_tools.listing import (
+    ENTRY_SORTS,
+    EntrySort,
     _decode_cursor,
     dropdown_id_of,
     entry_summary,
@@ -517,3 +519,41 @@ def test_dropdown_id_prefers_a_direct_id_and_ignores_blanks() -> None:
     assert dropdown_id_of({"linkDefinition": {"id": "sfs_status"}}) == "sfs_status"
     assert dropdown_id_of({"dropdownId": "", "linkDefinition": {"id": ""}}) is None
     assert dropdown_id_of({"linkDefinition": "sfs_status"}) is None
+
+
+@pytest.mark.parametrize(
+    ("choice", "expected", "first"),
+    [
+        ("created-desc", "createdAt:desc", "etr_list4"),
+        ("created-asc", "createdAt:asc", ENTRY_ID),
+        ("modified-desc", "modifiedAt:desc", "etr_list4"),
+        ("modified-asc", "modifiedAt:asc", "etr_list3"),
+        ("name-asc", "name:asc", "etr_list4"),
+        ("name-desc", "name:desc", "etr_list3"),
+    ],
+)
+async def test_entry_sort_sends_the_documented_v2_value(
+    runtime, fake, choice, expected, first
+) -> None:
+    page = await runtime.service.list_entries(sort=choice, limit=1)
+    assert [item["id"] for item in page["items"]] == [first]
+    assert page["sort"] == expected
+    assert page["routing"]["api_version"] == 2
+    assert _params(fake, "/api/v3/entry/items") == []
+    (params,) = _params(fake, "/api/v2/entries")
+    assert params == {"pageSize": "1", "sort": expected}
+    assert ENTRY_SORTS[EntrySort(choice)] == expected
+
+
+async def test_entry_list_without_sort_sends_no_sort(runtime, fake) -> None:
+    default = await runtime.service.list_entries()
+    folder = await runtime.service.list_entries(folder="lib_abc123")
+    assert default["sort"] is None and folder["sort"] is None
+    assert [call.params.get("sort") for call in fake.calls] == [None, None]
+
+
+async def test_entry_sort_rejects_an_unknown_choice_before_any_call(runtime, fake) -> None:
+    with pytest.raises(ValidationError, match="created-desc, created-asc") as caught:
+        await runtime.service.list_entries(sort="createdAt:desc")
+    assert caught.value.details["choices"] == [choice.value for choice in EntrySort]
+    assert fake.calls == []

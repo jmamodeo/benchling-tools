@@ -964,12 +964,23 @@ async def entry_list(
     author: list[str] | None = typer.Option(
         None, "--author", help="Author user ID (ent_…) or exact handle; repeatable."
     ),
+    sort: listing.EntrySort | None = typer.Option(
+        None,
+        "--sort",
+        help=(
+            "Order: created-desc (newest first), created-asc, modified-desc, modified-asc, "
+            "name-asc, or name-desc. The query then uses V2. Omit for Benchling's default, "
+            "most recently modified first. A next_token from one sort must not be reused "
+            "with another."
+        ),
+    ),
     limit: int = typer.Option(50, "--limit", min=1, max=100, help=_LIMIT_HELP),
     cursor: str | None = typer.Option(None, "--cursor", help=_CURSOR_HELP),
 ) -> Any:
-    """List one page of entries. --folder uses V2; every filter is applied by the server.
+    """List one page of entries. --folder or --sort uses V2; the server applies every filter.
 
     Each row includes web_url, the entry's Benchling web-app link, or null if none.
+    The reply's sort is the applied V2 order, such as createdAt:desc, or null.
     """
     return await call.runtime.service.list_entries(
         project=project,
@@ -980,6 +991,7 @@ async def entry_list(
         modified_before=modified_before,
         creator=creator,
         author=author,
+        sort=sort,
         limit=limit,
         cursor=cursor,
     )
@@ -1148,10 +1160,26 @@ async def schema_list(
 @container_app.command("get")
 @command(read_only=True)
 async def container_get(
-    call: Call, container_id: str = typer.Argument(..., help="Inventory container ID (con_…).")
+    call: Call,
+    container_id: str = typer.Argument(..., help="Inventory container ID (con_…)."),
+    location: bool = typer.Option(
+        False,
+        "--location",
+        help="Also follow parentStorageId up to the top and return location_path.",
+    ),
 ) -> Any:
-    """Get an inventory container by container ID (con_…)."""
-    return await call.runtime.service.get_container(container_id)
+    """Get an inventory container by container ID (con_…).
+
+    --location adds location_path, from the container's parent up to the top.
+    Each item has id, kind (well, position, plate, box or location), name,
+    barcode and schema_id. A parentStorageId of loc_…, box_… or plt_… is read
+    with V2 Get location, Get box or Get plate, one read per level; a
+    coordinate such as plt_…:A1 adds the well (or box position) before its
+    plate or box. An unknown ID prefix ends the path with kind null. Reading
+    stops after 10 levels, a guard against cycles, and location_truncated is
+    then true.
+    """
+    return await call.runtime.service.get_container(container_id, location=location)
 
 
 @container_app.command("find")
@@ -1167,28 +1195,91 @@ async def container_find(
         ),
     ),
     name: str | None = typer.Option(None, "--name", help="Exact container name."),
-    limit: int = typer.Option(50, "--limit", min=1, max=100, help=_LIMIT_HELP),
-    cursor: str | None = typer.Option(None, "--cursor", help=_CURSOR_HELP),
+    contents: list[str] | None = typer.Option(
+        None,
+        "--contents",
+        help=(
+            "Entity ID a container holds (sent as storageContentsIds). Repeat for "
+            "several; one value holds one ID (no commas)."
+        ),
+    ),
+    registry_ids: list[str] | None = typer.Option(
+        None,
+        "--registry-id",
+        help=(
+            "Entity registry ID, resolved to its entity in --registry. Repeat for "
+            "several; one value holds one ID (no commas)."
+        ),
+    ),
+    registry: str | None = typer.Option(
+        None,
+        "--registry",
+        help="Registry ID (src_…) for --registry-id. Omit when the tenant has one registry.",
+    ),
+    in_storage: str | None = typer.Option(
+        None,
+        "--in",
+        help="Location, box or plate ID (loc_…, box_…, plt_…); sent as ancestorStorageId.",
+    ),
+    limit: int = typer.Option(
+        50,
+        "--limit",
+        min=1,
+        max=1000,
+        help=(
+            "Page size, from 1 to 100, for --name or one --barcode. With --contents, "
+            "--registry-id or --in: most containers to return, from 1 to 1000."
+        ),
+    ),
+    cursor: str | None = typer.Option(
+        None,
+        "--cursor",
+        help=_CURSOR_HELP + " Only for --name or one --barcode.",
+    ),
 ) -> Any:
-    """Find containers by exact barcode (repeatable) or exact name.
+    """Find containers by barcode (repeatable), name, contents, registry ID or storage.
+
+    Give exactly one of --barcode, --name, --contents or --registry-id, or --in
+    on its own. --in combines with --name, --contents and --registry-id.
 
     One --barcode, or --name, returns one page as items and next_token. Several
     --barcode values return requested, found, invalid_barcodes,
     missing_barcodes (valid, but no container matched) and empty_containers
     (found with no contents). Each found item has barcode, container_id,
-    schema_id, archived, and contents with entity_id, entity_registry_id and
-    batch_id. The barcodes are sent to V2 GET /containers 100 per request and
-    every page is read, so --limit and --cursor do not apply. Benchling answers
-    an invalid barcode with a 400 that lists invalidBarcodes ("returns a 400
-    error that includes a list of which barcodes are invalid", Benchling docs,
-    List containers). Those barcodes are reported, not failed, and the rest of
-    that chunk is read again once. With one barcode, an invalid barcode is a
-    validation_error with details.invalid_barcodes and a hint.
+    schema_id, archived, parent_storage_id, and contents with entity_id,
+    entity_registry_id and batch_id. The barcodes are sent to V2 GET
+    /containers 100 per request and every page is read, so --limit and
+    --cursor do not apply. Benchling answers an invalid barcode with a 400 that
+    lists invalidBarcodes ("returns a 400 error that includes a list of which
+    barcodes are invalid", Benchling docs, List containers). Those barcodes are
+    reported, not failed, and the rest of that chunk is read again once. With
+    one barcode, an invalid barcode is a validation_error with
+    details.invalid_barcodes and a hint.
 
-    MCP: barcodes is a list; one item keeps the one-page reply.
+    --contents, --registry-id and --in return found (the same items) and
+    truncated, reading every page up to --limit containers (default 50, at
+    most 1000). Entity IDs are sent as storageContentsIds ("Restricts results
+    to those that hold containers with at least one of the specified
+    entities", List containers) 100 per request, and --in as
+    ancestorStorageId ("Restricts results to those located in the specified
+    inventory"). --registry-id values are resolved with V2 Bulk get registered
+    entities in --registry, or in the tenant's only registry from V2 List
+    registries; with several, the error lists their id and name. The reply
+    adds registry, entities (registry_id, entity_id, name, schema_id) and
+    unregistered_ids (IDs the registry did not return).
+
+    MCP: barcodes, contents and registry_ids are lists; one barcode keeps the
+    one-page reply.
     """
     return await call.runtime.service.find_containers(
-        barcode=barcodes or None, name=name, limit=limit, cursor=cursor
+        barcode=barcodes or None,
+        name=name,
+        contents=contents or None,
+        registry_ids=registry_ids or None,
+        registry=registry,
+        in_storage=in_storage,
+        limit=limit,
+        cursor=cursor,
     )
 
 
@@ -1532,26 +1623,120 @@ async def results_pending(
     )
 
 
+def _mcp_payload(value: Any) -> Any:
+    """Take the MCP payload only as parsed JSON, never as a path to read."""
+    if value is None or isinstance(value, dict | list):
+        return value
+    raise ValidationError(
+        "payload must be the bulk-create request body as a JSON object or array, not a path"
+    )
+
+
+_RESULTS_PAYLOAD = McpParam(
+    annotation=Annotated[Any, WithJsonSchema({"type": ["object", "array"]})],
+    description=(
+        "The JSON body an SDK client sent to V2 POST /assay-results:bulk-create, as a "
+        "JSON object: assayResults (each with schemaId, fields, and optional id) and "
+        "optional tableId. A list of result objects, or a list of such bodies, also "
+        "works. Use instead of plan_id, with result_ids or created_after. Nothing is "
+        "saved, and only counts and field names are echoed back."
+    ),
+    convert=_mcp_payload,
+)
+
+
 @results_app.command("verify")
-@command(read_only=True)
+@command(read_only=True, mcp_params={"payload": _RESULTS_PAYLOAD})
 async def results_verify(
     call: Call,
-    plan_id: str = typer.Argument(
-        ..., help="Applied result upload plan ID in this home, or a portable plan JSON file."
+    plan_id: str | None = typer.Argument(
+        None,
+        help=(
+            "Applied result upload plan ID in this home, or a portable plan JSON file. "
+            "Omit it with --payload."
+        ),
+    ),
+    payload: str | None = typer.Option(
+        None,
+        "--payload",
+        help=(
+            "JSON file of the body an SDK client sent to POST /assay-results:bulk-create, "
+            "or '-' for stdin. Use instead of plan_id."
+        ),
+    ),
+    result_ids: list[str] | None = typer.Option(
+        None,
+        "--id",
+        help=(
+            "With --payload: id of a created result, a V2 assay result UUID or a V3 "
+            "result id (result_…). Repeat for each; namespaces may be mixed."
+        ),
+    ),
+    created_after: str | None = typer.Option(
+        None,
+        "--created-after",
+        help=(
+            "With --payload and no --id: RFC 3339 time, e.g. 2026-11-19T00:00:00Z; "
+            "reads results of each payload schema created at or after it."
+        ),
+    ),
+    created_before: str | None = typer.Option(
+        None,
+        "--created-before",
+        help="With --created-after: RFC 3339 time; results created at or before it.",
+    ),
+    entry: str | None = typer.Option(
+        None,
+        "--entry",
+        help=(
+            "With --payload: entry ID (etr_…), display ID, or URL. Drops accepted "
+            "results of other entries; pending results have no entry and are kept."
+        ),
     ),
     sample: int = typer.Option(
         20, "--sample", min=1, max=200, help="Rows to list per category, from 1 to 200."
     ),
 ) -> Any:
-    """Diff a result upload plan against the records Benchling created.
+    """Diff a result upload plan, or an SDK upload payload, against the records Benchling created.
 
     Compares planned fields by system name and reports matched, mismatched,
     missing, and extra rows, and which rows still need the plug-icon accept. Reads only.
     The plan's record ids may be V2 assay result UUIDs or V3 result ids (result_…).
     Each row reports result_id and v2_id (the V2 UUID) and v3_id (result_…), so
     either id can be passed to results get or results pending --id.
+
+    Pass exactly one of plan_id or --payload. A payload is the JSON body an SDK
+    client sent to V2 POST /assay-results:bulk-create (assayResults, each with
+    schemaId, fields, and an optional client id, plus an optional tableId; at most
+    4000 results per body), a list of result objects, or a list of bodies. The
+    same diff runs: rows are grouped by schemaId and plan_row_index counts payload
+    rows from 0 across bodies. Records are read with --id (V2 or V3 ids, mixed) or,
+    for each payload schema, with V2 GET /assay-results created at or after
+    --created-after (and at or before --created-before); that list has no entry
+    filter. --entry drops accepted records of other entries but keeps pending ones,
+    because a pending result has no entry until it is accepted. A row with a client
+    id is paired with that record first. source has mode payload and the lookup.
+    Nothing is saved, and only counts and field names of the payload are echoed back.
+
+    MCP: payload is the request body as a JSON object (or array), not a file path.
     """
-    return await call.runtime.planner.verify_results(plan_id, sample=sample)
+    if (plan_id is None) == (payload is None):
+        raise ValidationError("Pass exactly one of plan_id or --payload")
+    if plan_id is not None:
+        if result_ids or any(value is not None for value in (created_after, created_before, entry)):
+            raise ValidationError(
+                "--id, --created-after, --created-before, and --entry apply only with --payload"
+            )
+        return await call.runtime.planner.verify_results(plan_id, sample=sample)
+    body = _read_json(payload, "--payload") if isinstance(payload, str) else payload
+    return await call.runtime.planner.verify_payload(
+        body,
+        result_ids=result_ids or None,
+        created_after=created_after,
+        created_before=created_before,
+        entry=entry,
+        sample=sample,
+    )
 
 
 @results_app.command("diff")
@@ -1718,15 +1903,20 @@ async def export_data(
     )
 
 
-def _read_spec(path: str) -> dict[str, Any]:
+def _read_json(path: str, what: str) -> Any:
+    """Parse a JSON file, or stdin for '-'. Errors name the path, never the content."""
     try:
         raw = sys.stdin.read() if path == "-" else Path(path).read_text("utf-8")
-        parsed = json.loads(raw)
+        return json.loads(raw)
     except (OSError, json.JSONDecodeError) as exc:
         raise ValidationError(
-            "Could not read change spec",
+            f"Could not read {what}",
             details={"path": path, "reason": redact_text(str(exc))},
         ) from exc
+
+
+def _read_spec(path: str) -> dict[str, Any]:
+    parsed = _read_json(path, "change spec")
     if not isinstance(parsed, dict):
         raise ValidationError("Change spec must be a JSON object")
     return parsed
@@ -2029,11 +2219,20 @@ async def changes_export(
 @command(read_only=True)
 async def changes_status(
     call: Call,
-    plan_id: str = typer.Argument(
-        ..., help="Plan ID in this home, or a portable plan JSON file or bundle."
+    plan_id: str | None = typer.Argument(
+        None,
+        help="Plan ID in this home, or a portable plan JSON file or bundle. Omit with --task.",
+    ),
+    task_id: str | None = typer.Option(
+        None,
+        "--task",
+        help=(
+            "Benchling task ID to read instead of a plan, for example one returned by "
+            "POST /assay-results:bulk-create. Omit with a plan ID."
+        ),
     ),
     wait: bool = typer.Option(
-        False, "--wait", help="Poll result tasks until completion or timeout."
+        False, "--wait", help="Poll result tasks, or the --task task, until completion or timeout."
     ),
     timeout: float = typer.Option(
         300.0, "--timeout", min=0.1, max=3600, help="Maximum wait, in seconds (0.1-3600)."
@@ -2041,10 +2240,23 @@ async def changes_status(
 ) -> Any:
     """Show plan journal and task status; optionally wait for result tasks.
 
-    Accepts a local plan ID or portable plan file/bundle. For a plain plan file
-    with no sibling journal, use `changes export` in the source home.
+    Pass exactly one of a plan ID or --task. A plan ID accepts a local plan ID
+    or portable plan file/bundle. For a plain plan file with no sibling journal,
+    use `changes export` in the source home.
+
+    --task reads any Benchling background task with V2 GET /tasks/{task_id},
+    such as one a script started with bulk-create, with the same poller and
+    backoff as a plan. It returns task_status, result_state, timed_out, and
+    remote_task in full; for a failed task, Benchling's message and errors. For
+    assay results it lists the created V2 result IDs in record_ids and
+    record_count; another kind of task has response_kind other and its
+    response_keys listed but not interpreted. Relay next_step. Reads only.
     """
-    return await call.runtime.planner.status(plan_id, wait=wait, timeout=timeout)
+    if plan_id is not None and task_id is None:
+        return await call.runtime.planner.status(plan_id, wait=wait, timeout=timeout)
+    if task_id is not None and plan_id is None:
+        return await call.runtime.planner.task_status(task_id, wait=wait, timeout=timeout)
+    raise ValidationError("Pass exactly one of a plan ID or --task")
 
 
 def _issue_spec(

@@ -64,6 +64,7 @@ benchling-tools export --kind table --part docpart_table1 --format csv --output 
 benchling-tools changes plan --entry etr_abc123 --family table --spec examples/table-set-cells.json --env dev
 benchling-tools changes apply PLAN_ID --env dev
 benchling-tools changes status PLAN_ID --env dev
+benchling-tools changes status --task TASK_ID --wait --env dev
 ```
 
 Every command, the six change families, spec shapes, result uploads and attachments, pending results, and the canned examples are in the [CLI and MCP reference](docs/reference.md#cli-examples).
@@ -72,13 +73,15 @@ Every command, the six change families, spec shapes, result uploads and attachme
 | --- | --- |
 | `users list` | List visible users by handle, email, name, ID, or organization. |
 | `users get` | Read a visible user by ID or exact handle. |
-| `entry list` | List entries with server-side filters, including creator and author. |
+| `entry list` | List entries with server-side filters, including creator and author, optionally ordered with `--sort`. |
 | `entry inspect` | Summarize an entry's sections, tables, text boxes (`text_boxes`) and lookup tables (`lookup_tables`). Read-only. |
 | `part get` | Read one document part, such as a text box or a lookup table with its rows, without a full entry snapshot. Read-only. |
-| `container find` | Find containers by exact name, or check many barcodes in one call and list the invalid, missing, and empty ones. Read-only. |
+| `container find` | Find containers by exact name, by the entities or registry IDs they hold, or inside a location, box or plate, or check many barcodes in one call and list the invalid, missing, and empty ones. Read-only. |
+| `container get --location` | Read a container and its location path, from its well, box or plate up to the top location. Read-only. |
 | `results capacity` | Report each results table's used rows, known pending results, planned rows, and remaining room under Benchling's 1,000-row limit. Read-only. |
+| `results verify` | Diff a result upload plan, or with `--payload` the bulk-create body an SDK client sent, against the records Benchling holds. Read-only. |
 
-For example, resolve a handle with `benchling-tools users get HANDLE --env dev`, then use the returned ID with `benchling-tools entry list --creator USER_ID --folder lib_example --env dev`. Handles may also be passed directly to `--creator` or `--author`.
+For example, resolve a handle with `benchling-tools users get HANDLE --env dev`, then use the returned ID with `benchling-tools entry list --creator USER_ID --folder lib_example --env dev`. Handles may also be passed directly to `--creator` or `--author`. To get the newest entry a user created, run `benchling-tools entry list --creator USER_ID --sort created-desc --limit 1 --env dev`.
 
 For result uploads, preview defaults a missing `projectId` to the entry's project and refuses
 the plan if none is available. An explicit `projectId: null` requests creator-only access,
@@ -90,6 +93,14 @@ Preview also refuses a result upload that would push any results table past Benc
 is staged. Run `benchling-tools results capacity ENTRY --spec FILE --env dev` to see the
 same numbers first. 500 records per table in one plan is this toolkit's own batch size;
 Benchling documents 4,000 results per bulk-create request.
+
+To check a push the toolkit did not make, pass the JSON body an SDK client sent to
+[`POST /assay-results:bulk-create`](https://docs.benchling.com/docs/api/v2/benchling-api/assay-results/bulk-create-assay-results):
+`benchling-tools results verify --payload body.json --created-after 2026-11-19T00:00:00Z --env dev`
+(or `--id ID` for each created result, V2 or V3). It reports matched, mismatched, missing,
+and extra rows and pending versus accepted, the same report as `results verify PLAN_ID`.
+`--entry ENTRY` drops accepted records of other entries but keeps pending ones, which
+have no entry until accepted. Nothing is saved.
 
 ## MCP server
 

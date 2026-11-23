@@ -19,6 +19,10 @@ RESULT_SPEC = {
     "table_id": "strtbl_example",
     "assay_results": [{"schemaId": "assaysch_abc123", "fields": {"ct": {"value": 12}}}],
 }
+RESULT_PAYLOAD = {
+    "tableId": "strtbl_example",
+    "assayResults": [{"schemaId": "assaysch_abc123", "fields": {"ct": {"value": 12}}}],
+}
 TABLE_SPEC = {"operation": "append_rows", "table_part_id": TABLE_PART, "rows": [["D", "4"]]}
 
 
@@ -88,6 +92,11 @@ def _without_clock(value):
             ["entry", "list", "--creator", "fixture_handle_1"],
             "entry_list",
             {"creator": ["fixture_handle_1"]},
+        ),
+        (
+            ["entry", "list", "--sort", "created-desc", "--limit", "1"],
+            "entry_list",
+            {"sort": "created-desc", "limit": 1},
         ),
         (["entry", "resolve", ENTRY_ID], "entry_resolve", {"reference": ENTRY_ID}),
         (["entry", "resolve", "EXP-99"], "entry_resolve", {"reference": "EXP-99"}),
@@ -161,6 +170,21 @@ def _without_clock(value):
             {"barcodes": ["BAR-SOURCE", "BAR-NONE"]},
         ),
         (
+            ["container", "find", "--contents", "ent_sample1", "--in", "loc_freezer1"],
+            "container_find",
+            {"contents": ["ent_sample1"], "in_storage": "loc_freezer1"},
+        ),
+        (
+            ["container", "find", "--registry-id", "REG-0001", "--registry", "src_registry1"],
+            "container_find",
+            {"registry_ids": ["REG-0001"], "registry": "src_registry1"},
+        ),
+        (
+            ["container", "get", "con_well1", "--location"],
+            "container_get",
+            {"container_id": "con_well1", "location": True},
+        ),
+        (
             [
                 "results",
                 "diff",
@@ -190,6 +214,7 @@ def _without_clock(value):
 )
 async def test_read_replies_match(cli_reply, mcp_reply, fake, args, tool, arguments) -> None:
     fake.add_results_table()
+    fake.add_stored_containers()
     fake.add_example_results_part()
     printed = await cli_reply(*args)
     assert printed["meta"] == {"env": "sandbox", "tenant_url": TENANT}
@@ -308,6 +333,17 @@ async def test_changes_plan_and_status_replies_match(cli_reply, mcp_reply, fake)
     assert fake.writes() == []
 
 
+async def test_changes_status_task_replies_match(cli_reply, mcp_reply, fake) -> None:
+    fake.tasks["task_parity1"] = {
+        "status": "SUCCEEDED",
+        "response": {"assayResults": [{"id": "00000000-0000-4000-8000-000000000001"}]},
+    }
+    printed = await cli_reply("changes", "status", "--task", "task_parity1")
+    assert printed["ok"] is True, printed
+    assert printed == await mcp_reply("changes_status", task_id="task_parity1")
+    assert fake.writes() == []
+
+
 async def test_export_replies_match(cli_reply, mcp_reply, fake, tmp_path) -> None:
     output = tmp_path / "table.csv"
     printed = await cli_reply(
@@ -357,4 +393,30 @@ async def test_protected_apply_refusal_has_the_same_code(cli_reply, pool, fake) 
     assert printed["ok"] is replied["ok"] is False
     assert printed["error"]["code"] == replied["error"]["code"] == "validation_error"
     assert printed["error"]["details"] == replied["error"]["details"]
+    assert fake.writes() == []
+
+
+async def test_results_verify_payload_replies_match(cli_reply, mcp_reply, fake, tmp_path) -> None:
+    fake.bulk_payloads.append(RESULT_PAYLOAD)
+    fake.complete_upload()
+    body_file = tmp_path / "body.json"
+    body_file.write_text(json.dumps(RESULT_PAYLOAD))
+    printed = await cli_reply(
+        "results",
+        "verify",
+        "--payload",
+        str(body_file),
+        "--created-after",
+        "2026-01-01T00:00:00Z",
+        "--entry",
+        ENTRY_ID,
+    )
+    assert printed["ok"] is True and printed["data"]["counts"]["matched"] == 1, printed
+    replied = await mcp_reply(
+        "results_verify",
+        payload=RESULT_PAYLOAD,
+        created_after="2026-01-01T00:00:00Z",
+        entry=ENTRY_ID,
+    )
+    assert printed == replied
     assert fake.writes() == []
