@@ -157,6 +157,13 @@ def _require_part_id(value: object) -> str:
     return value.strip()
 
 
+def _names_invalid_id(exc: ValidationError, value: str) -> bool:
+    """True when a Benchling 400 says the given id is invalid (an unknown id)."""
+    response = (exc.details or {}).get("response")
+    detail = response.get("detail") if isinstance(response, dict) else None
+    return isinstance(detail, str) and "ids are invalid" in detail and value in detail
+
+
 def entry_version(entry: dict[str, Any]) -> str:
     """Return the entry's version ID; raises UpstreamError if version metadata is absent."""
     metadata = entry.get("versionMetadata") or {}
@@ -1120,18 +1127,30 @@ class BenchlingService:
             return self._part_reply(entry_id, version, part, detail)
         raise AssertionError("unreachable")
 
-    async def _entry_part(self, entry_id: str, part_id: str) -> dict[str, Any]:
-        """One part of an entry, read with the `id.anyOf` filter."""
-        matches = [
-            item
-            async for item in self.api.paginate(
-                f"/entry/{entry_id}/parts/items",
-                params={"id.anyOf": part_id, "pageSize": 100},
-            )
-            if item.get("id") == part_id
-        ]
+    async def _entry_part(
+        self, entry_id: str, part_id: str, *, missing: str = "Document part was not found"
+    ) -> dict[str, Any]:
+        """One part of an entry, read with the `id.anyOf` filter.
+
+        Benchling answers an id that is not a part of any entry with a 400 that
+        says "The following ids are invalid: …". That is reported as not found,
+        like an id that belongs to another entry, rather than as a rejected filter.
+        """
+        try:
+            matches = [
+                item
+                async for item in self.api.paginate(
+                    f"/entry/{entry_id}/parts/items",
+                    params={"id.anyOf": part_id, "pageSize": 100},
+                )
+                if item.get("id") == part_id
+            ]
+        except ValidationError as exc:
+            if not _names_invalid_id(exc, part_id):
+                raise
+            matches = []
         if not matches:
-            raise NotFoundError("Document part was not found", details={"part_id": part_id})
+            raise NotFoundError(missing, details={"entry_id": entry_id, "part_id": part_id})
         if len(matches) > 1:
             raise UpstreamError(
                 "Benchling returned a duplicate document part",
@@ -1405,25 +1424,11 @@ class BenchlingService:
     async def get_table_for_entry(self, reference: str, part_id: str) -> dict[str, Any]:
         """Resolve and verify that an unstructured table part belongs to one entry."""
         resolved = await self.resolve_entry(reference)
-        matches = [
-            item
-            async for item in self.api.paginate(
-                f"/entry/{resolved['entry_id']}/parts/items",
-                params={"id.anyOf": part_id, "pageSize": 100},
-            )
-            if item.get("id") == part_id
-        ]
-        if not matches:
-            raise NotFoundError(
-                "Table part does not belong to the selected entry",
-                details={"entry_id": resolved["entry_id"], "part_id": part_id},
-            )
-        if len(matches) > 1:
-            raise UpstreamError(
-                "Benchling returned a duplicate document part",
-                details={"entry_id": resolved["entry_id"], "part_id": part_id},
-            )
-        part = matches[0]
+        part = await self._entry_part(
+            str(resolved["entry_id"]),
+            part_id,
+            missing="Table part does not belong to the selected entry",
+        )
         if not is_unstructured_table(part):
             raise UnsupportedError(
                 "Only unstructured table document parts can be edited",

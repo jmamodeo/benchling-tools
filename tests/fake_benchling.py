@@ -403,6 +403,7 @@ class FakeBenchling:
         self.lookup_parts: dict[str, dict[str, Any]] = {}
         self.lookup_row_page_size: int | None = None
         self.reject_part_id_filter = False
+        self.reject_unknown_part_ids = False
         self.results_row_page_size: int | None = None
         self.extra_entries: list[dict[str, Any]] = []
         self.parts_page_size = 100
@@ -1106,6 +1107,15 @@ class FakeBenchling:
         if wanted and self.reject_part_id_filter:
             return 400, {"error": {"message": "Unknown parameter id.anyOf"}}
         if wanted:
+            known = {part["id"] for part in parts}
+            unknown = [value for value in wanted.split(",") if value not in known]
+            if unknown and self.reject_unknown_part_ids:
+                # Benchling's documented-in-practice reply for an id that is no part.
+                return 400, {
+                    "title": "Bad Request",
+                    "status": 400,
+                    "detail": "The following ids are invalid: " + ", ".join(unknown),
+                }
             parts = [part for part in parts if part["id"] in wanted.split(",")]
         return self._page(parts, call, self.parts_page_size)
 

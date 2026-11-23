@@ -264,3 +264,16 @@ async def test_mcp_tools_return_text_boxes_and_lookup_tables(client, fake) -> No
     }
     assert lookup["detail"]["content"]["rows"][0]["cells"][0]["inputValue"]["value"] == "LOT-2"
     assert fake.writes() == []
+
+
+async def test_an_unknown_part_id_is_not_found_without_a_snapshot(runtime, fake) -> None:
+    """Benchling rejects an id that is no part with a 400; that is not found, not a fallback."""
+    _mixed_entry(fake)
+    fake.reject_unknown_part_ids = True
+    with pytest.raises(NotFoundError) as raised:
+        await runtime.service.get_part(ENTRY_ID, "docpart_missing")
+    assert raised.value.details == {"entry_id": ENTRY_ID, "part_id": "docpart_missing"}
+    assert _snapshot_calls(fake) == []
+    with pytest.raises(NotFoundError, match="does not belong"):
+        await runtime.service.get_table_for_entry(ENTRY_ID, "docpart_missing")
+    assert (await runtime.service.get_part(ENTRY_ID, BOX))["text_box"]["name"] == "Comments"

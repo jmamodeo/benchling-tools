@@ -19,7 +19,7 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
-- `part get` reads only the requested part with `GET /entry/{id}/parts/items?id.anyOf=…`, plus its table detail and rows when it is a table, instead of a full entry snapshot. It falls back to the snapshot when Benchling rejects `id.anyOf`, retries once if the part and its table report different entry versions, and keeps `version_id`.
+- `part get` reads only the requested part with `GET /entry/{id}/parts/items?id.anyOf=…`, plus its table detail and rows when it is a table, instead of a full entry snapshot. An unknown part id, which Benchling rejects with a 400 naming the invalid id, is `not_found` without a snapshot; other rejections of `id.anyOf` fall back to the snapshot. It retries once if the part and its table report different entry versions, and keeps `version_id`.
 - **Breaking:** the MCP `container_find` argument `barcode` (a string) is now `barcodes` (a list of strings). One barcode keeps the one-page `items` and `next_token` reply.
 - A 400 from V2 `GET /containers` that lists `invalidBarcodes` now puts them in `error.details.invalid_barcodes`, with the hint "Benchling did not recognise these barcodes: …". It is still a `validation_error` with exit code 2. A comma inside one `--barcode` value is still rejected, and the message says to repeat `--barcode`.
 - `results tables` adds `part_id` (`docpart_…`), `row_count`, `submission_status` and `placeholder_rows` to each table from one V3 parts listing; `--no-counts` keeps the single V2 read. The counts come from the same capacity helper `results capacity` and `changes plan` use, so a table has one row count everywhere.
