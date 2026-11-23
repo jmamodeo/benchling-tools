@@ -790,13 +790,15 @@ async def test_apply_tells_the_user_to_accept_the_pending_results(runtime, fake)
     step = applied["next_step"]
     assert "pending" in step
     assert ENTRY_ID in step
-    assert "plug" in step
+    assert (
+        "review and accept them in Benchling" in step and "plug" not in step and "click" not in step
+    )
     assert "Assay results" in step
 
 
 async def test_plan_warning_names_the_acceptance_step(runtime) -> None:
     planned = await plan(runtime, [record()])
-    assert any("plug icon" in warning for warning in planned.warnings)
+    assert any("reviews and accepts them in Benchling" in warning for warning in planned.warnings)
 
 
 async def test_non_results_apply_has_no_next_step(runtime) -> None:
@@ -816,7 +818,7 @@ async def test_results_apply_returns_web_url_and_links_it_in_next_step(runtime) 
     applied = await runtime.planner.apply(planned.id)
     assert applied["web_url"] == url
     assert applied["journal"]["result"]["web_url"] == url
-    assert f"Open entry {ENTRY_ID} at {url}," in applied["next_step"]
+    assert f"on entry {ENTRY_ID} at {url} yet" in applied["next_step"]
 
 
 async def test_results_next_step_falls_back_to_the_id_without_web_url(runtime, fake) -> None:
@@ -824,7 +826,7 @@ async def test_results_next_step_falls_back_to_the_id_without_web_url(runtime, f
     planned = await plan(runtime, [record()])
     applied = await runtime.planner.apply(planned.id)
     assert applied["web_url"] is None
-    assert f"Open entry {ENTRY_ID}, go to" in applied["next_step"]
+    assert f"on entry {ENTRY_ID} yet" in applied["next_step"]
 
 
 async def test_non_entry_apply_has_no_web_url(runtime) -> None:
@@ -835,3 +837,29 @@ async def test_non_entry_apply_has_no_web_url(runtime) -> None:
     )
     applied = await runtime.planner.apply(planned.id)
     assert "web_url" not in applied
+
+
+def test_pending_wording_gives_no_ui_steps_anywhere() -> None:
+    from typer.testing import CliRunner
+
+    from benchling_tools.capacity import __doc__ as capacity_doc
+    from benchling_tools.cli import app
+    from benchling_tools.plans import readback, result_update, results
+
+    texts = [
+        readback.PENDING_REVIEW,
+        results.PENDING_RESULTS_WARNING,
+        readback.pending_next_step(
+            2, entry_id="etr_X", table_names=["T"], web_url="https://example.invalid/e"
+        )
+        or "",
+        capacity_doc or "",
+        open(result_update.__file__, encoding="utf-8").read(),
+    ]
+    runner = CliRunner()
+    for command in (["results", "pending", "--help"], ["results", "verify", "--help"]):
+        texts.append(runner.invoke(app, command).output)
+    for text in texts:
+        assert "plug" not in text.lower()
+        assert "click the" not in text.lower()
+    assert "this toolkit does not accept results" in readback.PENDING_REVIEW

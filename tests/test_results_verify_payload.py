@@ -72,7 +72,7 @@ async def test_payload_reports_matched_mismatched_missing_and_extra(runtime, fak
         {"schema_id": OTHER_SCHEMA, "table_id": TABLE, "records": 1, "fields": ["ct"]},
     ]
     assert [batch["schema_id"] for batch in data["batches"]] == [SCHEMA, OTHER_SCHEMA]
-    assert "plug" in data["next_step"]
+    assert "review and accept them in Benchling" in data["next_step"]
     assert len(fake.writes()) == writes
     assert [call.params["schemaId"] for call in list_calls(fake)] == [SCHEMA, OTHER_SCHEMA]
     assert all("createdAt.lte" not in call.params for call in list_calls(fake))

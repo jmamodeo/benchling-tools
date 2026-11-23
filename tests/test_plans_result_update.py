@@ -629,5 +629,5 @@ async def test_result_not_on_the_entry_says_pending_results_must_be_accepted(
     text = _error_text(caught.value)
     assert "not on the selected entry" in text
     assert "pending" in text
-    assert "plug icon" in text
+    assert "reviews and accepts them in Benchling" in text
     assert fake.writes() == []
