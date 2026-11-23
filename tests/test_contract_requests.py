@@ -333,6 +333,7 @@ async def test_list_query_parameters_stay_inside_the_vendored_allow_list(runtime
     await runtime.service.list_entries(name="Assay, replicate 1")
     fake.add_results_table()
     await runtime.service.list_results_table_rows("docpart_rt1", limit=1, cursor="0")
+    await runtime.service.bulk_get_containers(["con_source1", "con_dest1"])
     checked = []
     for call in fake.calls:
         allowed_params = _allowed_for(call.method, call.path)
