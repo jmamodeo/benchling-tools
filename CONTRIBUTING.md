@@ -68,6 +68,10 @@ Use the bug or feature form. Both ask what you tried, the expected and actual be
 - CI (ruff format and lint, mypy, pytest with coverage on Python 3.11–3.13, `agentskills validate` for `SKILL.md`, and the package build) must pass.
 - Preserve the safety model: preview-then-apply, version preconditions, read-only MCP by default.
 
+## Merging
+
+Every change lands as a pull request from a feature branch and is squash-merged once CI is green and the change is verified, with John Amodeo as the sole commit author and no trailers. Releases, tags, PyPI publishes, force-pushes and deletions need John's explicit approval.
+
 ## Releasing
 
 Only the maintainer releases. Set the same version in `src/benchling_tools/__init__.py`, `CITATION.cff`, and `SKILL.md`, move the `CHANGELOG.md` entries under the new version, and merge that pull request. Then publish a GitHub release from `main` whose tag is `v` plus the version. The `Publish to PyPI` workflow builds the package and uploads it with PyPI trusted publishing (GitHub environment `pypi`); no token is stored in the repository.
