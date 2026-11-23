@@ -962,12 +962,23 @@ async def entry_list(
     author: list[str] | None = typer.Option(
         None, "--author", help="Author user ID (ent_…) or exact handle; repeatable."
     ),
+    sort: listing.EntrySort | None = typer.Option(
+        None,
+        "--sort",
+        help=(
+            "Order: created-desc (newest first), created-asc, modified-desc, modified-asc, "
+            "name-asc, or name-desc. The query then uses V2. Omit for Benchling's default, "
+            "most recently modified first. A next_token from one sort must not be reused "
+            "with another."
+        ),
+    ),
     limit: int = typer.Option(50, "--limit", min=1, max=100, help=_LIMIT_HELP),
     cursor: str | None = typer.Option(None, "--cursor", help=_CURSOR_HELP),
 ) -> Any:
-    """List one page of entries. --folder uses V2; every filter is applied by the server.
+    """List one page of entries. --folder or --sort uses V2; the server applies every filter.
 
     Each row includes web_url, the entry's Benchling web-app link, or null if none.
+    The reply's sort is the applied V2 order, such as createdAt:desc, or null.
     """
     return await call.runtime.service.list_entries(
         project=project,
@@ -978,6 +989,7 @@ async def entry_list(
         modified_before=modified_before,
         creator=creator,
         author=author,
+        sort=sort,
         limit=limit,
         cursor=cursor,
     )

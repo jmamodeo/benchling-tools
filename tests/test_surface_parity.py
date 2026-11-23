@@ -89,6 +89,11 @@ def _without_clock(value):
             "entry_list",
             {"creator": ["fixture_handle_1"]},
         ),
+        (
+            ["entry", "list", "--sort", "created-desc", "--limit", "1"],
+            "entry_list",
+            {"sort": "created-desc", "limit": 1},
+        ),
         (["entry", "resolve", ENTRY_ID], "entry_resolve", {"reference": ENTRY_ID}),
         (["entry", "resolve", "EXP-99"], "entry_resolve", {"reference": "EXP-99"}),
         (

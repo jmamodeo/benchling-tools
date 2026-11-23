@@ -72,11 +72,11 @@ Every command, the six change families, spec shapes, result uploads and attachme
 | --- | --- |
 | `users list` | List visible users by handle, email, name, ID, or organization. |
 | `users get` | Read a visible user by ID or exact handle. |
-| `entry list` | List entries with server-side filters, including creator and author. |
+| `entry list` | List entries with server-side filters, including creator and author, optionally ordered with `--sort`. |
 | `container find` | Find containers by exact name, or check many barcodes in one call and list the invalid, missing, and empty ones. Read-only. |
 | `results capacity` | Report each results table's used rows, known pending results, planned rows, and remaining room under Benchling's 1,000-row limit. Read-only. |
 
-For example, resolve a handle with `benchling-tools users get HANDLE --env dev`, then use the returned ID with `benchling-tools entry list --creator USER_ID --folder lib_example --env dev`. Handles may also be passed directly to `--creator` or `--author`.
+For example, resolve a handle with `benchling-tools users get HANDLE --env dev`, then use the returned ID with `benchling-tools entry list --creator USER_ID --folder lib_example --env dev`. Handles may also be passed directly to `--creator` or `--author`. To get the newest entry a user created, run `benchling-tools entry list --creator USER_ID --sort created-desc --limit 1 --env dev`.
 
 For result uploads, preview defaults a missing `projectId` to the entry's project and refuses
 the plan if none is available. An explicit `projectId: null` requests creator-only access,

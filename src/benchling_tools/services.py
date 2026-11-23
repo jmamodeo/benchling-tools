@@ -1559,10 +1559,11 @@ class BenchlingService:
         modified_before: object = None,
         creator: object = None,
         author: object = None,
+        sort: object = None,
         limit: object = listing.LIST_LIMIT,
         cursor: object = None,
     ) -> dict[str, Any]:
-        """Return one page of entries matching the server-side filters."""
+        """Return one page of entries matching the server-side filters, in the given order."""
         return await listing.list_entries(
             self.api,
             project=project,
@@ -1573,6 +1574,7 @@ class BenchlingService:
             modified_before=modified_before,
             creator=creator,
             author=author,
+            sort=sort,
             limit=limit,
             cursor=cursor,
         )
