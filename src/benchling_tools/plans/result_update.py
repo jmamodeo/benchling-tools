@@ -619,8 +619,8 @@ def _row_refusal(
             "id": result_id,
             "message": (
                 "Result is not on the selected entry. Results created through the API stay "
-                "pending until a person accepts them in the entry's results table in Benchling "
-                "(the plug icon in the table toolbar). Accept them there first, then plan again."
+                "pending until a person reviews and accepts them in Benchling. Plan the "
+                "update again after they are accepted."
             ),
         }
     if not _result_schema_id(record):

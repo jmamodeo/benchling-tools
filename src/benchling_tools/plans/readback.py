@@ -1,8 +1,8 @@
 """Read back submitted results, mark pending ones, and diff them against a result plan.
 
 Benchling V2 assay results have ``entryId`` set to null until a person accepts them
-into the entry's results table (the plug icon in the table toolbar). These helpers
-only read; they never write to Benchling or to the local journal.
+into the entry's results table. These helpers only read; they never write to
+Benchling or to the local journal.
 """
 
 from __future__ import annotations
@@ -10,6 +10,16 @@ from __future__ import annotations
 from typing import Any
 
 from ..errors import ValidationError
+
+# How every reply describes results that are pending. Benchling: results sent to a
+# table "are not immediately appended to the destination table. Their source is
+# marked as 'pending' and they will not appear in the table until they are
+# explicitly integrated." Accepting them is a review step for a person, so the
+# toolkit states the fact and gives no UI instructions.
+PENDING_REVIEW = (
+    "A person has to review and accept them in Benchling before they appear in the "
+    "table; this toolkit does not accept results."
+)
 from ..models import ChangeJournal, ChangePlan
 from .blobs import local_file_descriptor
 
@@ -103,7 +113,7 @@ def pending_next_step(
     table_names: list[str] | None = None,
     web_url: str | None = None,
 ) -> str | None:
-    """Tell the user how to accept pending results, or None when nothing is pending."""
+    """Say which results are pending and that a person accepts them, or None when none are."""
     if pending <= 0:
         return None
     noun = "result is" if pending == 1 else "results are"
@@ -111,15 +121,16 @@ def pending_next_step(
     if entry_id and table_names:
         tables = "tables" if len(table_names) > 1 else "table"
         names = ", ".join(f'"{name}"' for name in table_names)
-        where = f"{entry}, go to the result {tables} {names},"
+        where = f" Sent to {entry}, result {tables} {names}."
     elif entry_id:
-        where = f"{entry}, go to its results table,"
+        where = f" Sent to {entry}."
     else:
-        where = "the entry the results were uploaded to, go to its results table,"
+        where = " Sent to the entry the results were uploaded to."
+    them = "it" if pending == 1 else "them"
     return (
-        f"{pending} {noun} pending and still need to be accepted. Open {where} and click "
-        "the plug (integrate) icon in the table toolbar. Pending results have no entry yet, "
-        "so `results list --entry` and `results rows` do not show them until they are accepted."
+        f"{pending} {noun} pending: Benchling has not added {them} to the results table "
+        f"yet.{where} {PENDING_REVIEW} Pending results have no entry yet, so "
+        "`results list --entry` and `results rows` do not show them until they are accepted."
     )
 
 

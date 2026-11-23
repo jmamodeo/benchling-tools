@@ -19,6 +19,7 @@ never match.
 from __future__ import annotations
 
 import json
+import shlex
 from typing import Any
 
 from .capacity import is_placeholder_row
@@ -184,7 +185,10 @@ async def filter_page(
     """Keep only the rows of one ``results rows`` page that match every condition.
 
     Adds ``scanned`` (rows on the page) and ``matched``. ``next_token`` still
-    pages the underlying table. An unknown field is a validation error.
+    pages the underlying table. The filter covers only this page, so the reply
+    says so: ``where_scope`` is ``"page"``, ``complete`` is false while a next
+    page exists, and then ``where_scope_note`` points at ``results tables
+    --where`` for whole-table counts. An unknown field is a validation error.
     """
     definitions = await table_fields(
         service, page.get("column_definitions"), page.get("result_schema_id"), {}
@@ -201,6 +205,18 @@ async def filter_page(
     page["scanned"] = len(items)
     page["matched"] = len(kept)
     page["where"] = describe(conditions)
+    complete = not page.get("next_token")
+    page["where_scope"] = "page"
+    page["complete"] = complete
+    if not complete:
+        flags = " ".join(
+            f"--where {shlex.quote(f'{field}={value}')}" for field, value in conditions
+        )
+        page["where_scope_note"] = (
+            f"--where filtered this page only ({len(kept)} of {len(items)} rows read match); "
+            "more rows follow (next_token). For whole-table counts run "
+            f"`results tables ENTRY {flags}`, or page on with --cursor."
+        )
     return page
 
 

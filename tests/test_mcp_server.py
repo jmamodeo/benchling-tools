@@ -702,6 +702,7 @@ async def test_results_tables_and_rows_tools_count_and_filter(client, fake) -> N
         )
     )["data"]
     assert (rows["scanned"], rows["matched"]) == (1, 1)
+    assert (rows["where_scope"], rows["complete"]) == ("page", True)
     assert fake.writes() == []
 
 
@@ -997,7 +998,7 @@ async def test_read_back_and_verify_results_without_allow_writes(client, pool, f
 
     pending = (await call(client, "results_pending", env="sandbox", plan_id=planned.id))["data"]
     assert pending["needs_accept"] == [result_id]
-    assert "plug" in pending["next_step"]
+    assert "review and accept them in Benchling" in pending["next_step"]
     verified = (await call(client, "results_verify", env="sandbox", plan_id=planned.id))["data"]
     assert verified["ok"] is True and verified["counts"]["pending"] == 1
     assert len(fake.writes()) == writes
