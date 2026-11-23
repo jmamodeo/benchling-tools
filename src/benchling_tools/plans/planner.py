@@ -37,6 +37,9 @@ from .result_update import request_is_result_update
 from .results import ResultsPlanning, pending_results_next_step, plan_entry_web_url
 from .table import TablePlanning
 
+# Journal states after an apply that may have created records.
+_APPLIED_STATUSES = frozenset({PlanStatus.SUCCEEDED, PlanStatus.PARTIAL, PlanStatus.UNKNOWN})
+
 
 def _is_result_creation_event(stage: str) -> bool:
     """Recognize the current and legacy result-upload journal stage names."""
@@ -517,9 +520,71 @@ class ChangePlanner(
             raise ValidationError(f"{label} must be between 1 and {maximum}")
         return value
 
+    def _entry_upload_plans(
+        self, entry_id: str
+    ) -> list[tuple[ChangePlan, ChangeJournal, datetime]]:
+        """Applied result upload plans in this home for one entry, newest first.
+
+        Each plan comes with the time its apply finished. Result updates, plans for
+        another environment or entry, plans never applied or that failed with no write,
+        and files that cannot be read are skipped.
+        """
+        found: list[tuple[ChangePlan, ChangeJournal, datetime]] = []
+        for plan_id in self.repository.list_plan_ids():
+            try:
+                plan = self.repository.load_plan(plan_id)
+                journal = self.repository.load_journal(plan_id)
+            except (BenchlingAgentError, OSError, ValueError):
+                continue
+            if (
+                plan.family != PlanFamily.RESULTS
+                or plan.preconditions.get("operation") == "update"
+                or plan.entry_id != entry_id
+                or plan.env != self.api.environment.name
+                or plan.tenant_url != self.api.environment.base_url
+                or journal.status not in _APPLIED_STATUSES
+            ):
+                continue
+            finished = [
+                event.at
+                for event in journal.events
+                if event.stage == "apply" and event.status != "started"
+            ]
+            found.append((plan, journal, finished[-1] if finished else plan.created_at))
+        found.sort(key=lambda item: (item[2], item[0].id), reverse=True)
+        return found
+
+    async def _read_records(
+        self, table_of: dict[str, Any]
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        """Read records by id and summarize each with the table it was uploaded to."""
+        if not table_of:
+            return [], []
+        fetched = await self.service.get_assay_results(list(table_of))
+        items = [
+            readback.summarize_record(
+                record,
+                table_id=table_of.get(record.get("id"), table_of.get(record.get("v3Id"))),
+            )
+            for record in fetched["items"]
+        ]
+        return items, fetched["not_found"]
+
+    @staticmethod
+    def _pending_tables(items: list[dict[str, Any]], names: dict[Any, Any]) -> list[str]:
+        """Names of the tables holding pending items, in first-seen order."""
+        return list(
+            dict.fromkeys(
+                str(names.get(item.get("table_id")) or item.get("table_id"))
+                for item in items
+                if item["state"] == readback.PENDING
+            )
+        )
+
     async def read_back_results(
         self,
         *,
+        entry: str | None = None,
         plan_id: str | None = None,
         result_ids: list[str] | None = None,
         schema_id: str | None = None,
@@ -529,7 +594,8 @@ class ChangePlanner(
     ) -> dict[str, Any]:
         """Fetch result records, including pending ones, and mark each pending or accepted.
 
-        Exactly one source: a result upload plan ID (its journal record IDs), explicit
+        Exactly one source: an entry (the record IDs of every applied result upload plan
+        for it in this home), a result upload plan ID (its journal record IDs), explicit
         result IDs (V2 UUIDs or V3 ``result_…`` ids, mixed freely), or a result schema ID
         with a created-after time. Each item has ``v2_id`` and ``v3_id``; each ID not found
         is listed in ``not_found_details`` with its namespace and the lookup used. At most ``limit``
@@ -537,12 +603,14 @@ class ChangePlanner(
         """
         limit = self._readback_limit(limit, "limit", 100)
         by_schema = schema_id is not None or created_after is not None
-        if sum([plan_id is not None, result_ids is not None, by_schema]) != 1:
+        if sum([entry is not None, plan_id is not None, result_ids is not None, by_schema]) != 1:
             raise ValidationError(
-                "Pass exactly one of plan_id, result_ids, or schema_id with created_after"
+                "Pass exactly one of entry, plan_id, result_ids, or schema_id with created_after"
             )
         if cursor is not None and not by_schema:
             raise ValidationError("cursor applies only to schema_id with created_after")
+        if entry is not None and (not isinstance(entry, str) or not entry.strip()):
+            raise ValidationError("entry must be an entry ID, display ID, or URL")
         response: dict[str, Any]
         items: list[dict[str, Any]]
         not_found: list[str] = []
@@ -565,6 +633,51 @@ class ChangePlanner(
             not_found = fetched["not_found"]
             response = {"source": {"mode": "ids", "requested": len(items) + len(not_found)}}
             next_step = readback.pending_next_step(readback.state_counts(items)[readback.PENDING])
+        elif entry is not None:
+            resolved = await self.service.resolve_entry(entry)
+            entry_id = resolved["entry_id"]
+            web_url = resolved.get("web_url")
+            names: dict[Any, Any] = {}
+            table_of: dict[str, Any] = {}
+            plans: list[dict[str, Any]] = []
+            for plan, journal, applied_at in self._entry_upload_plans(entry_id):
+                submitted = await self._submitted_batches(journal)
+                names.update(
+                    {
+                        batch["table_id"]: batch["table_name"]
+                        for batch in readback.planned_batches(plan)
+                    }
+                )
+                web_url = web_url or plan_entry_web_url(plan)
+                for batch in submitted:
+                    for record_id in batch["record_ids"]:
+                        table_of.setdefault(record_id, batch.get("table_id"))
+                plans.append(
+                    {
+                        "plan_id": plan.id,
+                        "applied_at": applied_at.isoformat(),
+                        "record_count": sum(len(batch["record_ids"]) for batch in submitted),
+                    }
+                )
+            items, not_found = await self._read_records(table_of)
+            response = {
+                "source": {
+                    "mode": "entry",
+                    "entry_id": entry_id,
+                    "display_id": resolved.get("display_id"),
+                    "web_url": web_url,
+                },
+                "plans": plans,
+            }
+            if plans:
+                next_step = readback.pending_next_step(
+                    readback.state_counts(items)[readback.PENDING],
+                    entry_id=entry_id,
+                    table_names=self._pending_tables(items, names),
+                    web_url=web_url,
+                )
+            else:
+                next_step = readback.NO_ENTRY_PLANS_NEXT_STEP
         else:
             assert plan_id is not None
             plan, journal = self._readback_plan(plan_id)
@@ -572,22 +685,13 @@ class ChangePlanner(
             names = {
                 batch["table_id"]: batch["table_name"] for batch in readback.planned_batches(plan)
             }
-            table_of = {
-                record_id: batch.get("table_id")
-                for batch in submitted
-                for record_id in batch["record_ids"]
-            }
-            items = []
-            if table_of:
-                fetched = await self.service.get_assay_results(list(table_of))
-                not_found = fetched["not_found"]
-                items = [
-                    readback.summarize_record(
-                        record,
-                        table_id=table_of.get(record.get("id"), table_of.get(record.get("v3Id"))),
-                    )
-                    for record in fetched["items"]
-                ]
+            items, not_found = await self._read_records(
+                {
+                    record_id: batch.get("table_id")
+                    for batch in submitted
+                    for record_id in batch["record_ids"]
+                }
+            )
             response = {
                 "source": {
                     "mode": "plan",
@@ -611,17 +715,10 @@ class ChangePlanner(
                     for batch in submitted
                 ],
             }
-            pending_tables = list(
-                dict.fromkeys(
-                    str(names.get(item.get("table_id")) or item.get("table_id"))
-                    for item in items
-                    if item["state"] == readback.PENDING
-                )
-            )
             next_step = readback.pending_next_step(
                 len([item for item in items if item["state"] == readback.PENDING]),
                 entry_id=plan.entry_id,
-                table_names=pending_tables,
+                table_names=self._pending_tables(items, names),
                 web_url=plan_entry_web_url(plan),
             )
         ordered = readback.sort_by_state(items)

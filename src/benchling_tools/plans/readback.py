@@ -17,6 +17,13 @@ ACCEPTED = "accepted"
 ARCHIVED = "archived"
 _STATE_ORDER = {PENDING: 0, ACCEPTED: 1, ARCHIVED: 2}
 
+NO_ENTRY_PLANS_NEXT_STEP = (
+    "No applied result upload plan for this entry was found in this BENCHLING_TOOLS_HOME; "
+    "only plans applied from this home are known. For a plan applied from another home, run "
+    "`results pending --plan BUNDLE.json` with a bundle made there by `changes export PLAN_ID "
+    "--output BUNDLE.json`, or run `results pending --schema SCHEMA_ID --created-after TIME`."
+)
+
 
 def result_state(record: dict[str, Any]) -> str:
     """``archived`` when archived, ``pending`` with no entry, otherwise ``accepted``."""

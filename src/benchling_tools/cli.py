@@ -8,6 +8,7 @@ import inspect
 import io
 import json
 import os
+import re
 import sys
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
@@ -84,6 +85,56 @@ class RootGroup(TyperGroup):
         sys.exit(code if isinstance(code, int) else 0)
 
 
+_PENDING_SOURCES_HINT = (
+    "Pass exactly one of --entry, --plan, --id, or --schema with --created-after."
+)
+
+# Curated hints for an unknown option, keyed by (command path, option). An option of
+# None matches every unknown option on that command.
+_OPTION_HINTS: dict[tuple[str, str | None], str] = {
+    ("results list", "--plan"): (
+        "results list takes no plan; use results pending --plan PLAN or results verify PLAN."
+    ),
+    ("results pending", None): _PENDING_SOURCES_HINT,
+}
+
+_ENTRY_LIKE_REF = re.compile(r"^(etr_\w+|[A-Za-z][A-Za-z0-9]*-?\d+|https?://\S+)$")
+_PLAN_ID = re.compile(r"^[0-9a-f]{32}$")
+_EXTRA_ARGUMENTS = re.compile(r"^Got unexpected extra argument(?:s|\(s\))? \((.*)\)$")
+
+
+def _long_options(ctx: Any) -> list[str]:
+    """The command's long options, in declaration order, without --help."""
+    options: list[str] = []
+    for param in ctx.command.get_params(ctx):
+        if getattr(param, "param_type_name", None) != "option":
+            continue
+        for name in [*param.opts, *param.secondary_opts]:
+            if name.startswith("--") and name != "--help" and name not in options:
+                options.append(name)
+    return options
+
+
+def _usage_hints(exc: Any, ctx: Any) -> dict[str, Any]:
+    """valid_options and a hint that name the right alternative for this command."""
+    path = " ".join(ctx.command_path.split()[1:])
+    option_name = getattr(exc, "option_name", None)
+    if ctx.parent is None and option_name in ("--env", "-e"):
+        return {"hint": "--env is a command option: benchling-tools entry get REF --env NAME"}
+    options = _long_options(ctx)
+    if type(exc).__name__ == "NoSuchOption":
+        hint = _OPTION_HINTS.get((path, option_name)) or _OPTION_HINTS.get((path, None))
+        return {"valid_options": options, **({"hint": hint} if hint else {})}
+    extra = _EXTRA_ARGUMENTS.match(getattr(exc, "message", "") or "")
+    if extra and "--entry" in options:
+        for value in extra.group(1).split():
+            if _PLAN_ID.fullmatch(value) and "--plan" in options:
+                return {"hint": f"Pass the plan with --plan {value}"}
+            if _ENTRY_LIKE_REF.fullmatch(value):
+                return {"hint": f"Pass the entry with --entry {value}"}
+    return {}
+
+
 def _usage_failure(exc: Any) -> int:
     """Print the usage_error envelope for a click usage error and return its exit code."""
     ctx = exc.ctx
@@ -96,9 +147,8 @@ def _usage_failure(exc: Any) -> int:
             "command": ctx.command_path,
             "usage": ctx.get_usage(),
             "help": f"{ctx.command_path} --help",
+            **_usage_hints(exc, ctx),
         }
-        if ctx.parent is None and getattr(exc, "option_name", None) in ("--env", "-e"):
-            details["hint"] = "--env is a command option: benchling-tools entry get REF --env NAME"
     error = UsageError(exc.format_message(), details=details)
     _emit(Envelope.failure(error))
     return int(error.exit_code)
@@ -1258,6 +1308,14 @@ async def results_rows(
 @command(read_only=True)
 async def results_pending(
     call: Call,
+    entry: str | None = typer.Option(
+        None,
+        "--entry",
+        help=(
+            "Entry ID (etr_…), display ID, or URL. Reads back the records of every "
+            "applied result upload plan for that entry in this home."
+        ),
+    ),
     plan_id: str | None = typer.Option(
         None,
         "--plan",
@@ -1288,8 +1346,17 @@ async def results_pending(
 
     Pending results have no entry until a person accepts them with the plug icon
     in the results table, so listing results by entry does not find them. Pass
-    exactly one of --plan, --id, or --schema with --created-after. Relay
+    exactly one of --entry, --plan, --id, or --schema with --created-after. Relay
     next_step. Reads only.
+
+    --entry is answered from this home's plans and journals, not by Benchling:
+    Benchling has no API filter for pending results by entry, and its result
+    lists leave a pending result's entry empty until it is accepted. It reads
+    back every applied result upload plan (not result updates, and not plans
+    that were never applied or failed) whose entry matches, newest first, and
+    lists each under plans with plan_id, applied_at, and record_count. Plans
+    applied from another home are not known; read those with --plan BUNDLE.json
+    or with --schema and --created-after.
 
     Each item has id and v2_id (the V2 assay result UUID) and v3_id (result_…).
     A V3 id is read with V3 GET /result/{id} and matched to its V2 record; it is
@@ -1297,6 +1364,7 @@ async def results_pending(
     not_found, and in not_found_details with id_namespace and lookup.
     """
     return await call.runtime.planner.read_back_results(
+        entry=entry,
         plan_id=plan_id,
         result_ids=result_ids or None,
         schema_id=schema_id,
