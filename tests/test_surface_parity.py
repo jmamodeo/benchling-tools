@@ -225,6 +225,38 @@ async def test_read_replies_match(cli_reply, mcp_reply, fake, args, tool, argume
 @pytest.mark.parametrize(
     ("args", "tool", "arguments"),
     [
+        (["entry", "inspect", ENTRY_ID], "entry_inspect", {"reference": ENTRY_ID}),
+        (
+            ["section", "get", ENTRY_ID, "Results", "--table-row-limit", "1"],
+            "section_get",
+            {"reference": ENTRY_ID, "section": "Results", "table_row_limit": 1},
+        ),
+        (
+            ["part", "get", ENTRY_ID, "docpart_box1"],
+            "part_get",
+            {"reference": ENTRY_ID, "part_id": "docpart_box1"},
+        ),
+        (
+            ["part", "get", ENTRY_ID, "docpart_lookup1", "--row-offset", "1"],
+            "part_get",
+            {"reference": ENTRY_ID, "part_id": "docpart_lookup1", "row_offset": 1},
+        ),
+    ],
+)
+async def test_text_box_and_lookup_table_replies_match(
+    cli_reply, mcp_reply, fake, args, tool, arguments
+) -> None:
+    fake.add_text_box("docpart_box1")
+    fake.add_lookup_table("docpart_lookup1")
+    printed = await cli_reply(*args)
+    assert printed["ok"] is True, printed
+    assert _without_clock(printed) == _without_clock(await mcp_reply(tool, **arguments))
+    assert fake.writes() == []
+
+
+@pytest.mark.parametrize(
+    ("args", "tool", "arguments"),
+    [
         (["results", "tables", ENTRY_ID], "results_tables", {"reference": ENTRY_ID}),
         (
             ["results", "tables", ENTRY_ID, "--no-counts"],

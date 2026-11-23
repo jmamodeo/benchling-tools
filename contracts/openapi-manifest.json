@@ -4,7 +4,7 @@
     {
       "name": "benchling-v3",
       "url": "https://benchling.com/api/v3/openapi.yaml",
-      "sha256": "d2594d4792843802e2c7f64c3b09241ff78c4962e85028f3dc55b7ef61f81512",
+      "sha256": "0c7bff4e17f796f6deeb716d5beb75230b0d7c48e16877a9f8f4ed54a9347273",
       "captured_at": "2026-11-19",
       "snapshot": "contracts/benchling-v3-openapi.yaml",
       "routes_used": [
@@ -31,6 +31,8 @@
         "/aa-sequence/{aa_sequence_id}",
         "/document-part-unstructured-table/{doc_part_id}",
         "/document-part-unstructured-table/{doc_part_id}/rows/items",
+        "/document-part-lookup-table/{doc_part_id}",
+        "/document-part-lookup-table/{doc_part_id}/rows/items",
         "/document-part-results-table/{doc_part_id}",
         "/document-part-results-table/{doc_part_id}/rows/items",
         "/result/items",
