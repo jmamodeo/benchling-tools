@@ -102,7 +102,9 @@ KNOWN_PART_TYPES = {
     "BenchlingItemDocumentContent",
     "RunDocumentContent",
     "TextBoxDocumentContent",
+    "DocumentPartTextBox",
     "DocumentPartResultsTable",
+    "DocumentPartLookupTable",
     "DocumentPartUnavailable",
 }
 
@@ -207,6 +209,40 @@ def is_structured_table(part: dict[str, Any]) -> bool:
 def is_results_table(part: dict[str, Any]) -> bool:
     """True for a first-class results table part."""
     return part_type(part).split(".")[-1] == "DocumentPartResultsTable"
+
+
+def is_lookup_table(part: dict[str, Any]) -> bool:
+    """True for a lookup table part. Its rows are read-only and carry no result records."""
+    return part_type(part).split(".")[-1] == "DocumentPartLookupTable"
+
+
+def is_text_box(part: dict[str, Any]) -> bool:
+    """True for a labeled fill-in text box part."""
+    return part_type(part).split(".")[-1] in {"DocumentPartTextBox", "TextBoxDocumentContent"}
+
+
+def text_box_detail(part: dict[str, Any]) -> dict[str, Any]:
+    """A text box's label, full text, rich-text spans and submission state."""
+    content = part_content(part)
+    return {
+        "part_id": part.get("id"),
+        "name": part_display_name(part),
+        "text": content.get("text"),
+        "formats": content.get("formats") or [],
+        "links": content.get("links") or [],
+        "mentions": content.get("mentions") or [],
+        "submission_status": content.get("submissionStatus"),
+        "is_submittable": content.get("isSubmittable"),
+    }
+
+
+def part_version_id(part: dict[str, Any]) -> str | None:
+    """The entry version a document part was read at, when the part carries one."""
+    metadata = part.get("versionMetadata")
+    version = part.get("versionId") or (
+        metadata.get("versionId") if isinstance(metadata, dict) else None
+    )
+    return str(version) if version else None
 
 
 _TABLE_HANDLE_KEYS = ("apiId", "tableHandleId", "structuredTableId", "legacyId", "v2Id")
@@ -547,6 +583,52 @@ def build_sections(parts: list[dict[str, Any]]) -> list[dict[str, Any]]:
             current["child_part_ids"].append(part.get("id"))
             current["end_index"] = index
     return sections
+
+
+def text_box_summaries(
+    parts: list[dict[str, Any]], sections: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Each text box's label, full text and submission state, with the section that holds it."""
+    section_of: dict[Any, dict[str, Any]] = {}
+    for section in sections:
+        reference = {"part_id": section.get("part_id"), "title": section.get("title")}
+        for child in section.get("child_part_ids") or []:
+            section_of[child] = reference
+    summaries = []
+    for part in parts:
+        if is_text_box(part):
+            detail = text_box_detail(part)
+            summaries.append(
+                {
+                    "part_id": detail["part_id"],
+                    "name": detail["name"],
+                    "text": detail["text"],
+                    "submission_status": detail["submission_status"],
+                    "is_submittable": detail["is_submittable"],
+                    "section": section_of.get(part.get("id")),
+                }
+            )
+    return summaries
+
+
+def lookup_table_summaries(
+    parts: list[dict[str, Any]], tables: dict[str, dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Each lookup table's part ID, name and row count."""
+    summaries = []
+    for part in parts:
+        part_id = part.get("id")
+        table = tables.get(part_id) if isinstance(part_id, str) else None
+        if is_lookup_table(part) and table is not None:
+            content = part_content(table)
+            summaries.append(
+                {
+                    "part_id": part_id,
+                    "name": part_display_name(part) or content.get("name"),
+                    "row_count": table.get("rowCount", len(content.get("rows") or [])),
+                }
+            )
+    return summaries
 
 
 def result_id_namespace(result_id: str) -> str:
@@ -918,6 +1000,8 @@ class BenchlingService:
                 }
                 for key, value in snapshot["tables"].items()
             },
+            "text_boxes": text_box_summaries(snapshot["parts"], snapshot["sections"]),
+            "lookup_tables": lookup_table_summaries(snapshot["parts"], snapshot["tables"]),
             "schema": snapshot.get("schema"),
             "completeness": snapshot["completeness"],
             "issues": snapshot["issues"],
@@ -943,26 +1027,115 @@ class BenchlingService:
             )
         target = matches[0]
         ids = {target["part_id"], *target["child_part_ids"]}
+        parts = [part for part in snapshot["parts"] if part.get("id") in ids]
+        tables = {key: value for key, value in snapshot["tables"].items() if key in ids}
         return {
             "entry_id": snapshot["resolved"]["entry_id"],
             "version_id": snapshot["version_id"],
             "section": target,
-            "parts": [part for part in snapshot["parts"] if part.get("id") in ids],
-            "tables": {key: value for key, value in snapshot["tables"].items() if key in ids},
+            "parts": parts,
+            "tables": tables,
+            "text_boxes": text_box_summaries(parts, [target]),
+            "lookup_tables": lookup_table_summaries(parts, tables),
         }
 
     async def get_part(self, reference: str, part_id: str) -> dict[str, Any]:
-        """Return one document part and any table detail; raises NotFoundError if absent."""
+        """Return one document part and its detail; raises NotFoundError if absent.
+
+        Reads only that part with `GET /entry/{id}/parts/items?id.anyOf=…`, then the
+        part's table detail and rows when it is a table. When Benchling rejects the
+        `id.anyOf` filter, it falls back to a full entry snapshot. A text box adds
+        `text_box`. The read is retried once if the entry version changes between
+        the part and its table, then raises ConflictError.
+        """
+        part_id = _require_part_id(part_id)
+        resolved = await self.resolve_entry(reference)
+        entry_id = str(resolved["entry_id"])
+        for attempt in range(2):
+            try:
+                part = await self._entry_part(entry_id, part_id)
+            except ValidationError:
+                return await self._get_part_from_snapshot(reference, part_id)
+            detail = await self._part_table_detail(part)
+            part_version = part_version_id(part)
+            detail_version = (
+                (detail.get("versionMetadata") or {}).get("versionId") if detail else None
+            )
+            if part_version and detail_version and part_version != detail_version:
+                if attempt == 1:
+                    raise ConflictError(
+                        "Entry changed while the document part was being read",
+                        details={
+                            "entry_id": entry_id,
+                            "part_id": part_id,
+                            "part_version": part_version,
+                            "table_version": detail_version,
+                        },
+                    )
+                continue
+            version = part_version or detail_version
+            if not version:
+                version = entry_version(await self.api.request("GET", f"/entry/{entry_id}"))
+            return self._part_reply(entry_id, version, part, detail)
+        raise AssertionError("unreachable")
+
+    async def _entry_part(self, entry_id: str, part_id: str) -> dict[str, Any]:
+        """One part of an entry, read with the `id.anyOf` filter."""
+        matches = [
+            item
+            async for item in self.api.paginate(
+                f"/entry/{entry_id}/parts/items",
+                params={"id.anyOf": part_id, "pageSize": 100},
+            )
+            if item.get("id") == part_id
+        ]
+        if not matches:
+            raise NotFoundError("Document part was not found", details={"part_id": part_id})
+        if len(matches) > 1:
+            raise UpstreamError(
+                "Benchling returned a duplicate document part",
+                details={"entry_id": entry_id, "part_id": part_id},
+            )
+        return matches[0]
+
+    async def _get_part_from_snapshot(self, reference: str, part_id: str) -> dict[str, Any]:
         snapshot = await self.get_entry(reference, full=True)
         for part in snapshot["parts"]:
             if part.get("id") == part_id:
-                return {
-                    "entry_id": snapshot["resolved"]["entry_id"],
-                    "version_id": snapshot["version_id"],
-                    "part": part,
-                    "detail": snapshot["tables"].get(part_id),
-                }
+                return self._part_reply(
+                    snapshot["resolved"]["entry_id"],
+                    snapshot["version_id"],
+                    part,
+                    snapshot["tables"].get(part_id),
+                )
         raise NotFoundError("Document part was not found", details={"part_id": part_id})
+
+    @staticmethod
+    def _part_reply(
+        entry_id: str, version: str, part: dict[str, Any], detail: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        reply: dict[str, Any] = {
+            "entry_id": entry_id,
+            "version_id": version,
+            "part": part,
+            "detail": detail,
+        }
+        if is_text_box(part):
+            reply["text_box"] = text_box_detail(part)
+        return reply
+
+    async def _part_table_detail(self, part: dict[str, Any]) -> dict[str, Any] | None:
+        """Table detail and every row for a table part this client reads; otherwise None."""
+        part_id = part.get("id")
+        if not isinstance(part_id, str) or not part_id:
+            return None
+        if is_unstructured_table(part):
+            return await self.get_table(part_id)
+        if is_results_table(part):
+            return await self.get_results_table_part(part_id)
+        if is_lookup_table(part):
+            return await self.get_lookup_table_part(part_id)
+        return None
 
     async def get_table(self, part_id: str) -> dict[str, Any]:
         """Read an unstructured table: part metadata, then every row page.
@@ -983,6 +1156,15 @@ class BenchlingService:
             part_id,
             collection="document-part-results-table",
             fallback_typename="DocumentPartResultsTable",
+            require_text=False,
+        )
+
+    async def get_lookup_table_part(self, part_id: str) -> dict[str, Any]:
+        """Read a lookup table's columns and every row page. Lookup rows are read-only."""
+        return await self._read_part_table(
+            part_id,
+            collection="document-part-lookup-table",
+            fallback_typename="DocumentPartLookupTable",
             require_text=False,
         )
 
@@ -1144,8 +1326,8 @@ class BenchlingService:
                 not isinstance(column, dict) for column in raw_columns
             ):
                 raise UpstreamError(
-                    "Results table response contained invalid columns",
-                    details={"part_id": part_id},
+                    "Table response contained invalid columns",
+                    details={"part_id": part_id, "type": fallback_typename},
                 )
             columns = raw_columns
         rows: list[dict[str, Any]] = []
@@ -2134,10 +2316,9 @@ class BenchlingService:
                         details={"type": part_type(part)},
                     )
                 )
-            if is_unstructured_table(part) and part_id:
-                tables[part_id] = await self.get_table(part_id)
-            elif is_results_table(part) and part_id:
-                tables[part_id] = await self.get_results_table_part(part_id)
+            detail = await self._part_table_detail(part)
+            if detail is not None and isinstance(part_id, str):
+                tables[part_id] = detail
             elif is_structured_table(part) and part_id:
                 issues.append(
                     CompletenessIssue(

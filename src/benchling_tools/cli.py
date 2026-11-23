@@ -776,10 +776,10 @@ async def entry_get(
         100, "--result-limit", min=1, help="Most result records to return with --full."
     ),
     table_row_offset: int = typer.Option(
-        0, "--table-row-offset", min=0, help="Rows to skip in each unstructured table on the page."
+        0, "--table-row-offset", min=0, help="Rows to skip in each table on the page."
     ),
     table_row_limit: int = typer.Option(
-        250, "--table-row-limit", min=1, help="Most rows to return from each unstructured table."
+        250, "--table-row-limit", min=1, help="Most rows to return from each table on the page."
     ),
 ) -> Any:
     """Fetch entry metadata, or with --full a paged snapshot of its structured content.
@@ -840,7 +840,9 @@ async def entry_inspect(
 
     Part IDs are v3_document_part ids (docpart_…), the ids section get, part get,
     table get, and results rows take. They are not the v2_structured_table ids
-    (strtbl_…) that results tables returns.
+    (strtbl_…) that results tables returns. text_boxes lists each fill-in text box
+    (part_id, name, full text, submission_status, is_submittable, section).
+    lookup_tables lists each lookup table (part_id, name, row_count).
     """
     return await call.runtime.service.inspect_entry(reference)
 
@@ -1011,7 +1013,11 @@ async def section_get(
         250, "--table-row-limit", min=1, help="Most rows to return from each table in the section."
     ),
 ) -> Any:
-    """Get one section of an entry by stable part ID or a unique section title, paged."""
+    """Get one section of an entry by stable part ID or a unique section title, paged.
+
+    text_boxes and lookup_tables summarize the text boxes and lookup tables among
+    the returned parts, as in entry inspect.
+    """
     data = await call.runtime.service.get_section(reference, section)
     parts = data["parts"]
     page = parts[part_offset : part_offset + part_limit]
@@ -1022,6 +1028,8 @@ async def section_get(
         for key, value in data["tables"].items()
         if key in part_ids
     }
+    for key in ("text_boxes", "lookup_tables"):
+        data[key] = [item for item in data[key] if item.get("part_id") in part_ids]
     data["pagination"] = {
         "parts": _pagination(part_offset, len(page), len(parts)),
         "table_rows": {"offset": table_row_offset, "limit_per_table": table_row_limit},
@@ -1042,7 +1050,14 @@ async def part_get(
         250, "--row-limit", min=1, help="Most table rows to return when the part is a table."
     ),
 ) -> Any:
-    """Get one document part of an entry by part ID, with its available detail."""
+    """Get one document part of an entry by part ID, with its available detail.
+
+    Reads only that part (parts/items with id.anyOf), not a full entry snapshot,
+    and falls back to the snapshot if Benchling rejects the filter. For an
+    unstructured, results, or lookup table, detail holds its columns and a page of
+    rows. A text box adds text_box: name, text, formats, links, mentions,
+    submission_status, and is_submittable.
+    """
     data = await call.runtime.service.get_part(reference, part_id)
     if data.get("detail"):
         data["detail"] = _page_table(data["detail"], row_offset, row_limit)

@@ -9,6 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import httpx
 import yaml
 from fake_benchling import ENTRY_ID, TABLE_PART, TEXT_PART
 from jsonschema import Draft202012Validator
@@ -333,6 +334,9 @@ async def test_list_query_parameters_stay_inside_the_vendored_allow_list(runtime
     await runtime.service.list_entries(name="Assay, replicate 1")
     fake.add_results_table()
     await runtime.service.list_results_table_rows("docpart_rt1", limit=1, cursor="0")
+    fake.add_lookup_table("docpart_lookup1")
+    fake.lookup_row_page_size = 2
+    await runtime.service.get_part(ENTRY_ID, "docpart_lookup1")
     checked = []
     for call in fake.calls:
         allowed_params = _allowed_for(call.method, call.path)
@@ -341,6 +345,8 @@ async def test_list_query_parameters_stay_inside_the_vendored_allow_list(runtime
         assert set(call.params) <= allowed_params, (call.method, call.path, call.params)
         checked.append(call)
     assert checked
+    assert any("/document-part-lookup-table/" in call.path for call in checked)
+    assert any(call.params.get("id.anyOf") == "docpart_lookup1" for call in checked)
     bulk_get = [call for call in fake.calls if call.path.endswith("/entries:bulk-get")]
     assert len(bulk_get) == 1
     assert set(bulk_get[0].params) <= {"entryIds", "displayIds"}
@@ -349,3 +355,31 @@ async def test_list_query_parameters_stay_inside_the_vendored_allow_list(runtime
     assert all("folderId" not in call.params for call in v3_entry_lists)
     assert "folderId" not in LISTS["routes"]["GET /api/v3/entry/items"]
     assert any(call.params.get("folderId") == "lib_abc123" for call in fake.calls)
+
+
+async def test_lookup_table_and_text_box_reads_match_the_vendored_contract(runtime, fake) -> None:
+    """The fake's lookup-table and text-box payloads follow the documented V3 schemas."""
+    fake.add_text_box("docpart_box1")
+    fake.add_lookup_table("docpart_lookup1")
+    fake.lookup_row_page_size = 2
+    await runtime.service.get_part(ENTRY_ID, "docpart_box1")
+    await runtime.service.get_part(ENTRY_ID, "docpart_lookup1")
+    checked = set()
+    for path, schema_name in (
+        ("/api/v3/entry/etr_abc123/parts/items", "DocumentPartPaginatedList"),
+        ("/api/v3/document-part-lookup-table/docpart_lookup1", "DocumentPartLookupTable"),
+        (
+            "/api/v3/document-part-lookup-table/docpart_lookup1/rows/items",
+            "StructuredTableRowPaginatedList",
+        ),
+    ):
+        assert any(call.path == path for call in fake.calls), path
+        response = fake.handler(httpx.Request("GET", f"{fake.origin}{path}"))
+        assert _schema_errors("benchling-v3", schema_name, response.json()) == [], path
+        checked.add(schema_name)
+    assert len(checked) == 3
+    spec = _spec("benchling-v3")
+    mapping = spec["components"]["schemas"]["DocumentPart"]["discriminator"]["mapping"]
+    assert "DocumentPartLookupTable" in mapping and "DocumentPartTextBox" in mapping
+    for route in ("/document-part-lookup-table/{doc_part_id}", "/entry/{entry_id}/parts/items"):
+        assert route in _contract("benchling-v3")["routes_used"]

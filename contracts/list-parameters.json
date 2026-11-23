@@ -1,5 +1,5 @@
 {
-  "description": "Query parameters this client may send on supported read routes. A request may use a subset. V3 entry listing has no folder parameter; folderId is only sent to V2 /entries. V2 name is a single entry name and is sent when that name contains a comma. A results-table row page sends pageSize and nextToken only.",
+  "description": "Query parameters this client may send on supported read routes. A request may use a subset. V3 entry listing has no folder parameter; folderId is only sent to V2 /entries. V2 name is a single entry name and is sent when that name contains a comma. A results-table or lookup-table row page sends pageSize and nextToken only. An entry parts list may add id.anyOf to read one part.",
   "routes": {
     "GET /api/v3/entry/items": [
       "pageSize",
@@ -27,6 +27,11 @@
       "pageSize",
       "nextToken"
     ],
+    "GET /api/v3/document-part-lookup-table/{document_part_lookup_table_id}/rows/items": [
+      "pageSize",
+      "nextToken"
+    ],
+    "GET /api/v3/entry/{entry_id}/parts/items": ["pageSize", "nextToken", "id.anyOf"],
     "GET /api/v3/entry-schema/items": ["pageSize", "nextToken"],
     "GET /api/v3/result-schema/items": ["pageSize", "nextToken"],
     "GET /api/v3/run-schema/items": ["pageSize", "nextToken"]

@@ -400,6 +400,9 @@ class FakeBenchling:
         self.omit_entry_web_url = False
         self.corrupt_cells = False
         self.results_parts: dict[str, dict[str, Any]] = {}
+        self.lookup_parts: dict[str, dict[str, Any]] = {}
+        self.lookup_row_page_size: int | None = None
+        self.reject_part_id_filter = False
         self.results_row_page_size: int | None = None
         self.extra_entries: list[dict[str, Any]] = []
         self.parts_page_size = 100
@@ -1068,6 +1071,8 @@ class FakeBenchling:
                 item["versionMetadata"] = {"versionId": self.version}
             parts.append(item)
         wanted = call.params.get("id.anyOf")
+        if wanted and self.reject_part_id_filter:
+            return 400, {"error": {"message": "Unknown parameter id.anyOf"}}
         if wanted:
             parts = [part for part in parts if part["id"] in wanted.split(",")]
         return self._page(parts, call, self.parts_page_size)
@@ -1201,6 +1206,105 @@ class FakeBenchling:
         return self._page_row_items(
             spec.get("rows") or [], call, page_cap=self.results_row_page_size
         )
+
+    def _get_lookup_table(self, call: Call, part_id: str) -> tuple[int, dict[str, Any]]:
+        spec = self.lookup_parts.get(part_id)
+        if spec is None:
+            return 404, {"error": {"message": "lookup table not found"}}
+        return 200, {
+            "id": part_id,
+            "__typename": "DocumentPartLookupTable",
+            "name": spec["name"],
+            "columnDefinitions": deepcopy(spec["columnDefinitions"]),
+            "isEvaluated": True,
+            "indentation": 0,
+            "rowCount": len(spec["rows"]),
+            "rows": self._table_rows_url("document-part-lookup-table", part_id),
+            "versionMetadata": {"versionId": self.version},
+        }
+
+    def _lookup_rows(self, call: Call, part_id: str) -> tuple[int, dict[str, Any]]:
+        spec = self.lookup_parts.get(part_id)
+        if spec is None:
+            return 404, {"error": {"message": "lookup table not found"}}
+        return self._page_row_items(spec["rows"], call, page_cap=self.lookup_row_page_size)
+
+    def add_lookup_table(self, part_id: str = "docpart_lookup1", *, rows: int = 3) -> str:
+        """Append a DocumentPartLookupTable part whose rows are read-only typed cells."""
+        self.parts.append(
+            {
+                "id": part_id,
+                "__typename": "DocumentPartLookupTable",
+                "name": "Reagent lookup",
+                "indentation": 0,
+            }
+        )
+        self.lookup_parts[part_id] = {
+            "name": "Reagent lookup",
+            "columnDefinitions": [
+                {"__typename": "SchemaFieldColumnDefinition", "name": "Lot", "columnId": "col_lot"},
+                {"__typename": "SchemaFieldColumnDefinition", "name": "Uses", "columnId": "col_n"},
+            ],
+            "rows": [
+                {
+                    "id": f"strow_lk{index}",
+                    "rowId": f"row_lk{index}",
+                    "cells": [
+                        {"inputValue": {"__typename": "TextValue", "value": f"LOT-{index}"}},
+                        {"inputValue": {"__typename": "IntegerValue", "value": index}},
+                    ],
+                }
+                for index in range(rows)
+            ],
+        }
+        return part_id
+
+    def add_text_box(
+        self,
+        part_id: str = "docpart_box1",
+        *,
+        name: str = "Comments",
+        text: str = "Plate 2 looked cloudy; see ",
+        submission_status: str = "SUBMITTED",
+        is_submittable: bool = False,
+        rich: bool = True,
+    ) -> str:
+        """Append a DocumentPartTextBox with the documented fields."""
+        self.parts.append(
+            {
+                "id": part_id,
+                "__typename": "DocumentPartTextBox",
+                "name": name,
+                "text": text,
+                "formats": (
+                    [{"__typename": "TextFormat", "start": 0, "end": 7, "properties": ["BOLD"]}]
+                    if rich
+                    else []
+                ),
+                "links": (
+                    [
+                        {
+                            "__typename": "LinkSpan",
+                            "start": 8,
+                            "end": 14,
+                            "url": "https://example.test/notes",
+                        }
+                    ]
+                    if rich
+                    else []
+                ),
+                "mentions": (
+                    [{"__typename": "Mention", "itemId": "ent_target", "position": 27}]
+                    if rich
+                    else []
+                ),
+                "indentation": 0,
+                "isSubmittable": is_submittable,
+                "submissionStatus": submission_status,
+                "versionMetadata": {"versionId": self.version},
+            }
+        )
+        return part_id
 
     def add_plate_reader_table(self) -> str:
         """Attach the synthetic plate-reader table used by the examples/ results fixtures."""
@@ -1743,6 +1847,8 @@ ROUTES: list[tuple[str, str]] = [
     (r"/document-part-unstructured-table/(\w+)/rows/items", "GET v3|table_rows"),
     (r"/document-part-unstructured-table/(\w+)", "GET v3|get_table"),
     (r"/document-part-results-table/(\w+)/rows/items", "GET v3|results_rows"),
+    (r"/document-part-lookup-table/(\w+)/rows/items", "GET v3|lookup_rows"),
+    (r"/document-part-lookup-table/(\w+)", "GET v3|get_lookup_table"),
     (r"/document-part-results-table/(\w+)", "GET v3|get_results_table"),
     (r"/entry-schema/items", "GET v3|list_entry_schemas"),
     (r"/result-schema/items", "GET v3|list_result_schemas"),

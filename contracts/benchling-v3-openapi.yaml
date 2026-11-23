@@ -15762,6 +15762,7 @@ components:
       - $ref: '#/components/schemas/DocumentPartHeader'
       - $ref: '#/components/schemas/DocumentPartImageGrid'
       - $ref: '#/components/schemas/DocumentPartListItem'
+      - $ref: '#/components/schemas/DocumentPartLookupTable'
       - $ref: '#/components/schemas/DocumentPartResultsTable'
       - $ref: '#/components/schemas/DocumentPartRun'
       - $ref: '#/components/schemas/DocumentPartSection'
@@ -15780,6 +15781,7 @@ components:
           DocumentPartHeader: '#/components/schemas/DocumentPartHeader'
           DocumentPartImageGrid: '#/components/schemas/DocumentPartImageGrid'
           DocumentPartListItem: '#/components/schemas/DocumentPartListItem'
+          DocumentPartLookupTable: '#/components/schemas/DocumentPartLookupTable'
           DocumentPartResultsTable: '#/components/schemas/DocumentPartResultsTable'
           DocumentPartRun: '#/components/schemas/DocumentPartRun'
           DocumentPartSection: '#/components/schemas/DocumentPartSection'
@@ -16251,6 +16253,59 @@ components:
         id:
           format: api_id
           type: string
+      type: object
+    DocumentPartLookupTable:
+      description: Represents a lookup table embedded within a document. Its rows
+        are read-only and are not submitted as results.
+      properties:
+        __typename:
+          type: string
+        columnDefinitions:
+          description: Lists column definitions for the table.
+          items:
+            $ref: '#/components/schemas/IStructuredTableColumnDefinition'
+          type: array
+        createdAt:
+          description: 'Timestamp inherited from the document content backing this
+            part. For entry and
+
+            document content, this can reflect when the containing document was created,
+
+            not when the DocumentPart identifier was created.'
+          format: datetime
+          type: string
+        id:
+          description: Identifies the document part.
+          type: string
+        indentation:
+          description: Specifies the indentation level for this content within the
+            document.
+          type: integer
+        isEvaluated:
+          description: Specifies whether the table has been evaluated.
+          type: boolean
+        modifiedAt:
+          description: Specifies when this document part was last modified.
+          format: datetime
+          type: string
+        modifier:
+          description: Identifies who last modified this document part.
+          oneOf:
+          - $ref: '#/components/schemas/PrincipalRef'
+          - type: 'null'
+        name:
+          description: Specifies the display name of the table.
+          type: string
+        rowCount:
+          description: Specifies the number of rows in the table.
+          type: integer
+        rows:
+          description: Lists rows in the table, in row order.
+          format: uri
+          type: string
+        versionMetadata:
+          $ref: '#/components/schemas/DocumentLikeVersionMetadata'
+          description: Specifies version metadata for the parent document.
       type: object
     DocumentPartResultsTable:
       description: 'A results structured table promoted to a first-class, individually-fetchable
@@ -61559,6 +61614,84 @@ paths:
       summary: Export a single item to a downloadable file
       tags:
       - DocumentExport
+  /document-part-lookup-table/{document_part_lookup_table_id}:
+    get:
+      description: Get a single DocumentPartLookupTable by ID.
+      operationId: DocumentPartLookupTable.Get
+      parameters:
+      - description: ID of the DocumentPartLookupTable.
+        in: path
+        name: document_part_lookup_table_id
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/returning'
+      - $ref: '#/components/parameters/omit'
+      - description: Set to true to access beta operations via /api/v3.
+        in: header
+        name: EARLY-ACCESS
+        required: false
+        schema: *id004
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentPartLookupTable'
+          description: OK
+          headers: {}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      summary: Get DocumentPartLookupTable by ID
+      tags:
+      - DocumentPartLookupTable
+  /document-part-lookup-table/{document_part_lookup_table_id}/rows/items:
+    get:
+      description: List StructuredTableRow items.
+      operationId: DocumentPartLookupTable.rows.List
+      parameters:
+      - $ref: '#/components/parameters/nextToken'
+      - $ref: '#/components/parameters/pageSize'
+      - description: ID of the DocumentPartLookupTable.
+        in: path
+        name: document_part_lookup_table_id
+        required: true
+        schema:
+          type: string
+      - description: Set to true to access beta operations via /api/v3.
+        in: header
+        name: EARLY-ACCESS
+        required: false
+        schema: *id004
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StructuredTableRowPaginatedList'
+          description: OK
+          headers: {}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      summary: List StructuredTableRow items
+      tags:
+      - DocumentPartLookupTable
   /document-part-results-table/{document_part_results_table_id}:
     get:
       description: Get a single DocumentPartResultsTable by ID.
@@ -103165,6 +103298,11 @@ tags:
   name: DnaSequenceSchema
   x-bnch-organization: Benchling
   x-displayName: DNA Sequence Schema
+- description: Represents a lookup table embedded within a document. Its rows are
+    read-only and are not submitted as results.
+  name: DocumentPartLookupTable
+  x-bnch-organization: Benchling
+  x-displayName: Document Part Lookup Table
 - description: 'A results structured table promoted to a first-class, individually-fetchable
     document part.
 
