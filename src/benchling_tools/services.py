@@ -112,6 +112,7 @@ TABLE_ROW_PAGE_SIZE = 100
 ENTRY_BULK_GET_LIMIT = 100
 ASSAY_RESULT_BULK_GET_LIMIT = 200
 RESULT_ID_FILTER_LIMIT = 100
+CONTAINER_BARCODE_CHUNK = 100
 V2_ID_LOOKUP_MAX_PAGES = 5
 TEMPLATE_TEXT_PREVIEW_LIMIT = 160
 
@@ -702,6 +703,46 @@ def with_result_ids(record: dict[str, Any], v2_id: Any, v3_id: Any) -> dict[str,
         **record,
         "v2_id": v2_id if isinstance(v2_id, str) and v2_id else None,
         "v3_id": v3_id if isinstance(v3_id, str) and v3_id else None,
+    }
+
+
+def _lift_invalid_barcodes(exc: ValidationError) -> None:
+    """Copy a V2 400's error.invalidBarcodes to details.invalid_barcodes, with a hint."""
+    response = exc.details.get("response")
+    error = response.get("error") if isinstance(response, dict) else None
+    invalid = error.get("invalidBarcodes") if isinstance(error, dict) else None
+    if not isinstance(invalid, list):
+        return
+    barcodes = [item for item in invalid if isinstance(item, str)]
+    if barcodes:
+        exc.details["invalid_barcodes"] = barcodes
+        exc.details["hint"] = "Benchling did not recognise these barcodes: " + ", ".join(barcodes)
+
+
+def _container_summary(barcode: str, container: dict[str, Any]) -> dict[str, Any]:
+    """The fields a barcode preflight reads: container, schema, contents, archived."""
+    contents: list[dict[str, Any]] = []
+    for content in container.get("contents") or []:
+        if not isinstance(content, dict):
+            continue
+        batch = content.get("batch") if isinstance(content.get("batch"), dict) else None
+        entity = content.get("entity") if isinstance(content.get("entity"), dict) else None
+        if entity is None and batch is not None and isinstance(batch.get("entity"), dict):
+            entity = batch["entity"]
+        contents.append(
+            {
+                "entity_id": entity.get("id") if entity else None,
+                "entity_registry_id": entity.get("entityRegistryId") if entity else None,
+                "batch_id": batch.get("id") if batch else None,
+            }
+        )
+    schema = container.get("schema")
+    return {
+        "barcode": barcode,
+        "container_id": container.get("id"),
+        "schema_id": schema.get("id") if isinstance(schema, dict) else None,
+        "contents": contents,
+        "archived": container.get("archiveRecord") is not None,
     }
 
 
@@ -1502,21 +1543,35 @@ class BenchlingService:
         limit: object = listing.LIST_LIMIT,
         cursor: object = None,
     ) -> dict[str, Any]:
-        """Return one V2 container page filtered by an exact barcode or name."""
+        """Find V2 containers by exact barcode or exact name.
+
+        A name or one barcode returns one page. Several barcodes return a summary of
+        found, invalid, missing and empty containers; see _find_containers_by_barcodes.
+        """
         if (barcode is None) == (name is None):
             raise ValidationError("Specify exactly one of barcode or name")
         page_size = listing.check_limit(limit)
         params: dict[str, Any] = {"pageSize": page_size}
-        key, value = ("barcodes", barcode) if barcode is not None else ("name", name)
-        search_value = self._container_reference(value, key)
-        if key == "barcodes" and "," in search_value:
-            raise ValidationError("barcode must identify one container")
-        params[key] = search_value
+        if barcode is not None:
+            barcodes = self._container_barcodes(barcode)
+            if len(barcodes) > 1:
+                if cursor is not None:
+                    raise ValidationError(
+                        "cursor pages one barcode or a name; several barcodes are read in full"
+                    )
+                return await self._find_containers_by_barcodes(barcodes)
+            params["barcodes"] = barcodes[0]
+        else:
+            params["name"] = self._container_reference(name, "name")
         if cursor is not None:
             if not isinstance(cursor, str) or not cursor:
                 raise ValidationError("cursor must be a non-empty string")
             params["nextToken"] = cursor
-        payload = await self.api.request("GET", "/containers", version=2, params=params)
+        try:
+            payload = await self.api.request("GET", "/containers", version=2, params=params)
+        except ValidationError as exc:
+            _lift_invalid_barcodes(exc)
+            raise
         containers = payload.get("containers")
         if not isinstance(containers, list) or any(
             not isinstance(item, dict) for item in containers
@@ -1526,6 +1581,76 @@ class BenchlingService:
         if next_token is not None and not isinstance(next_token, str):
             raise UpstreamError("Benchling returned an invalid container pagination token")
         return {"items": containers, "next_token": next_token or None}
+
+    def _container_barcodes(self, value: object) -> list[str]:
+        """Barcodes in the caller's order without duplicates; one value per barcode."""
+        values = [value] if isinstance(value, str) else value
+        if not isinstance(values, (list, tuple)) or not values:
+            raise ValidationError("barcode must be a non-empty string or list of strings")
+        barcodes: dict[str, None] = {}
+        for item in values:
+            text = self._container_reference(item, "barcode")
+            if "," in text:
+                raise ValidationError(
+                    "barcode must identify one container; repeat --barcode for each barcode"
+                )
+            barcodes[text] = None
+        return list(barcodes)
+
+    async def _find_containers_by_barcodes(self, barcodes: list[str]) -> dict[str, Any]:
+        """Look up barcodes 100 per V2 GET /containers request, following nextToken.
+
+        A 400 naming invalidBarcodes records them and repeats that chunk once without them.
+        """
+        matches: dict[str, list[dict[str, Any]]] = {}
+        invalid: set[str] = set()
+        for offset in range(0, len(barcodes), CONTAINER_BARCODE_CHUNK):
+            chunk = barcodes[offset : offset + CONTAINER_BARCODE_CHUNK]
+            try:
+                containers = await self._containers_with_barcodes(chunk)
+            except ValidationError as exc:
+                rejected = set(exc.details.get("invalid_barcodes") or ())
+                rest = [item for item in chunk if item not in rejected]
+                if len(rest) == len(chunk):
+                    raise
+                invalid.update(item for item in chunk if item in rejected)
+                containers = await self._containers_with_barcodes(rest) if rest else []
+            for container in containers:
+                matches.setdefault(str(container.get("barcode")), []).append(container)
+        found: list[dict[str, Any]] = []
+        missing: list[str] = []
+        empty: list[str] = []
+        for item in barcodes:
+            if item in invalid:
+                continue
+            if item not in matches:
+                missing.append(item)
+                continue
+            for container in matches[item]:
+                summary = _container_summary(item, container)
+                found.append(summary)
+                if not summary["contents"] and item not in empty:
+                    empty.append(item)
+        return {
+            "requested": len(barcodes),
+            "found": found,
+            "invalid_barcodes": [item for item in barcodes if item in invalid],
+            "missing_barcodes": missing,
+            "empty_containers": empty,
+        }
+
+    async def _containers_with_barcodes(self, barcodes: list[str]) -> list[dict[str, Any]]:
+        params = {"pageSize": CONTAINER_BARCODE_CHUNK, "barcodes": ",".join(barcodes)}
+        try:
+            return [
+                item
+                async for item in self.api.paginate(
+                    "/containers", version=2, params=params, item_key="containers"
+                )
+            ]
+        except ValidationError as exc:
+            _lift_invalid_barcodes(exc)
+            raise
 
     async def list_container_schemas(
         self, *, limit: object = listing.LIST_LIMIT, cursor: object = None
@@ -1696,16 +1821,31 @@ class BenchlingService:
                 )
         return tables
 
-    async def list_result_tables(self, reference: str) -> dict[str, Any]:
-        """List the V2 Results tables embedded in an entry, with its project ID."""
+    async def list_result_tables(
+        self, reference: str, *, name_prefix: str | None = None
+    ) -> dict[str, Any]:
+        """List the V2 Results tables embedded in an entry, with its project ID.
+
+        ``name_prefix`` keeps tables whose name starts with it (exact,
+        case-sensitive). Row counts come from ``capacity.add_table_counts``.
+        """
         resolved = await self.resolve_entry(reference)
         entry = self._v2_object(
             await self.api.request("GET", f"/entries/{resolved['entry_id']}", version=2), "entry"
         )
+        items = self._result_tables_from_entry(entry)
+        if name_prefix is not None:
+            if not isinstance(name_prefix, str) or not name_prefix:
+                raise ValidationError("name_prefix must be a non-empty string")
+            items = [
+                item
+                for item in items
+                if isinstance(item.get("name"), str) and item["name"].startswith(name_prefix)
+            ]
         return {
             "resolved": resolved,
             "project_id": await self._entry_project_id(entry),
-            "items": self._result_tables_from_entry(entry),
+            "items": items,
             "complete": True,
             "id_namespace": "v2_structured_table",
         }

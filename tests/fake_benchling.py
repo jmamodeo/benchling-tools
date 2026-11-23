@@ -511,7 +511,25 @@ class FakeBenchling:
                 "schema": {"id": "contsch_abc123"},
                 "contents": [],
             },
+            {
+                "id": "con_batch1",
+                "name": "Batch vial",
+                "barcode": "BAR-BATCH",
+                "modifiedAt": "2026-01-03T00:00:00Z",
+                "schema": {"id": "contsch_abc123"},
+                "archiveRecord": None,
+                "contents": [
+                    {
+                        "batch": {"id": "bat_sample1", "entity": {"id": "ent_sample1"}},
+                        "entity": None,
+                    },
+                    {"entity": {"id": "ent_registered1", "entityRegistryId": "REG-0001"}},
+                ],
+            },
         ]
+        # Barcodes V2 GET /containers rejects with a 400 naming them in invalidBarcodes.
+        self.invalid_barcodes: set[str] = set()
+        self.container_page_size: int | None = None
         self.container_transfers: list[dict[str, Any]] = []
         self.field_defs = {
             "entsch_abc123": field_definitions(),
@@ -734,13 +752,22 @@ class FakeBenchling:
         items = self.containers
         if call.params.get("barcodes"):
             barcodes = call.params["barcodes"].split(",")
+            invalid = [barcode for barcode in barcodes if barcode in self.invalid_barcodes]
+            if invalid:
+                return 400, {
+                    "error": {
+                        "invalidBarcodes": invalid,
+                        "message": "At least one provided barcode is invalid.",
+                        "type": "invalid_request_error",
+                    }
+                }
             items = [item for item in items if item.get("barcode") in barcodes]
         if call.params.get("name"):
             items = [item for item in items if item.get("name") == call.params["name"]]
         return self._page(
             deepcopy(items),
             call,
-            self._limited_page(call, None),
+            self._limited_page(call, self.container_page_size),
             key="containers",
         )
 
@@ -1069,6 +1096,11 @@ class FakeBenchling:
                 and "versionMetadata" not in item
             ):
                 item["versionMetadata"] = {"versionId": self.version}
+            spec = self.results_parts.get(str(item.get("id")))
+            if spec is not None and item.get("__typename") == "DocumentPartResultsTable":
+                # The parts list returns the documented DocumentPartResultsTable fields.
+                for key, value in self._results_table_fields(str(item["id"]), spec).items():
+                    item.setdefault(key, value)
             parts.append(item)
         wanted = call.params.get("id.anyOf")
         if wanted and self.reject_part_id_filter:
@@ -1185,18 +1217,23 @@ class FakeBenchling:
         spec = self.results_parts.get(part_id)
         if spec is None:
             return 404, {"error": {"message": "results table not found"}}
-        rows = spec.get("rows") or []
         return 200, {
             "id": part_id,
             "__typename": "DocumentPartResultsTable",
+            **self._results_table_fields(part_id, spec),
+            "versionMetadata": {"versionId": self.version},
+        }
+
+    def _results_table_fields(self, part_id: str, spec: dict[str, Any]) -> dict[str, Any]:
+        """`name`, `columnDefinitions`, `resultSchema`, `submissionStatus`, `rowCount`, `rows`."""
+        return {
             "name": spec.get("name"),
             "columnDefinitions": deepcopy(spec.get("columnDefinitions") or []),
             "isEvaluated": spec.get("isEvaluated", True),
-            "resultSchema": spec.get("resultSchema"),
+            "resultSchema": deepcopy(spec.get("resultSchema")),
             "submissionStatus": spec.get("submissionStatus", "UNSUBMITTED"),
-            "rowCount": spec.get("row_count", len(rows)),
+            "rowCount": spec.get("row_count", len(spec.get("rows") or [])),
             "rows": self._table_rows_url("document-part-results-table", part_id),
-            "versionMetadata": {"versionId": self.version},
         }
 
     def _results_rows(self, call: Call, part_id: str) -> tuple[int, dict[str, Any]]:
@@ -1368,6 +1405,141 @@ class FakeBenchling:
             "isEvaluated": True,
         }
         return part_id
+
+    def add_panel_tables(self) -> list[str]:
+        """One run written across numbered results tables of one schema, as an SDK app does.
+
+        "Panel Testing 1" to "Panel Testing 3" share schema ``assaysch_panel``: a text
+        ``Processing run`` column and a ``Sample`` container link. "Panel Testing 4" holds
+        only the empty ``UNSUBMITTED`` placeholder row, and "Panel Testing notes" uses
+        another schema with no run column. All IDs are synthetic.
+        """
+        self.field_defs["assaysch_panel"] = [
+            {
+                "id": "assayfield_run",
+                "systemName": "processing_run_id",
+                "name": "Processing run",
+                "__typename": "TextFieldDefinition",
+            },
+            {
+                "id": "assayfield_sample",
+                "systemName": "sample",
+                "name": "Sample",
+                "__typename": "StorableLinkFieldDefinition",
+            },
+        ]
+        self.field_defs["assaysch_note"] = [
+            {
+                "id": "assayfield_comment",
+                "systemName": "comment",
+                "name": "Comment",
+                "__typename": "TextFieldDefinition",
+            }
+        ]
+        columns = [
+            {
+                "__typename": "SchemaFieldColumnDefinition",
+                "name": "Processing run",
+                "columnId": "col_run",
+                "fieldDefinitionApiId": "assayfield_run",
+            },
+            {
+                "__typename": "SchemaFieldColumnDefinition",
+                "name": "Sample",
+                "columnId": "col_sample",
+                "fieldDefinitionApiId": "assayfield_sample",
+            },
+        ]
+
+        def row(number: int, run: str, container: str) -> dict[str, Any]:
+            return {
+                "id": f"strow_p{number}",
+                "rowId": f"row_p{number}",
+                "submissionStatus": "SUBMITTED",
+                "cells": [
+                    {"inputValue": {"__typename": "TextValue", "value": run}},
+                    {
+                        "inputValue": {"__typename": "ObjectLinkValue", "value": container},
+                        "evaluationValue": {
+                            "__typename": "ObjectLinkCellEvaluationValue",
+                            "id": container,
+                            "name": f"Tube {container}",
+                        },
+                    },
+                ],
+            }
+
+        tables: dict[str, tuple[str, list[dict[str, Any]], str]] = {
+            "1": (
+                "assaysch_panel",
+                [row(1, "run_a", "con_tube1"), row(2, "run_a", "con_tube2")],
+                "SUBMITTED",
+            ),
+            "2": (
+                "assaysch_panel",
+                [row(3, "run_a", "con_tube1"), row(4, "run_b", "con_tube3")],
+                "SUBMITTED",
+            ),
+            "3": ("assaysch_panel", [row(5, "run_b", "con_tube3")], "SUBMITTED"),
+            "4": (
+                "assaysch_panel",
+                [{"id": "strow_p0", "submissionStatus": "UNSUBMITTED", "cells": [{}, {}]}],
+                "UNSUBMITTED",
+            ),
+            "notes": (
+                "assaysch_note",
+                [
+                    {
+                        "id": "strow_n1",
+                        "submissionStatus": "SUBMITTED",
+                        "cells": [{"inputValue": {"__typename": "TextValue", "value": "run_a"}}],
+                    }
+                ],
+                "SUBMITTED",
+            ),
+        }
+        part_ids = []
+        for suffix, (schema_id, rows, status) in tables.items():
+            part_id = f"docpart_panel{suffix}"
+            name = f"Panel Testing {suffix}"
+            self.results_parts[part_id] = {
+                "name": name,
+                "columnDefinitions": deepcopy(
+                    columns
+                    if schema_id == "assaysch_panel"
+                    else [
+                        {
+                            "__typename": "SchemaFieldColumnDefinition",
+                            "name": "Comment",
+                            "columnId": "col_comment",
+                            "fieldDefinitionApiId": "assayfield_comment",
+                        }
+                    ]
+                ),
+                "rows": rows,
+                "resultSchema": {"__typename": "ResultSchemaRef", "id": schema_id},
+                "submissionStatus": status,
+                "isEvaluated": True,
+            }
+            self.parts.append(
+                {
+                    "id": part_id,
+                    "__typename": "DocumentPartResultsTable",
+                    "name": name,
+                    "resultSchema": {"__typename": "ResultSchemaRef", "id": schema_id},
+                }
+            )
+            self.extra_result_tables.append(
+                {
+                    "type": "results_table",
+                    "apiId": f"strtbl_panel{suffix}",
+                    "name": name,
+                    "assayResultSchemaId": schema_id,
+                    "columns": [item["systemName"] for item in self.field_defs[schema_id]],
+                }
+            )
+            part_ids.append(part_id)
+        return part_ids
 
     def add_example_results_part(
         self,
