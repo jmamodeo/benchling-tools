@@ -1518,7 +1518,8 @@ async def results_rows(
         "--where",
         help=(
             "FIELD=VALUE; repeatable, all must match. FIELD is a column display name, "
-            "system name, or field-definition id. Keeps only matching rows of the page."
+            "system name, or field-definition id. Keeps only matching rows of this page "
+            "(where_scope: page); use results tables --where for whole-table counts."
         ),
     ),
 ) -> Any:
@@ -1539,7 +1540,10 @@ async def results_rows(
     which the API cannot do. stale_check counts compared and stale rows. Reads only.
 
     --where keeps only the rows of this page that match, and adds scanned (rows
-    read) and matched; next_token still pages the underlying table. The filter
+    read) and matched; next_token still pages the underlying table. The filter is
+    page-scoped: the reply has where_scope "page" and complete (false while a
+    next page exists, with where_scope_note); for whole-table counts use
+    results tables ENTRY --where, which reads every row. The filter
     is client-side: Benchling has no server-side filter on text field values.
     A cell matches when its value is exactly VALUE as text; a link cell matches
     on the linked id. An unknown FIELD is a validation_error listing the

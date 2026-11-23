@@ -25,6 +25,7 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
+- `results rows --where` (MCP `results_rows` `where`) says in its reply that it filters only the page it read: `where_scope: "page"`, `complete` (false while `next_token` is set), and then `where_scope_note`, which names `results tables ENTRY --where …` for whole-table counts. Which rows are returned is unchanged. V3 [List rows](https://docs.benchling.com/docs/api/benchling-api/document-part-results-table/rows-list) pages at most 100 rows and has no cell-value filter.
 - `part get` reads only the requested part with `GET /entry/{id}/parts/items?id.anyOf=…`, plus its table detail and rows when it is a table, instead of a full entry snapshot. An unknown part id, which Benchling rejects with a 400 naming the invalid id, is `not_found` without a snapshot; other rejections of `id.anyOf` fall back to the snapshot. It retries once if the part and its table report different entry versions, and keeps `version_id`.
 - `changes status` takes exactly one of a `PLAN_ID` or `--task`; passing both or neither is a `validation_error`. MCP `changes_status` `plan_id` is now optional. Output for a plan ID is unchanged. V2 task IDs are rejected when empty or holding `/` or whitespace, and are URL-encoded in `GET /tasks/{task_id}`.
 - **Breaking:** the MCP `container_find` argument `barcode` (a string) is now `barcodes` (a list of strings). One barcode keeps the one-page `items` and `next_token` reply.

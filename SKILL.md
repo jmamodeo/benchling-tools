@@ -160,7 +160,7 @@ benchling-tools results tables etr_example --env NAME
 benchling-tools results capacity etr_example --spec results.json --env NAME
 benchling-tools results rows docpart_example --limit 50 --cursor NEXT_TOKEN --env NAME
 benchling-tools results tables etr_example --name-prefix "Panel Testing" --where "Processing run=RUN_ID" --env NAME
-benchling-tools results rows strtbl_example --entry etr_example --where "Processing run=RUN_ID" --env NAME
+benchling-tools results rows strtbl_example --entry etr_example --where "Processing run=RUN_ID" --env NAME   # this page only (where_scope: page)
 benchling-tools results pending --plan PLAN_ID_OR_FILE --env NAME
 benchling-tools results pending --entry ENTRY --env NAME
 benchling-tools results verify PLAN_ID_OR_FILE --env NAME
