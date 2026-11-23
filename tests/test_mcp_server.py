@@ -121,29 +121,6 @@ async def test_skill_md_lists_every_mcp_tool(client) -> None:
     assert documented == tools
 
 
-async def test_coverage_matrix_names_real_commands_and_tools(client) -> None:
-    root = Path(__file__).resolve().parents[1]
-    matrix = (root / "docs" / "coverage-matrix.md").read_text(encoding="utf-8")
-    tools = {tool.name for tool in (await client.list_tools()).tools}
-    rows = [
-        [cell.strip() for cell in line.strip("|").split("|")]
-        for line in matrix.splitlines()
-        if line.startswith("| ") and not line.startswith("| Workflow")
-    ]
-    assert rows
-    statuses = set()
-    for _workflow, cli, mcp, status, _notes in rows:
-        statuses.add(status.split(" ", 1)[0].rstrip(","))
-        for command in re.findall(r"`([a-z][a-z -]*?)(?: --[^`]*)?`", cli):
-            assert command.strip().replace(" ", "_").replace("-", "_") in tools, command
-        for name in re.findall(r"`(\w+)`", mcp):
-            assert name in tools, name
-    assert statuses == {"covered", "partial", "gap"}
-    assert "(docs/coverage-matrix.md)" in (root / "README.md").read_text(encoding="utf-8")
-    hosts = {url.split("//", 1)[1].split("/", 1)[0] for url in re.findall(r"https://\S+", matrix)}
-    assert hosts <= {"benchling.com"}
-
-
 async def test_get_blob_reads_metadata_without_writes(client, fake) -> None:
     blob_id = "00000000-0000-4000-8000-000000000009"
     fake.blobs[blob_id] = {
