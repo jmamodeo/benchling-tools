@@ -54,6 +54,7 @@
         "/assay-results",
         "/assay-results:bulk-create",
         "/assay-results:bulk-get",
+        "/containers:bulk-get",
         "/blobs",
         "/blobs:start-multipart-upload",
         "/blobs/{blob_id}",

@@ -23,6 +23,7 @@
       "sort"
     ],
     "GET /api/v2/entries:bulk-get": ["entryIds", "displayIds"],
+    "GET /api/v2/containers:bulk-get": ["containerIds"],
     "GET /api/v2/entry-templates": ["pageSize", "nextToken", "name"],
     "GET /api/v3/document-part-results-table/{document_part_results_table_id}/rows/items": [
       "pageSize",
