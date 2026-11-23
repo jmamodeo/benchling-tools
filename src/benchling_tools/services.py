@@ -1639,16 +1639,31 @@ class BenchlingService:
                 )
         return tables
 
-    async def list_result_tables(self, reference: str) -> dict[str, Any]:
-        """List the V2 Results tables embedded in an entry, with its project ID."""
+    async def list_result_tables(
+        self, reference: str, *, name_prefix: str | None = None
+    ) -> dict[str, Any]:
+        """List the V2 Results tables embedded in an entry, with its project ID.
+
+        ``name_prefix`` keeps tables whose name starts with it (exact,
+        case-sensitive). Row counts come from ``capacity.add_table_counts``.
+        """
         resolved = await self.resolve_entry(reference)
         entry = self._v2_object(
             await self.api.request("GET", f"/entries/{resolved['entry_id']}", version=2), "entry"
         )
+        items = self._result_tables_from_entry(entry)
+        if name_prefix is not None:
+            if not isinstance(name_prefix, str) or not name_prefix:
+                raise ValidationError("name_prefix must be a non-empty string")
+            items = [
+                item
+                for item in items
+                if isinstance(item.get("name"), str) and item["name"].startswith(name_prefix)
+            ]
         return {
             "resolved": resolved,
             "project_id": await self._entry_project_id(entry),
-            "items": self._result_tables_from_entry(entry),
+            "items": items,
             "complete": True,
             "id_namespace": "v2_structured_table",
         }

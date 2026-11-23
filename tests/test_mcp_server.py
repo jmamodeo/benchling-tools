@@ -637,6 +637,46 @@ async def test_list_result_tables_pages_targets(client, fake) -> None:
     assert past_end["items"] == [] and past_end["pagination"]["returned"] == 0
 
 
+async def test_results_tables_and_rows_tools_count_and_filter(client, fake) -> None:
+    fake.add_panel_tables()
+    tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+    tables_schema = tools["results_tables"].inputSchema["properties"]
+    assert {"counts", "name_prefix", "where"} <= set(tables_schema)
+    assert "where" in tools["results_rows"].inputSchema["properties"]
+    for name in ("results_tables", "results_rows"):
+        assert "client-side" in tools[name].description
+        assert "results_pending" in tools[name].description or "results pending" in (
+            tools[name].description
+        )
+        assert tools[name].annotations.readOnlyHint is True
+
+    data = (
+        await call(
+            client,
+            "results_tables",
+            env="sandbox",
+            reference=ENTRY_ID,
+            name_prefix="Panel Testing",
+            where=["assayfield_run=run_b"],
+        )
+    )["data"]
+    counts = {item["name"]: item["matching_rows"] for item in data["items"]}
+    assert counts["Panel Testing 2"] == 1
+    assert counts["Panel Testing notes"] is None
+    assert data["rows_scanned"] == 6
+    rows = (
+        await call(
+            client,
+            "results_rows",
+            env="sandbox",
+            part_id="docpart_panel3",
+            where=["sample=con_tube3"],
+        )
+    )["data"]
+    assert (rows["scanned"], rows["matched"]) == (1, 1)
+    assert fake.writes() == []
+
+
 async def test_upstream_errors_map_to_envelope_codes(client, fake) -> None:
     for status, code in (
         (401, "authentication_error"),

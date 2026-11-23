@@ -57,6 +57,7 @@ benchling-tools entry resolve EXP-0001 --env dev
 benchling-tools entry inspect etr_abc123 --env dev
 benchling-tools entry list --project src_example --modified-after 2026-01-01 --env dev
 benchling-tools results tables etr_abc123 --env dev
+benchling-tools results tables etr_abc123 --name-prefix "Panel Testing" --where "Processing run=RUN_ID" --env dev
 benchling-tools export --kind table --part docpart_table1 --format csv --output measurements.csv --env dev
 
 benchling-tools changes plan --entry etr_abc123 --family table --spec examples/table-set-cells.json --env dev

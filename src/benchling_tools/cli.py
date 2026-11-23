@@ -18,7 +18,7 @@ import typer
 from pydantic import WithJsonSchema
 from typer.core import TyperGroup
 
-from . import __version__, listing
+from . import __version__, capacity, listing
 from .blob_download import download_blob
 from .change_spec import CHANGE_SPECIFICATION_SCHEMA, parse_change_specification
 from .commands import CLI_ONLY_ATTR, TOOL_ATTR, Call, Command, McpParam, declare, surface_text
@@ -43,6 +43,7 @@ from .issues import REPOSITORY, build_issue_draft
 from .keychain import Keychain, bind_login_fix
 from .models import Envelope, PlanFamily
 from .redact import redact_text
+from .row_filter import count_tables, filter_page, parse_where
 from .runtime import Runtime
 from .services import part_content
 from .skill import find_skill_md
@@ -1317,21 +1318,70 @@ async def results_tables(
     limit: int = typer.Option(
         100, "--limit", min=1, max=100, help="Most result tables to return, from 1 to 100."
     ),
+    counts: bool = typer.Option(
+        True,
+        "--counts/--no-counts",
+        help=(
+            "Add part_id, row_count, used_rows, submission_status and placeholder_rows "
+            "from one V3 parts listing, as results capacity reports them. When off, "
+            "only the V2 entry is read."
+        ),
+    ),
+    name_prefix: str | None = typer.Option(
+        None,
+        "--name-prefix",
+        help="Keep only tables whose name starts with this text (exact, case-sensitive).",
+    ),
+    where: list[str] | None = typer.Option(
+        None,
+        "--where",
+        help=(
+            "FIELD=VALUE; repeatable, all must match. FIELD is a column display name, "
+            "system name, or field-definition id. Adds matching_rows per table."
+        ),
+    ),
 ) -> Any:
     """Discover explicit V2 result-table IDs and assigned schemas on one entry.
 
     Each table_id is a v2_structured_table id (strtbl_…), not a v3_document_part
     id (docpart_…). results rows maps it with --entry; table get does not take it.
 
+    By default each table also gets part_id (docpart_…), row_count, used_rows,
+    submission_status and placeholder_rows, read from one GET
+    /entry/{id}/parts/items listing instead of a full entry inspect. These are
+    the numbers results capacity reports (same helper). placeholder_rows is 1
+    when the only row is the empty UNSUBMITTED row of a new table, and
+    used_rows is row_count minus placeholder_rows. A table no single part
+    matches gets null counts and count_note.
+
+    --where reads every row of each selected table and adds matching_rows and
+    rows_scanned per table, and rows_scanned in total. The filter is
+    client-side: Benchling has no server-side filter on text field values.
+    A cell matches when its value is exactly VALUE as text; a link cell matches
+    on the linked id. A table without FIELD gets matching_rows null and
+    where_note; a FIELD no table has is a validation_error listing the available
+    names. Pending results are not table rows and are not counted; use
+    results pending for them. Reads only.
+
     CLI: Export it with ``export --kind results-table --part TABLE_ID --entry ENTRY``.
 
     MCP: Export it with the export tool: kind results-table, part_id TABLE_ID, and entry.
     """
-    result = await call.runtime.service.list_result_tables(reference)
+    conditions = parse_where(where)
+    if conditions and not counts:
+        raise ValidationError("--where needs counts; drop --no-counts")
+    service = call.runtime.service
+    result = await service.list_result_tables(reference, name_prefix=name_prefix)
+    if counts:
+        await capacity.add_table_counts(
+            service, str(result["resolved"]["entry_id"]), result["items"]
+        )
     items = result["items"]
     page = items[offset : offset + limit]
     result["items"] = page
     result["pagination"] = _pagination(offset, len(page), len(items))
+    if conditions:
+        await count_tables(service, result, conditions)
     return result
 
 
@@ -1356,6 +1406,14 @@ async def results_rows(
     ),
     limit: int = typer.Option(50, "--limit", min=1, max=100, help=_LIMIT_HELP),
     cursor: str | None = typer.Option(None, "--cursor", help=_CURSOR_HELP),
+    where: list[str] | None = typer.Option(
+        None,
+        "--where",
+        help=(
+            "FIELD=VALUE; repeatable, all must match. FIELD is a column display name, "
+            "system name, or field-definition id. Keeps only matching rows of the page."
+        ),
+    ),
 ) -> Any:
     """Read one page of rows from a results table.
 
@@ -1372,9 +1430,19 @@ async def results_rows(
     carries warning and stale_cells, and the page carries warnings: the notebook
     cell is stale, so ask the person to use Re-sync table in the Benchling UI,
     which the API cannot do. stale_check counts compared and stale rows. Reads only.
+
+    --where keeps only the rows of this page that match, and adds scanned (rows
+    read) and matched; next_token still pages the underlying table. The filter
+    is client-side: Benchling has no server-side filter on text field values.
+    A cell matches when its value is exactly VALUE as text; a link cell matches
+    on the linked id. An unknown FIELD is a validation_error listing the
+    available names. Pending results are not table rows; use results pending.
     """
+    conditions = parse_where(where)
     service = call.runtime.service
     page = await service.list_results_table_rows(part_id, entry=entry, limit=limit, cursor=cursor)
+    if conditions:
+        page = await filter_page(service, page, conditions)
     return await annotate_rows(service, page)
 
 
