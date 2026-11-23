@@ -532,3 +532,21 @@ def test_cli_results_diff_window_needs_include_pending(invoke, fake) -> None:
     )
     assert code == 0, reply
     assert [item["source"] for item in reply["data"]["pending"]["items"]] == ["schema_window"]
+
+
+async def test_self_diff_of_two_runs_includes_pending_on_both_sides(runtime, fake) -> None:
+    _tables(fake)
+    await upload(runtime, fake, [record("B1", 15), record("C1", 20)])
+    diff = await results_diff.diff_results(
+        runtime.service,
+        left=ENTRY_ID,
+        right=ENTRY_ID,
+        tables=["Assay results"],
+        key="Note",
+        pending=runtime.planner.entry_pending_results,
+    )
+    counts = diff["tables"][0]["counts"]
+    assert (counts["pending_left"], counts["pending_right"]) == (2, 2)
+    assert counts["changed"] == 0 and counts["matched"] == 3
+    assert diff["pending"]["left"] == diff["pending"]["right"]
+    assert diff["pending_unplaced"] == {"left": [], "right": []}

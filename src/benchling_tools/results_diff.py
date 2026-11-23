@@ -171,6 +171,8 @@ async def diff_results(
     unplaced: dict[str, list[dict[str, Any]]] = {}
     if pending is not None:
         assert left_pending is not None and right_pending is not None
+        # A self-diff (two runs on one entry) shares one loaded summary; copy it per side.
+        left_pending, right_pending = dict(left_pending), dict(right_pending)
         unplaced = {"left": left_pending.pop("unplaced"), "right": right_pending.pop("unplaced")}
         summary["pending"] = {"left": left_pending, "right": right_pending}
         summary["pending_unplaced"] = unplaced
