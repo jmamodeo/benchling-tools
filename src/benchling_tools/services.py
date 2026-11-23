@@ -60,6 +60,8 @@ def _doctor_hint(exc: Exception, env: str) -> str:
 V2_STRUCTURED_TABLE_PREFIX = "strtbl_"
 V2_STRUCTURED_TABLE_NAMESPACE = "v2_structured_table"
 V3_DOCUMENT_PART_NAMESPACE = "v3_document_part"
+# Most container IDs sent in one V2 GET /containers:bulk-get call.
+CONTAINER_BULK_GET_LIMIT = 100
 V2_ASSAY_RESULT_NAMESPACE = "v2_assay_result"
 V3_RESULT_NAMESPACE = "v3_result"
 V3_RESULT_PREFIX = "result_"
@@ -1414,6 +1416,36 @@ class BenchlingService:
             path.append(_location_step(storage_id, kind, record))
             parent = record.get("parentStorageId")
         return {"location_path": path, "location_truncated": False}
+
+    async def bulk_get_containers(self, container_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Return V2 containers by ID, keyed by ID, reading up to 100 IDs per call.
+
+        Uses ``GET /containers:bulk-get`` with comma-separated ``containerIds``. An ID
+        Benchling does not return is absent from the result.
+        """
+        unique = list(
+            dict.fromkeys(self._container_reference(item, "container_id") for item in container_ids)
+        )
+        if any("," in item for item in unique):
+            raise ValidationError("container_id must not contain a comma")
+        found: dict[str, dict[str, Any]] = {}
+        for start in range(0, len(unique), CONTAINER_BULK_GET_LIMIT):
+            chunk = unique[start : start + CONTAINER_BULK_GET_LIMIT]
+            payload = await self.api.request(
+                "GET",
+                "/containers:bulk-get",
+                version=2,
+                params={"containerIds": ",".join(chunk)},
+            )
+            containers = payload.get("containers")
+            if not isinstance(containers, list) or any(
+                not isinstance(item, dict) for item in containers
+            ):
+                raise UpstreamError("Benchling returned an unexpected container list")
+            for item in containers:
+                if isinstance(item.get("id"), str) and item["id"] in chunk:
+                    found[item["id"]] = item
+        return found
 
     async def get_container_schema(self, schema_id: str) -> dict[str, Any]:
         """Return one V2 container schema and its embedded field definitions."""

@@ -374,6 +374,8 @@ class FakeBenchling:
             "lib_abc123": {"id": "lib_abc123", "name": "Synthetic folder", "archived": False}
         }
         self.created_entries: dict[str, dict[str, Any]] = {}
+        # Further synthetic entries, each with its own V3 parts (see add_entry).
+        self.other_entries: dict[str, dict[str, Any]] = {}
         self.parts: list[dict[str, Any]] = [
             {"id": "docpart_sec1", "__typename": "DocumentPartSection", "title": "Methods"},
             text_part(
@@ -850,6 +852,12 @@ class FakeBenchling:
         ]
         return 200, {"entities": deepcopy(entities)}
 
+    def _bulk_get_containers(self, call: Call) -> tuple[int, dict[str, Any]]:
+        """V2 containers:bulk-get: the containers whose ids are in containerIds."""
+        wanted = (call.params.get("containerIds") or "").split(",")
+        found = [deepcopy(item) for item in self.containers if item["id"] in wanted]
+        return 200, {"containers": found}
+
     def _get_container(self, call: Call, container_id: str) -> tuple[int, dict[str, Any]]:
         found = next((item for item in self.containers if item["id"] == container_id), None)
         if found is None:
@@ -911,6 +919,15 @@ class FakeBenchling:
     def _get_entry(self, call: Call, entry_id: str) -> tuple[int, dict[str, Any]]:
         if entry_id == ENTRY_ID:
             return 200, self._entry_object()
+        other = self.other_entries.get(entry_id)
+        if other is not None:
+            return 200, {
+                "id": entry_id,
+                "displayId": other["displayId"],
+                "name": other["name"],
+                "versionMetadata": {"versionId": "ver_other1"},
+                "webUrl": entry_web_url(entry_id),
+            }
         created = self.created_entries.get(entry_id)
         if created is not None:
             result = {
@@ -1167,7 +1184,8 @@ class FakeBenchling:
 
     def _parts_items(self, call: Call, entry_id: str) -> tuple[int, dict[str, Any]]:
         parts = []
-        for part in self.parts:
+        other = self.other_entries.get(entry_id)
+        for part in other["parts"] if other is not None else self.parts:
             item = deepcopy(part)
             if (
                 item.get("id") == TABLE_PART
@@ -1591,6 +1609,50 @@ class FakeBenchling:
         }
         return part_id
 
+    def add_entry(self, entry_id: str, display_id: str, name: str) -> str:
+        """Another synthetic entry that starts with no parts."""
+        self.other_entries[entry_id] = {"displayId": display_id, "name": name, "parts": []}
+        return entry_id
+
+    def add_rows_table(
+        self,
+        part_id: str,
+        name: str,
+        columns: list[dict[str, Any]],
+        rows: list[list[dict[str, Any]]],
+        *,
+        schema_id: str = "assaysch_diff",
+        entry_id: str = ENTRY_ID,
+    ) -> str:
+        """A submitted results table on ``entry_id``; each row is a list of cells."""
+        self.results_parts[part_id] = {
+            "name": name,
+            "columnDefinitions": [
+                {"__typename": "SchemaFieldColumnDefinition", **column} for column in columns
+            ],
+            "rows": [
+                {
+                    "id": f"strow_{part_id}_{index}",
+                    "submissionStatus": "SUBMITTED",
+                    "result": {"__typename": "Result", "id": f"result_{part_id}_{index}"},
+                    "cells": cells,
+                }
+                for index, cells in enumerate(rows)
+            ],
+            "resultSchema": {"id": schema_id},
+            "submissionStatus": "SUBMITTED",
+            "isEvaluated": True,
+        }
+        part = {
+            "id": part_id,
+            "__typename": "DocumentPartResultsTable",
+            "name": name,
+            "resultSchema": {"__typename": "ResultSchemaRef", "id": schema_id},
+        }
+        other = self.other_entries.get(entry_id)
+        (other["parts"] if other is not None else self.parts).append(part)
+        return part_id
+
     def _page_row_items(
         self, rows: list[dict[str, Any]], call: Call, *, page_cap: int | None
     ) -> tuple[int, dict[str, Any]]:
@@ -2012,6 +2074,7 @@ ROUTES: list[tuple[str, str]] = [
     (r"/container-schemas", "GET v2|list_container_schemas"),
     (r"/container-schemas/(\w+)", "GET v2|get_container_schema"),
     (r"/containers", "GET v2|list_containers"),
+    (r"/containers:bulk-get", "GET v2|bulk_get_containers"),
     (r"/containers", "POST v2|create_container"),
     (r"/containers/(\w+):transfer", "POST v2|transfer_container"),
     (r"/containers/(\w+)", "GET v2|get_container"),

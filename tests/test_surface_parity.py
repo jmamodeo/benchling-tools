@@ -175,6 +175,32 @@ def _without_clock(value):
             "container_get",
             {"container_id": "con_well1", "location": True},
         ),
+        (
+            [
+                "results",
+                "diff",
+                "--left",
+                ENTRY_ID,
+                "--right",
+                ENTRY_ID,
+                "--key",
+                "Ct",
+                "--fields",
+                "Ct",
+                "--resolve-barcodes",
+                "--sample",
+                "2",
+            ],
+            "results_diff",
+            {
+                "left": ENTRY_ID,
+                "right": ENTRY_ID,
+                "key": "Ct",
+                "fields": ["Ct"],
+                "resolve_barcodes": True,
+                "sample": 2,
+            },
+        ),
     ],
 )
 async def test_read_replies_match(cli_reply, mcp_reply, fake, args, tool, arguments) -> None:
