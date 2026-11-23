@@ -139,11 +139,25 @@ async def test_find_containers_other_400_is_raised(runtime, fake) -> None:
 
 async def test_find_containers_single_invalid_barcode_names_it(runtime, fake) -> None:
     fake.invalid_barcodes = {"BAR-BAD"}
-    with pytest.raises(ValidationError) as raised:
-        await runtime.service.find_containers(barcode="BAR-BAD")
-    assert raised.value.details["invalid_barcodes"] == ["BAR-BAD"]
-    assert raised.value.details["hint"] == "Benchling did not recognise these barcodes: BAR-BAD"
+    found = await runtime.service.find_containers(barcode="BAR-BAD")
+    assert found == {
+        "items": [],
+        "next_token": None,
+        "invalid_barcodes": ["BAR-BAD"],
+        "hint": "Benchling did not recognise these barcodes: BAR-BAD",
+    }
     assert len(_container_lists(fake)) == 1
+
+
+async def test_find_containers_single_valid_barcode_has_empty_invalid_list(runtime, fake) -> None:
+    found = await runtime.service.find_containers(barcode="BAR-SOURCE")
+    assert found["invalid_barcodes"] == [] and found["items"]
+
+
+async def test_find_containers_single_barcode_other_400_is_raised(runtime, fake) -> None:
+    fake.fail("GET", "/api/v2/containers", 400)
+    with pytest.raises(ValidationError, match="Benchling rejected"):
+        await runtime.service.find_containers(barcode="BAR-SOURCE")
 
 
 async def test_find_containers_barcode_input_is_checked(runtime) -> None:

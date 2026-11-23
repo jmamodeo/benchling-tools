@@ -158,6 +158,10 @@ def test_results_rows_where_returns_only_matching_rows(invoke, fake) -> None:
     assert data["scanned"] == 1
     assert data["matched"] == 0
     assert data["next_token"] == "1"
+    assert data["where_scope"] == "page" and data["complete"] is False
+    note = data["where_scope_note"]
+    assert "this page only (0 of 1 rows read match)" in note
+    assert "`results tables ENTRY --where processing_run_id=run_b`" in note
 
     code, payload = invoke(
         "results",
@@ -173,6 +177,8 @@ def test_results_rows_where_returns_only_matching_rows(invoke, fake) -> None:
     assert [row["id"] for row in data["items"]] == ["strow_p4"]
     assert (data["scanned"], data["matched"]) == (1, 1)
     assert data["next_token"] is None
+    assert data["where_scope"] == "page" and data["complete"] is True
+    assert "where_scope_note" not in data
     assert fake.writes() == []
 
 
