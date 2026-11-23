@@ -1601,14 +1601,17 @@ class FakeBenchling:
     def complete_upload(
         self, task_id: str = "task_abc123", *, payload_index: int = -1
     ) -> list[str]:
-        """Create pending V2 results from a bulk-create payload and finish its task."""
+        """Create pending V2 results from a bulk-create payload and finish its task.
+
+        A record's optional client ``id`` (a UUID) becomes its V2 id.
+        """
         payload = self.bulk_payloads[payload_index]
         created = []
         for record in payload["assayResults"]:
             number = len(self.assay_results) + len(created) + 1
             created.append(
                 {
-                    "id": f"00000000-0000-4000-8000-{number:012d}",
+                    "id": record.get("id") or f"00000000-0000-4000-8000-{number:012d}",
                     "v3Id": f"result_up{number}",
                     "entryId": None,
                     "isReviewed": False,

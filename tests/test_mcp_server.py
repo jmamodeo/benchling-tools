@@ -902,6 +902,42 @@ async def test_read_back_and_verify_results_without_allow_writes(client, pool, f
     assert len(fake.writes()) == writes
 
 
+async def test_results_verify_takes_a_payload_object_and_never_a_path(
+    client, fake, tmp_path
+) -> None:
+    body = {
+        "tableId": "strtbl_example",
+        "assayResults": [{"schemaId": "assaysch_abc123", "fields": {"ct": {"value": 4}}}],
+    }
+    fake.bulk_payloads.append(body)
+    (result_id,) = fake.complete_upload()
+    writes = len(fake.writes())
+    tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+    verify = tools["results_verify"]
+    assert verify.annotations.readOnlyHint is True
+    assert verify.inputSchema["properties"]["payload"]["type"] == ["object", "array"]
+    assert {"payload", "result_ids", "created_after", "created_before", "entry"} <= set(
+        verify.inputSchema["properties"]
+    )
+    assert "plan_id" not in verify.inputSchema.get("required", [])
+
+    by_id = await call(
+        client, "results_verify", env="sandbox", payload=body, result_ids=[result_id]
+    )
+    assert by_id["ok"] is True, by_id
+    assert by_id["data"]["ok"] is True and by_id["data"]["source"]["mode"] == "payload"
+    path = tmp_path / "body.json"
+    path.write_text(json.dumps(body))
+    refused = await call(
+        client, "results_verify", env="sandbox", payload=str(path), result_ids=[result_id]
+    )
+    assert refused["error"]["code"] == "validation_error"
+    assert "not a path" in refused["error"]["message"]
+    both = await call(client, "results_verify", env="sandbox", plan_id="0" * 32, payload=body)
+    assert both["error"]["code"] == "validation_error"
+    assert len(fake.writes()) == writes
+
+
 async def test_list_schemas_pages_without_allow_writes(client, fake) -> None:
     fake.schema_page_size = 2
     first = (await call(client, "schema_list", env="sandbox", limit=2))["data"]

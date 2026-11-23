@@ -1916,24 +1916,31 @@ class BenchlingService:
         *,
         schema_id: str,
         created_after: str,
+        created_before: str | None = None,
         page_size: int = 50,
         cursor: str | None = None,
     ) -> dict[str, Any]:
         """Return one page of V2 assay results for a schema created at or after a time.
 
         V2 ``GET /assay-results`` has no entry filter, so pending results (no entry yet)
-        are found by schema and creation time. ``created_after`` is RFC 3339.
+        are found by schema and creation time. ``created_after`` and the optional
+        ``created_before`` (sent as ``createdAt.lte``) are RFC 3339.
         """
         if not isinstance(schema_id, str) or not schema_id.strip():
             raise ValidationError("schema_id is required")
         if not isinstance(created_after, str) or not created_after.strip():
             raise ValidationError("created_after is required")
-        try:
-            datetime.fromisoformat(created_after.strip())
-        except ValueError as exc:
-            raise ValidationError(
-                "created_after must be an RFC 3339 date or datetime, e.g. 2026-11-19T00:00:00Z"
-            ) from exc
+        for label, value in (("created_after", created_after), ("created_before", created_before)):
+            if value is None:
+                continue
+            try:
+                if not isinstance(value, str):
+                    raise ValueError
+                datetime.fromisoformat(value.strip())
+            except ValueError as exc:
+                raise ValidationError(
+                    f"{label} must be an RFC 3339 date or datetime, e.g. 2026-11-19T00:00:00Z"
+                ) from exc
         if isinstance(page_size, bool) or page_size < 1 or page_size > 100:
             raise ValidationError("page_size must be between 1 and 100")
         params: dict[str, Any] = {
@@ -1942,6 +1949,8 @@ class BenchlingService:
             "sort": "createdAt:asc",
             "pageSize": page_size,
         }
+        if created_before is not None:
+            params["createdAt.lte"] = created_before.strip()
         if cursor:
             params["nextToken"] = cursor
         payload = await self.api.request("GET", "/assay-results", version=2, params=params)
