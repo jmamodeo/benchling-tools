@@ -845,6 +845,9 @@ async def entry_inspect(
     (strtbl_…) that results tables returns. text_boxes lists each fill-in text box
     (part_id, name, full text, submission_status, is_submittable, section).
     lookup_tables lists each lookup table (part_id, name, row_count).
+    text_boxes holds only DocumentPartTextBox parts. A labeled area such as
+    Comments may instead be a DocumentPartHeader followed by DocumentPartText
+    paragraphs; read those with section get or part get.
     """
     return await call.runtime.service.inspect_entry(reference)
 
@@ -1030,7 +1033,9 @@ async def section_get(
     """Get one section of an entry by stable part ID or a unique section title, paged.
 
     text_boxes and lookup_tables summarize the text boxes and lookup tables among
-    the returned parts, as in entry inspect.
+    the returned parts, as in entry inspect. A labeled area built from a header
+    and text paragraphs, rather than a text box, comes back as those parts, in
+    document order, with empty paragraphs kept.
     """
     data = await call.runtime.service.get_section(reference, section)
     parts = data["parts"]
