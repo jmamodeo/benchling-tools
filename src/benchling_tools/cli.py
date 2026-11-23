@@ -1581,6 +1581,9 @@ async def changes_plan(
 
     Inline result uploads pass table_id and assay_results, or batches containing
     table_id and assay_results for each table, up to 500 records per table.
+    Dropdown values are option IDs (sfso_…), not labels. Schema-constrained
+    links are checked against their allowed schema; storable, any-entity, entry,
+    request, system-category, and attachment links do not require one.
     A missing projectId defaults to the entry's project; if unavailable, set
     projectId explicitly. Explicit null creates creator-only results and some
     tenants reject it with projectId is a required field.
