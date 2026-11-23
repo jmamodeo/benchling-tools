@@ -480,6 +480,7 @@ def field_definition_type(definition: dict[str, Any]) -> str:
         "TextFieldDefinition": "TEXT",
         "LongTextFieldDefinition": "LONG_TEXT",
         "FloatFieldDefinition": "FLOAT",
+        "DecimalFieldDefinition": "DECIMAL",
         "IntegerFieldDefinition": "INTEGER",
         "BooleanFieldDefinition": "BOOLEAN",
         "DateFieldDefinition": "DATE",
@@ -492,6 +493,20 @@ def field_definition_type(definition: dict[str, Any]) -> str:
     if typename.endswith("LinkFieldDefinition"):
         return "LINK"
     return "UNKNOWN"
+
+
+def link_kind(definition: dict[str, Any]) -> str:
+    """Distinguish links that do not carry a schema constraint."""
+    typename = str(definition.get("__typename") or "").split(".")[-1]
+    return {
+        "StorableLinkFieldDefinition": "storable",
+        "AnyEntityLinkFieldDefinition": "any_entity",
+        "EntryLinkFieldDefinition": "entry",
+        "RequestLinkFieldDefinition": "request",
+        "SystemCategoryLinkFieldDefinition": "system_category",
+        "AttachmentLinkFieldDefinition": "attachment",
+        "DropdownLinkFieldDefinition": "dropdown",
+    }.get(typename, "schema_constrained")
 
 
 _ATTACHMENT_TYPENAMES = {"AttachmentLinkFieldDefinition", "BlobLinkFieldDefinition"}

@@ -223,6 +223,137 @@ async def test_result_plan_rejects_link_field_without_allowed_schema(runtime, fa
     assert fake.writes() == []
 
 
+@pytest.fixture
+def samples_schema(fake):
+    def field(name, typename, **kwargs):
+        return {
+            "id": f"assayfield_{name}",
+            "systemName": name,
+            "name": name,
+            "__typename": f"{typename}FieldDefinition",
+            "derivationType": "DIRECT",
+            **kwargs,
+        }
+
+    fake.field_defs["assaysch_abc123"] = [
+        field("tube", "StorableLink", isRequired=True),
+        field("contents", "AnyEntityLink"),
+        field("entry", "EntryLink"),
+        field("destination", "StorableLink"),
+        field("request", "RequestLink"),
+        field("category", "SystemCategoryLink"),
+        field("quantity", "Decimal", numericMin=1, numericMax=10),
+        field("concentration", "Decimal"),
+        field("tube_type", "DropdownLink", linkDefinition={"id": "sfs_status"}),
+        field("unit", "DropdownLink", linkDefinition={"id": "sfs_unit"}),
+        field("empty", "DropdownLink", linkDefinition={"id": "sfs_empty"}),
+        field("sample", "CustomEntityLink", linkDefinition={"id": "es_target"}),
+    ]
+    fake.dropdowns["sfs_unit"] = {
+        "id": "sfs_unit",
+        "name": "Unit",
+        "options": [{"id": "sfso_A", "name": "A"}],
+    }
+    fake.dropdowns["sfs_empty"] = {"id": "sfs_empty", "name": "Empty", "options": []}
+    return {
+        "tube": {"value": "con_TEST1"},
+        "contents": {"value": "ent_TEST1"},
+        "entry": {"value": "etr_TEST1"},
+        "destination": {"value": "loc_TEST1"},
+        "request": {"value": "req_TEST1"},
+        "category": {"value": "category_TEST1"},
+        "quantity": {"value": 2.5},
+        "concentration": {"value": 1},
+        "tube_type": {"value": "sfso_open"},
+        "unit": {"value": "sfso_A"},
+    }
+
+
+async def test_samples_schema_valid_row_needs_no_link_lookup(runtime, fake, samples_schema):
+    planned = await plan(runtime, [record(fields=samples_schema)])
+    assert planned.after["validation_summary"]["counts_by_reason"] == {}
+    assert planned.after["records"][0]["fields"] == samples_schema
+    assert not any("/custom-entity/" in call.path for call in fake.calls)
+    assert fake.writes() == []
+
+
+async def test_samples_schema_reports_all_field_problems(runtime, fake, samples_schema):
+    samples_schema.update(
+        quantity={"value": 0.5},
+        concentration={"value": "not a number"},
+        tube_type={"value": "sfso_BAD1"},
+        unit={"value": "sfso_BAD2"},
+        empty={"value": "sfso_MISSING"},
+        sample={"value": "ent_wrong_schema"},
+    )
+    with pytest.raises(ValidationError) as caught:
+        await plan(runtime, [record(fields=samples_schema)])
+    problems = caught.value.details["row_problems"]
+    assert {(p["reason"], p["details"]["field"]) for p in problems} == {
+        ("out_of_range", "quantity"),
+        ("invalid_field_value", "concentration"),
+        ("invalid_dropdown_value", "tube_type"),
+        ("invalid_dropdown_value", "unit"),
+        ("dropdown_options_unavailable", "empty"),
+        ("invalid_link_target", "sample"),
+    }
+    assert {
+        p["details"]["field"]: p["details"]["value"] for p in problems if "value" in p["details"]
+    } == {
+        "tube_type": "sfso_BAD1",
+        "unit": "sfso_BAD2",
+        "empty": "sfso_MISSING",
+    }
+    assert caught.value.details["validation_summary"] == {
+        "rows_checked": 1,
+        "rows_with_problems": 1,
+        "counts_by_reason": {
+            "out_of_range": 1,
+            "invalid_field_value": 1,
+            "invalid_dropdown_value": 2,
+            "dropdown_options_unavailable": 1,
+            "invalid_link_target": 1,
+        },
+    }
+    assert fake.writes() == []
+
+
+async def test_samples_schema_reports_structural_and_constraint_problems(runtime, samples_schema):
+    del samples_schema["tube"]
+    samples_schema["unit"] = {"value": "sfso_BAD"}
+    samples_schema["unknown"] = {"value": 1}
+    with pytest.raises(ValidationError) as caught:
+        await plan(runtime, [record(fields=samples_schema)])
+    problems = caught.value.details["row_problems"]
+    assert len(problems) == 3
+    assert problems[0]["details"]["unknown_fields"] == ["unknown"]
+    assert problems[1]["details"]["missing_required_fields"] == ["tube"]
+    assert problems[2]["reason"] == "invalid_dropdown_value"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("tube", "etr_TEST1"), ("tube", "con_"), ("entry", "con_TEST1")],
+)
+async def test_samples_schema_rejects_wrong_link_prefix(runtime, samples_schema, field, value):
+    samples_schema[field] = {"value": value}
+    with pytest.raises(ValidationError) as caught:
+        await plan(runtime, [record(fields=samples_schema)])
+    problem = caught.value.details["row_problems"][0]
+    assert problem["reason"] == "invalid_field_value"
+    assert problem["details"]["field"] == field
+
+
+@pytest.mark.parametrize("value", [11, True, "2"])
+async def test_samples_schema_rejects_invalid_decimal(runtime, samples_schema, value):
+    samples_schema["quantity"] = {"value": value}
+    with pytest.raises(ValidationError) as caught:
+        await plan(runtime, [record(fields=samples_schema)])
+    assert caught.value.details["row_problems"][0]["reason"] == (
+        "out_of_range" if value == 11 else "invalid_field_value"
+    )
+
+
 async def test_table_must_be_on_the_selected_entry(runtime) -> None:
     with pytest.raises(NotFoundError):
         await plan(runtime, [record()], table_id="strtbl_elsewhere")

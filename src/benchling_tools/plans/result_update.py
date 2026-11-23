@@ -697,7 +697,7 @@ def _parse_cell(definition: dict[str, Any], cell: str, *, column: str) -> Any:
         if _INTEGER.fullmatch(raw):
             return int(raw)
         raise ValidationError(f"Column {column} must be an integer")
-    if field_type == "FLOAT":
+    if field_type in {"FLOAT", "DECIMAL"}:
         if _FLOAT.fullmatch(raw):
             value = float(raw)
             if math.isfinite(value):
