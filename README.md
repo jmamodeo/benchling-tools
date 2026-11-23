@@ -66,6 +66,11 @@ benchling-tools changes status PLAN_ID --env dev
 
 Every command, the six change families, spec shapes, result uploads and attachments, pending results, and the canned examples are in the [CLI and MCP reference](docs/reference.md#cli-examples).
 
+For result uploads, preview defaults a missing `projectId` to the entry's project and refuses
+the plan if none is available. An explicit `projectId: null` requests creator-only access,
+but some tenants reject it. Apply checks every batch before uploading attachments; if a
+result creation fails after an upload, the error identifies unlinked blobs.
+
 ## MCP server
 
 One server serves every environment saved with `auth login`. The client config carries no secrets; the server reads the same `environments.json` file and OS keychain as the CLI.
