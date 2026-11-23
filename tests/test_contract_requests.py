@@ -337,6 +337,7 @@ async def test_list_query_parameters_stay_inside_the_vendored_allow_list(runtime
     fake.add_lookup_table("docpart_lookup1")
     fake.lookup_row_page_size = 2
     await runtime.service.get_part(ENTRY_ID, "docpart_lookup1")
+    await runtime.service.bulk_get_containers(["con_source1", "con_dest1"])
     checked = []
     for call in fake.calls:
         allowed_params = _allowed_for(call.method, call.path)
