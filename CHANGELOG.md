@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- Read-only `users list` and `users get` (MCP `users_list` and `users_get`) and server-side `entry list --creator` and `--author` filters accepting user IDs or handles.
+
 ## [0.7.0] - 2026-11-22
 
 ### Breaking

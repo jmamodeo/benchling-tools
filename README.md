@@ -66,6 +66,14 @@ benchling-tools changes status PLAN_ID --env dev
 
 Every command, the six change families, spec shapes, result uploads and attachments, pending results, and the canned examples are in the [CLI and MCP reference](docs/reference.md#cli-examples).
 
+| Command | Purpose |
+| --- | --- |
+| `users list` | List visible users by handle, email, name, ID, or organization. |
+| `users get` | Read a visible user by ID or exact handle. |
+| `entry list` | List entries with server-side filters, including creator and author. |
+
+For example, resolve a handle with `benchling-tools users get HANDLE --env dev`, then use the returned ID with `benchling-tools entry list --creator USER_ID --folder lib_example --env dev`. Handles may also be passed directly to `--creator` or `--author`.
+
 ## MCP server
 
 One server serves every environment saved with `auth login`. The client config carries no secrets; the server reads the same `environments.json` file and OS keychain as the CLI.

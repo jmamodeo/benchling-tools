@@ -21,6 +21,8 @@ READ_TOOLS = {
     "entry_inspect",
     "entry_bulk_get",
     "folder_get",
+    "users_get",
+    "users_list",
     "template_get",
     "template_list",
     "section_get",
