@@ -347,11 +347,18 @@ Example transfer spec:
 Supported specs are documented in [schemas/change-spec.schema.json](../schemas/change-spec.schema.json). The six families are:
 
 - `entry`: create an entry from a template in a folder; optional schema fields are validated against the template's schema and sent by field-definition ID;
-- `document`: insert, delete, move, or replace a text part;
+- `document`: insert, delete, move, or replace a text part (an insert can add a results table: a part with `contentType` `results_table`, `name`, and `resultSchemaId`);
 - `table`: set selected cells or append rows on an unstructured table;
 - `fields`: update fields already present on the entry's assigned schema;
-- `results`: create V2 assay result records for one or more explicit `strtbl_…` tables (each batch can use a different schema and takes at most 500 records, this toolkit's own batch size; a plan that would push a table past Benchling's 1,000-row limit is refused; results land pending until accepted), or update existing results from a CSV file; and
+- `results`: create V2 assay result records for one or more explicit `strtbl_…` tables that already exist in the entry (each batch can use a different schema and takes at most 500 records, this toolkit's own batch size; a plan that would push a table past Benchling's 1,000-row limit is refused; results land pending until accepted), or update existing results from a CSV file; and
 - `containers`: create a container from a container schema, or transfer contents from one container to another.
+
+Results need a table first. The results table must exist in the entry before results can be written to it ([Uploading Results](https://docs.benchling.com/docs/example-creating-results): "First add a results table with the proper result schema to a Notebook entry"). Check with `results tables ENTRY`, create a missing table with a document plan (`--family document`) that inserts a `results_table` part ([Creating a new Notebook Entry containing Results](https://docs.benchling.com/docs/creating-a-new-notebook-entry-containing-results)), then plan the results with the new `table_id`. The table insert is a separate write that needs its own approval. A `results` plan whose records name a result schema with no results table on the entry fails at plan time with `results_table_missing` (exit 4), before any file is staged, and saves nothing. Its `details` hold `entry_id`, `entry_display_id`, `table_id`, `schema` (`id` and `name`), `entry_tables`, `document_spec`, the exact `command` to plan the insert, and `next_step`. The check reads the entry again only when the table is not on the entry or a record's `schemaId` differs from the table's. A `table_id` that is not on the entry, when another table there has the records' schema, is `not_found` with reason `result_table_not_on_entry` and a `next_step` naming that table.
+
+```console
+benchling-tools results tables etr_abc123 --env dev
+benchling-tools changes plan --family document --entry etr_abc123 --spec-json '{"operation":"insert","position":"end_of_document","parts":[{"contentType":"results_table","name":"Assay results","resultSchemaId":"assaysch_example"}]}' --env dev
+```
 
 Field inputs must use a schema field's V3 `systemName` or its field-definition ID and have the shape `{"value": ...}`. Plans show both identifiers, send the field-definition ID, validate value types and constraints, and re-check the affected definitions and values immediately before applying. Result uploads also accept schema display names; those keys are translated to system names in the saved plan and wire payload, and the preview shows each row's `field_name_map`. An ambiguous name is reported as an `ambiguous_field` row problem with its candidate fields, alongside every other problem in that row; unknown names list available system names, field IDs, and unambiguous display names. Entry field updates do not accept display names, so their unknown-field errors omit `available_display_names`. Result uploads also verify that the table belongs to the selected entry, that every record uses the table's result schema, and that any supplied project IDs are readable.
 

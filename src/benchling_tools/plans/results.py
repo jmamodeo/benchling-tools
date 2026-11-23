@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import shlex
 import uuid
 from copy import deepcopy
 from pathlib import Path
@@ -14,6 +16,7 @@ from ..errors import (
     ConflictError,
     NotFoundError,
     PartialCompletionError,
+    ResultsTableMissingError,
     UnsupportedError,
     ValidationError,
 )
@@ -34,6 +37,12 @@ from .blobs import (
 )
 from .fields import LinkCache, _resolve_field
 from .result_update import ResultUpdatePlanning, request_is_result_update
+
+RESULTS_TABLE_ORDER = (
+    "The results table must exist in the entry before results can be written to it: "
+    "check with results tables ENTRY, create a missing table with a document plan "
+    "(an insert of a results_table part), then plan the results."
+)
 
 PENDING_RESULTS_WARNING = (
     "Created results stay pending until a person reviews and accepts them in Benchling; "
@@ -205,18 +214,131 @@ class ResultsPlanning(ResultUpdatePlanning):
             )
         return list(report["warnings"])
 
+    async def _check_results_table_exists(
+        self, entry_id: str, batch: dict[str, Any], table: dict[str, Any] | None
+    ) -> None:
+        """Refuse a batch whose records' result schema has no results table on the entry.
+
+        Benchling writes results into a results table that already exists in the entry
+        (docs.benchling.com, "Uploading Results to Benchling through the API": "First add
+        a results table with the proper result schema to a Notebook entry"). ``table`` is
+        the batch's table when it was found on the entry, or None when it was not. The
+        entry is read only when a record's schema differs from the table's, or when the
+        table was not found, so a matching plan costs no extra request.
+        """
+        table_schema = table.get("schema_id") if table is not None else None
+        wanted: list[str] = []
+        for record in batch["assay_results"]:
+            schema_id = record.get("schemaId") if isinstance(record, dict) else None
+            if isinstance(schema_id, str) and schema_id and schema_id != table_schema:
+                if schema_id not in wanted:
+                    wanted.append(schema_id)
+        if not wanted:
+            return
+        entry = self.service._v2_object(
+            await self.api.request("GET", f"/entries/{entry_id}", version=2), "entry"
+        )
+        entry_tables = self.service._result_tables_from_entry(entry)
+        present = {item.get("schema_id") for item in entry_tables}
+        reference = str(entry.get("displayId") or entry_id)
+        listed = [
+            {
+                "table_id": item["table_id"],
+                "name": item.get("name"),
+                "schema_id": item.get("schema_id"),
+            }
+            for item in entry_tables
+        ]
+        missing = [schema_id for schema_id in wanted if schema_id not in present]
+        if not missing:
+            if table is None:
+                matches = [item for item in listed if item["schema_id"] == wanted[0]]
+                raise NotFoundError(
+                    "Result table was not found on the selected entry",
+                    details={
+                        "reason": "result_table_not_on_entry",
+                        "entry_id": entry_id,
+                        "table_id": batch["table_id"],
+                        "entry_tables": listed,
+                        "next_step": (
+                            f"Entry {reference} has a results table for result schema "
+                            f"{wanted[0]}: use its table_id "
+                            f"({', '.join(item['table_id'] for item in matches)}) from "
+                            f"results tables {reference}."
+                        ),
+                    },
+                )
+            return
+        schema_id = missing[0]
+        schema_name: str | None = None
+        try:
+            schema = (await self.service.get_schema(schema_id)).get("schema") or {}
+        except (AccessError, NotFoundError):
+            schema = {}
+        if isinstance(schema.get("name"), str) and schema["name"].strip():
+            schema_name = schema["name"].strip()
+        label = f'"{schema_name}" ({schema_id})' if schema_name else schema_id
+        document_spec = {
+            "operation": "insert",
+            "position": "end_of_document",
+            "parts": [
+                {
+                    "contentType": "results_table",
+                    "name": (schema_name or "Results")[:100],
+                    "resultSchemaId": schema_id,
+                }
+            ],
+        }
+        command = " ".join(
+            [
+                "benchling-tools changes plan --family document --entry",
+                shlex.quote(reference),
+                "--spec-json",
+                shlex.quote(json.dumps(document_spec, separators=(",", ":"))),
+                "--env",
+                shlex.quote(self.api.environment.name),
+            ]
+        )
+        raise ResultsTableMissingError(
+            f"Entry {reference} has no results table for result schema {label}. "
+            "The results table must exist in the entry before results can be written to it.",
+            details={
+                "reason": "results_table_missing",
+                "entry_id": entry_id,
+                "entry_display_id": entry.get("displayId"),
+                "table_id": batch["table_id"],
+                "schema": {"id": schema_id, "name": schema_name},
+                "entry_tables": listed,
+                "document_spec": document_spec,
+                "command": command,
+                "next_step": (
+                    f"Create the results table first with a document plan: {command} . "
+                    "That plan inserts a results_table part for this schema; it is a "
+                    "separate write that needs its own approval, so apply it only after "
+                    "the person approves that write. Then run results tables "
+                    f"{reference} to read the new table_id (strtbl_…), put it in this "
+                    "spec, and plan the results again."
+                ),
+            },
+        )
+
     async def _plan_result_uploads(
         self, entry_id: str, request: dict[str, Any], stager: FileStager
     ) -> PlanParts:
         batches = result_upload_batches(request)
         tables: list[dict[str, Any]] = []
         for batch in batches:
-            table = await self.service.get_result_table(entry_id, batch["table_id"])
+            try:
+                table = await self.service.get_result_table(entry_id, batch["table_id"])
+            except NotFoundError:
+                await self._check_results_table_exists(entry_id, batch, None)
+                raise
             if not isinstance(table.get("schema_id"), str):
                 raise UnsupportedError(
                     "The selected result table does not expose a result schema",
                     details={"table_id": batch["table_id"]},
                 )
+            await self._check_results_table_exists(entry_id, batch, table)
             tables.append(table)
         capacity_warnings = await self._check_results_capacity(
             entry_id, {batch["table_id"]: len(batch["assay_results"]) for batch in batches}
