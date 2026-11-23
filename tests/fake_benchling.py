@@ -1200,7 +1200,7 @@ class FakeBenchling:
             "isEvaluated": spec.get("isEvaluated", True),
             "resultSchema": deepcopy(spec.get("resultSchema")),
             "submissionStatus": spec.get("submissionStatus", "UNSUBMITTED"),
-            "rowCount": len(spec.get("rows") or []),
+            "rowCount": spec.get("row_count", len(spec.get("rows") or [])),
             "rows": self._table_rows_url("document-part-results-table", part_id),
         }
 
@@ -1409,6 +1409,40 @@ class FakeBenchling:
             )
             part_ids.append(part_id)
         return part_ids
+
+    def add_example_results_part(
+        self,
+        part_id: str = "docpart_example",
+        *,
+        rows: list[dict[str, Any]] | None = None,
+        row_count: int | None = None,
+        submission_status: str = "SUBMITTED",
+    ) -> str:
+        """Add the V3 results part that matches the V2 ``strtbl_example`` table.
+
+        ``row_count`` sets the documented ``rowCount`` without building that many rows.
+        """
+        self.parts.append(
+            {
+                "id": part_id,
+                "__typename": "DocumentPartResultsTable",
+                "name": "Assay results",
+                "resultSchema": {"__typename": "ResultSchemaRef", "id": self.result_table_schema},
+            }
+        )
+        self.results_parts[part_id] = {
+            "name": "Assay results",
+            "columnDefinitions": [
+                {"__typename": "SchemaFieldColumnDefinition", "name": "Ct", "columnId": "col_ct"}
+            ],
+            "rows": rows if rows is not None else default_results_rows(),
+            "resultSchema": {"id": self.result_table_schema},
+            "submissionStatus": submission_status,
+            "isEvaluated": True,
+        }
+        if row_count is not None:
+            self.results_parts[part_id]["row_count"] = row_count
+        return part_id
 
     def add_results_table(self, part_id: str = "docpart_rt1") -> str:
         """Install a synthetic results table the rows endpoint can page."""

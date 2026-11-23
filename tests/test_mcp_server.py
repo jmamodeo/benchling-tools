@@ -37,6 +37,7 @@ READ_TOOLS = {
     "results_get",
     "blob_get",
     "results_tables",
+    "results_capacity",
     "results_rows",
     "results_pending",
     "results_verify",

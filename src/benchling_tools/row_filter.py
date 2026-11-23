@@ -12,7 +12,8 @@ resolver the planner uses (``plans.fields._resolve_field``): a display name,
 a system name (from the table's result schema), or a field-definition id. A
 cell matches when its value, the evaluation when Benchling returned one and the
 input otherwise, is exactly VALUE as text. A link cell matches on the linked id.
-Archived rows and the empty ``UNSUBMITTED`` placeholder row never match.
+Archived rows and the empty ``UNSUBMITTED`` placeholder row (``capacity.is_placeholder_row``)
+never match.
 """
 
 from __future__ import annotations
@@ -20,10 +21,11 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from .capacity import is_placeholder_row
 from .errors import AccessError, NotFoundError, ValidationError
 from .export import _cell_value
 from .plans.fields import _resolve_field
-from .services import BenchlingService, is_placeholder_row
+from .services import BenchlingService
 
 WHERE_NOTE = (
     "--where is evaluated client-side over accepted table rows, because Benchling has no "

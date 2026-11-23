@@ -251,79 +251,6 @@ def part_result_schema_id(part: dict[str, Any]) -> str | None:
     return None
 
 
-def is_placeholder_row(row: object) -> bool:
-    """True for an ``UNSUBMITTED`` results-table row whose cells are all empty.
-
-    Benchling shows such a row in a new results table before anything is entered.
-    """
-    if not isinstance(row, dict) or row.get("submissionStatus") != "UNSUBMITTED":
-        return False
-    cells = row.get("cells")
-    if not isinstance(cells, list):
-        return False
-    for cell in cells:
-        if not isinstance(cell, dict):
-            return False
-        for key in ("evaluationValue", "inputValue"):
-            value = cell.get(key)
-            if value in (None, "", []):
-                continue
-            if not isinstance(value, dict) or any(
-                item not in (None, "", [])
-                for name, item in value.items()
-                if name not in ("__typename", "type")
-            ):
-                return False
-    return True
-
-
-def match_listed_table_part(
-    parts: list[dict[str, Any]], note: dict[str, Any], *, unstructured: bool
-) -> str | None:
-    """Return the document-part id in ``parts`` for a V2 ``strtbl_`` note, when one matches.
-
-    A handle (``apiId``, ``tableHandleId``, or the part id) wins. A results table
-    otherwise matches its result schema, and its name when several parts share
-    that schema. The only results part is used when the note has no schema.
-    An unstructured table matches only by handle. ``strtbl_`` is not itself a
-    document-part id.
-    """
-    table_id = note.get("table_id")
-    if not isinstance(table_id, str) or not table_id:
-        return None
-    predicate = is_unstructured_table if unstructured else is_results_table
-    typed = [part for part in parts if predicate(part) and isinstance(part.get("id"), str)]
-    direct = [part for part in typed if table_id in table_handle_ids(part)]
-    if len(direct) == 1:
-        return str(direct[0]["id"])
-    if unstructured or len(direct) > 1:
-        return None
-    schema_id = note.get("schema_id")
-    name = note.get("name") if isinstance(note.get("name"), str) and note.get("name") else None
-    schema_matches = [
-        part
-        for part in typed
-        if isinstance(schema_id, str) and schema_id and part_result_schema_id(part) == schema_id
-    ]
-    if len(schema_matches) == 1:
-        return str(schema_matches[0]["id"])
-    if name:
-        named = [part for part in schema_matches if part_display_name(part) == name]
-        if len(named) == 1:
-            return str(named[0]["id"])
-    if (
-        len(typed) == 1
-        and not schema_matches
-        and (
-            not isinstance(schema_id, str)
-            or not schema_id
-            or part_result_schema_id(typed[0]) in {None, schema_id}
-        )
-    ):
-        return str(typed[0]["id"])
-    return None
-
-
 def is_unavailable_part(part: dict[str, Any]) -> bool:
     """True when Benchling withheld the part's concrete type at this API stability."""
     return part_type(part).split(".")[-1] == "DocumentPartUnavailable"
@@ -1588,17 +1515,12 @@ class BenchlingService:
         return tables
 
     async def list_result_tables(
-        self, reference: str, *, counts: bool = False, name_prefix: str | None = None
+        self, reference: str, *, name_prefix: str | None = None
     ) -> dict[str, Any]:
         """List the V2 Results tables embedded in an entry, with its project ID.
 
         ``name_prefix`` keeps tables whose name starts with it (exact,
-        case-sensitive). With ``counts``, the entry's V3 parts are read once and
-        each table gets its ``part_id`` (``docpart_…``), ``row_count``,
-        ``submission_status`` and ``placeholder_rows``, taken from its
-        ``DocumentPartResultsTable``. ``placeholder_rows`` is 1 when the only row
-        is an empty ``UNSUBMITTED`` placeholder; that one row is read only for an
-        ``UNSUBMITTED`` table with ``rowCount`` 1.
+        case-sensitive). Row counts come from ``capacity.add_table_counts``.
         """
         resolved = await self.resolve_entry(reference)
         entry = self._v2_object(
@@ -1613,12 +1535,6 @@ class BenchlingService:
                 for item in items
                 if isinstance(item.get("name"), str) and item["name"].startswith(name_prefix)
             ]
-        if counts:
-            parts = await self.entry_parts(str(resolved["entry_id"]))
-            by_id = {str(part["id"]): part for part in parts if isinstance(part.get("id"), str)}
-            for item in items:
-                part_id = match_listed_table_part(parts, item, unstructured=False)
-                await self._add_table_counts(item, by_id.get(part_id) if part_id else None)
         return {
             "resolved": resolved,
             "project_id": await self._entry_project_id(entry),
@@ -1626,49 +1542,6 @@ class BenchlingService:
             "complete": True,
             "id_namespace": "v2_structured_table",
         }
-
-    async def _add_table_counts(self, item: dict[str, Any], part: dict[str, Any] | None) -> None:
-        """Add the part id, row count, submission status and placeholder rows to one table."""
-        if part is None:
-            item.update(
-                {
-                    "part_id": None,
-                    "row_count": None,
-                    "submission_status": None,
-                    "placeholder_rows": None,
-                    "count_note": (
-                        "No single v3_document_part matched this table, so it was not counted."
-                    ),
-                }
-            )
-            return
-        part_id = str(part["id"])
-        row_count = part.get("rowCount")
-        if isinstance(row_count, bool) or not isinstance(row_count, int) or row_count < 0:
-            raise UpstreamError(
-                "Table response contained an invalid row count", details={"part_id": part_id}
-            )
-        status = part.get("submissionStatus")
-        placeholder = 0
-        if row_count == 1 and status == "UNSUBMITTED":
-            path = rows_items_path(
-                self.api.environment.base_url,
-                part_id,
-                part.get("rows"),
-                collection="document-part-results-table",
-            )
-            rows, _ = await listing._one_page(
-                self.api, path, {}, version=3, item_key="items", limit=1
-            )
-            placeholder = int(bool(rows) and is_placeholder_row(rows[0]))
-        item.update(
-            {
-                "part_id": part_id,
-                "row_count": row_count,
-                "submission_status": status if isinstance(status, str) else None,
-                "placeholder_rows": placeholder,
-            }
-        )
 
     async def get_result_table(self, entry_id: str, table_id: str) -> dict[str, Any]:
         """Find an explicit V2 Results table within one entry."""
@@ -1700,15 +1573,6 @@ class BenchlingService:
             "columns": note.get("columns") or [],
         }
 
-    async def entry_parts(self, entry_id: str) -> list[dict[str, Any]]:
-        """Every V3 document part of an entry, from one paged ``/parts/items`` listing."""
-        return [
-            item
-            async for item in self.api.paginate(
-                f"/entry/{entry_id}/parts/items", params={"pageSize": 100}
-            )
-        ]
-
     async def document_part_for_listed_table(
         self,
         entry_id: str,
@@ -1719,15 +1583,54 @@ class BenchlingService:
     ) -> str | None:
         """Return the V3 document-part id for a V2 ``strtbl_`` note, when one part matches.
 
-        ``parts`` is the entry's parts listing; it is read when omitted. See
-        ``match_listed_table_part`` for the matching rules.
+        A handle (``apiId``, ``tableHandleId``, or the part id) wins. A results table
+        otherwise matches its result schema, and its name when several parts share
+        that schema. The only results part is used when the note has no schema.
+        An unstructured table matches only by handle. ``strtbl_`` is not itself a
+        document-part id. ``parts`` are the entry's V3 parts when the caller has
+        already read them; otherwise they are read here.
         """
         table_id = note.get("table_id")
         if not isinstance(table_id, str) or not table_id:
             return None
         if parts is None:
-            parts = await self.entry_parts(entry_id)
-        return match_listed_table_part(parts, note, unstructured=unstructured)
+            parts = [
+                item
+                async for item in self.api.paginate(
+                    f"/entry/{entry_id}/parts/items", params={"pageSize": 100}
+                )
+            ]
+        predicate = is_unstructured_table if unstructured else is_results_table
+        typed = [part for part in parts if predicate(part) and isinstance(part.get("id"), str)]
+        direct = [part for part in typed if table_id in table_handle_ids(part)]
+        if len(direct) == 1:
+            return str(direct[0]["id"])
+        if unstructured or len(direct) > 1:
+            return None
+        schema_id = note.get("schema_id")
+        name = note.get("name") if isinstance(note.get("name"), str) and note.get("name") else None
+        schema_matches = [
+            part
+            for part in typed
+            if isinstance(schema_id, str) and schema_id and part_result_schema_id(part) == schema_id
+        ]
+        if len(schema_matches) == 1:
+            return str(schema_matches[0]["id"])
+        if name:
+            named = [part for part in schema_matches if part_display_name(part) == name]
+            if len(named) == 1:
+                return str(named[0]["id"])
+        if (
+            len(typed) == 1
+            and not schema_matches
+            and (
+                not isinstance(schema_id, str)
+                or not schema_id
+                or part_result_schema_id(typed[0]) in {None, schema_id}
+            )
+        ):
+            return str(typed[0]["id"])
+        return None
 
     async def get_project(self, project_id: str) -> dict[str, Any]:
         """Fetch a V2 project; raises UpstreamError if the response lacks an object ID."""

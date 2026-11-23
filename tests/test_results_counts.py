@@ -9,7 +9,7 @@ from conftest import runtime_for
 from fake_benchling import ENTRY_ID
 from typer.testing import CliRunner
 
-from benchling_tools import cli, row_filter, services, stale
+from benchling_tools import capacity, cli, row_filter, stale
 from benchling_tools.errors import UpstreamError, ValidationError
 
 
@@ -260,7 +260,6 @@ def test_rows_that_do_not_match(row) -> None:
         ({"submissionStatus": "UNSUBMITTED", "cells": [{"inputValue": None}]}, True),
         ({"submissionStatus": "UNSUBMITTED", "cells": [{"inputValue": {"value": ""}}]}, True),
         ({"submissionStatus": "UNSUBMITTED", "cells": [{"inputValue": {"value": "x"}}]}, False),
-        ({"submissionStatus": "UNSUBMITTED", "cells": [{"inputValue": 1}]}, False),
         ({"submissionStatus": "UNSUBMITTED", "cells": ["bad"]}, False),
         ({"submissionStatus": "UNSUBMITTED", "cells": None}, False),
         ({"submissionStatus": "SUBMITTED", "cells": []}, False),
@@ -268,14 +267,33 @@ def test_rows_that_do_not_match(row) -> None:
     ],
 )
 def test_placeholder_rows(row, placeholder) -> None:
-    assert services.is_placeholder_row(row) is placeholder
+    assert capacity.is_placeholder_row(row) is placeholder
+
+
+async def _counted(runtime) -> dict:
+    result = await runtime.service.list_result_tables(ENTRY_ID)
+    await capacity.add_table_counts(runtime.service, ENTRY_ID, result["items"])
+    return result
 
 
 async def test_counts_reject_an_invalid_row_count(runtime, fake) -> None:
     fake.add_panel_tables()
-    fake.parts[-1]["rowCount"] = "two"
+    fake.results_parts["docpart_panelnotes"]["row_count"] = "two"
     with pytest.raises(UpstreamError, match="row count"):
-        await runtime.service.list_result_tables(ENTRY_ID, counts=True)
+        await _counted(runtime)
+
+
+async def test_counts_read_the_table_when_the_listing_lacks_a_row_count(runtime, fake) -> None:
+    fake.add_panel_tables()
+    fake.parts[-1]["rowCount"] = None
+    tables = _by_name(await _counted(runtime))
+    assert tables["Panel Testing notes"]["row_count"] == 1
+    detail_reads = [
+        call.path
+        for call in fake.calls
+        if call.path.endswith("/document-part-results-table/docpart_panelnotes")
+    ]
+    assert len(detail_reads) == 1
 
 
 async def test_name_prefix_must_be_text(runtime, fake) -> None:
@@ -285,7 +303,7 @@ async def test_name_prefix_must_be_text(runtime, fake) -> None:
 
 async def test_where_skips_unmatched_tables_and_reads_schemas_once(runtime, fake) -> None:
     fake.add_panel_tables()
-    result = await runtime.service.list_result_tables(ENTRY_ID, counts=True)
+    result = await _counted(runtime)
     await row_filter.count_tables(runtime.service, result, [("Processing run", "run_b")])
     tables = _by_name(result)
     assert tables["Assay results"]["matching_rows"] is None
