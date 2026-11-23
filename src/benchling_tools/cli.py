@@ -1506,6 +1506,10 @@ async def results_tables(
     Each table_id is a v2_structured_table id (strtbl_…), not a v3_document_part
     id (docpart_…). results rows maps it with --entry; table get does not take it.
 
+    Run it before a results plan. The results table must exist in the entry
+    before results can be written to it. When no table has the result schema,
+    create one first with a document plan that inserts a results_table part.
+
     By default each table also gets part_id (docpart_…), row_count, used_rows,
     submission_status and placeholder_rows, read from one GET
     /entry/{id}/parts/items listing instead of a full entry inspect. These are
@@ -2086,7 +2090,8 @@ _SPECIFICATION = McpParam(
     annotation=Annotated[Any, WithJsonSchema(CHANGE_SPECIFICATION_SCHEMA)],
     description=(
         "Typed change for family, as a JSON object. Document and table changes set "
-        "operation. Field changes set schema_fields. Result uploads set table_id and "
+        "operation. Field changes set schema_fields. Result uploads set table_id (a "
+        "results table that already exists in the entry; see results_tables) and "
         "assay_results; result field keys may be system names, field-definition IDs, "
         "or schema display names (translated to system names). An attachment field "
         'value may be {"file": PATH} to upload a '
@@ -2220,6 +2225,14 @@ async def changes_plan(
     invalid one is a validation_error and nothing is written. Result updates can
     instead read a CSV file: --id-column names the result id, and each --map
     names a field by display name, system name, or field-definition id.
+
+    Results need a table first. The results table must exist in the entry
+    before results can be written to it. Check with results tables, create a
+    missing table with a document plan that inserts a results_table part (a
+    separate write that needs its own approval), then plan the results. A
+    results plan whose records name a result schema with no results table on
+    the entry fails with results_table_missing; relay its next_step, which
+    holds the exact document plan command.
 
     Inline result uploads pass table_id and assay_results, or batches containing
     table_id and assay_results for each table. This toolkit takes up to 500

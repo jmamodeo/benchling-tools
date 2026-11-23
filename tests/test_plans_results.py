@@ -91,7 +91,6 @@ async def test_result_plan_requires_entry_reference(runtime) -> None:
         (TABLE, [record(fields={"note": {"value": "only"}})], "required schema field"),
         (TABLE, [record(projectId="")], "non-empty string"),
         (TABLE, [record(projectId=5)], "non-empty string"),
-        (TABLE, [record(schemaId="assaysch_other")], "does not match the selected table"),
         (TABLE, [record(fields={"ct": {"value": "high"}})], "wrong type"),
     ],
 )

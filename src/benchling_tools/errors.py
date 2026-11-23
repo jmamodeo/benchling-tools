@@ -77,6 +77,15 @@ class NotFoundError(BenchlingAgentError):
     exit_code = ExitCode.ACCESS_OR_NOT_FOUND
 
 
+class ResultsTableMissingError(NotFoundError):
+    """A results plan targets an entry that has no results table for the records' schema.
+
+    Benchling needs the results table in the entry before results can be written to it.
+    """
+
+    code = "results_table_missing"
+
+
 class ConflictError(BenchlingAgentError):
     """A plan precondition failed, e.g. the entry changed since the plan was made."""
 
