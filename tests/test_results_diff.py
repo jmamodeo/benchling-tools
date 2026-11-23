@@ -136,12 +136,13 @@ async def test_tables_pair_by_name_and_rows_by_a_text_key(runtime, fake) -> None
         "only_left": 1,
         "only_right": 1,
         "changed": 1,
+        "duplicate_keys": 0,
     }
     assert table["changed"] == [{"key": "B1", "field": "Tube", "left": "con_t1", "right": "con_t2"}]
     assert table["only_left"][0]["key"] == "C1"
     assert table["only_left"][0]["values"]["Ct"] == 20
     assert table["only_right"][0]["key"] == "D1"
-    assert table["duplicate_keys"] == {"left": [], "right": []}
+    assert table["duplicate_keys"] == []
     assert "warnings" not in diff and "containers" not in diff
     assert _bulk_calls(fake) == []
     assert fake.writes() == []
@@ -189,6 +190,7 @@ async def test_run_values_select_rows_on_the_same_entry(runtime, fake) -> None:
         "only_left": 0,
         "only_right": 1,
         "changed": 1,
+        "duplicate_keys": 0,
     }
     assert table["changed"] == [{"key": "B1", "field": "Ct", "left": 15, "right": 16}]
     assert table["only_right"][0]["row_index"] == 4
@@ -204,14 +206,81 @@ async def test_a_container_link_key_and_duplicate_keys(runtime, fake) -> None:
     )
     [table] = diff["tables"]
     assert table["fields"] == ["Well"]
-    assert table["duplicate_keys"] == {
-        "left": [],
-        "right": [{"key": "con_t0", "row_indexes": [0, 2]}],
-    }
+    assert table["duplicate_keys"] == [
+        {
+            "key": "con_t0",
+            "left": 1,
+            "right": 2,
+            "left_row_indexes": [0],
+            "right_row_indexes": [0, 2],
+        }
+    ]
+    assert table["counts"]["duplicate_keys"] == 1
     assert table["counts"]["matched"] == 1
     assert table["changed"] == [{"key": "con_t2", "field": "Well", "left": "C1", "right": "B1"}]
     assert [row["key"] for row in table["only_left"]] == ["con_t1"]
     assert table["only_right"] == []
+
+
+async def test_duplicate_keys_report_the_count_on_each_side(runtime, fake) -> None:
+    """A key repeated on either side is never paired and never silently dropped."""
+    _schema(fake)
+    _tubes(fake, 3)
+    fake.add_entry(RERUN, "EXP-2", "Synthetic rerun")
+    columns = [WELL, TUBE, CT]
+    fake.add_rows_table(
+        "docpart_first",
+        "qPCR Testing 1",
+        columns,
+        [
+            [text("A1"), tube("con_t0"), number(1)],
+            [text("A1"), tube("con_t1"), number(2)],
+            [text("B1"), tube("con_t2"), number(3)],
+            [text("B1"), tube("con_t2"), number(4)],
+            [text("C1"), tube("con_t0"), number(5)],
+        ],
+    )
+    fake.add_rows_table(
+        "docpart_rerun",
+        "qPCR Testing 1",
+        columns,
+        [
+            [text("A1"), tube("con_t0"), number(1)],
+            [text("C1"), tube("con_t0"), number(5)],
+            [text("C1"), tube("con_t1"), number(6)],
+            [text("D1"), tube("con_t1"), number(7)],
+        ],
+        entry_id=RERUN,
+    )
+    diff = await results_diff.diff_results(runtime.service, left=ENTRY_ID, right=RERUN, key="Well")
+    [table] = diff["tables"]
+    assert table["duplicate_keys"] == [
+        {
+            "key": "A1",
+            "left": 2,
+            "right": 1,
+            "left_row_indexes": [0, 1],
+            "right_row_indexes": [0],
+        },
+        {
+            "key": "B1",
+            "left": 2,
+            "right": 0,
+            "left_row_indexes": [2, 3],
+            "right_row_indexes": [],
+        },
+        {
+            "key": "C1",
+            "left": 1,
+            "right": 2,
+            "left_row_indexes": [4],
+            "right_row_indexes": [1, 2],
+        },
+    ]
+    assert table["counts"]["duplicate_keys"] == 3
+    assert table["counts"]["matched"] == 0
+    assert [row["key"] for row in table["only_left"]] == []
+    assert [row["key"] for row in table["only_right"]] == ["D1"]
 
 
 async def test_barcodes_resolve_in_chunks_of_100_and_can_key_rows(runtime, fake) -> None:

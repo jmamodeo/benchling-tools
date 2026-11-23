@@ -497,14 +497,21 @@ def _key(
 
 def _pairs(
     plan: dict[str, Any], barcodes: dict[str, str] | None
-) -> tuple[list[tuple[Any, dict[str, Any], dict[str, Any]]], list[Any], list[Any], dict[str, Any]]:
-    """Matched pairs, rows only on each side, and duplicate keys per side."""
+) -> tuple[
+    list[tuple[Any, dict[str, Any], dict[str, Any]]], list[Any], list[Any], list[dict[str, Any]]
+]:
+    """Matched pairs, rows only on each side, and duplicated keys.
+
+    A key used more than once on either side is not paired. Its entry in the
+    duplicates list carries the row count and row indexes on both sides, so a
+    key that is unique on one side and repeated on the other stays visible.
+    """
     left, right = plan["left"], plan["right"]
     if not plan["left_keys"]:
         pairs = [(index, a, b) for index, (a, b) in enumerate(zip(left, right))]
         only_left = [(record["index"], record) for record in left[len(right) :]]
         only_right = [(record["index"], record) for record in right[len(left) :]]
-        return pairs, only_left, only_right, {"left": [], "right": []}
+        return pairs, only_left, only_right, []
     groups: dict[str, dict[str, list[dict[str, Any]]]] = {"left": {}, "right": {}}
     shown: dict[str, Any] = {}
     for label, records, columns in (
@@ -515,14 +522,17 @@ def _pairs(
             hashed, display = _key(record, columns, barcodes)
             shown.setdefault(hashed, display)
             groups[label].setdefault(hashed, []).append(record)
-    duplicates = {
-        label: [
-            {"key": shown[hashed], "row_indexes": [record["index"] for record in found]}
-            for hashed, found in groups[label].items()
-            if len(found) > 1
-        ]
-        for label in ("left", "right")
-    }
+    duplicates = [
+        {
+            "key": shown[hashed],
+            "left": len(groups["left"].get(hashed, [])),
+            "right": len(groups["right"].get(hashed, [])),
+            "left_row_indexes": [record["index"] for record in groups["left"].get(hashed, [])],
+            "right_row_indexes": [record["index"] for record in groups["right"].get(hashed, [])],
+        }
+        for hashed in shown
+        if len(groups["left"].get(hashed, [])) > 1 or len(groups["right"].get(hashed, [])) > 1
+    ]
     unique = {
         label: {hashed: found[0] for hashed, found in groups[label].items() if len(found) == 1}
         for label in ("left", "right")
@@ -632,6 +642,7 @@ async def _diff_table(
             "only_left": len(only_left),
             "only_right": len(only_right),
             "changed": changed_rows,
+            "duplicate_keys": len(duplicates),
         },
         "only_left": [_row_view(key, record, barcodes) for key, record in only_left[:sample]],
         "only_right": [_row_view(key, record, barcodes) for key, record in only_right[:sample]],

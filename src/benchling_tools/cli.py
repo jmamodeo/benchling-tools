@@ -1614,9 +1614,12 @@ async def results_diff(
     Tables pair by exact name, including a trailing number. A name on one side
     only is listed in tables_only_left or tables_only_right. Paired tables with
     different result schemas are listed in schema_mismatch and not compared.
-    Rows pair by the key fields, or by position with a warning. A key used twice
-    on one side is listed in duplicate_keys and not paired. Each table reports
-    counts (left, right, matched, only_left, only_right, changed) and samples of
+    Rows pair by the key fields, or by position with a warning. A key used more
+    than once on either side is not paired; duplicate_keys lists it with the
+    row count on each side (key, left, right, left_row_indexes,
+    right_row_indexes), so a key unique on one side and repeated on the other
+    is still reported. Each table reports counts (left, right, matched,
+    only_left, only_right, changed, duplicate_keys) and samples of
     only_left, only_right, and changed fields. Benchling has no server-side
     text-value filter, so run values select rows locally. Reads only.
 
