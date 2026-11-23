@@ -38,6 +38,14 @@ NO_ENTRY_PLANS_NEXT_STEP = (
 )
 
 
+SCHEMA_WINDOW_NOTE = (
+    "schema_window records are pending results of the table's result schema created at or "
+    "after created_after on any entry. Benchling ties a pending result to no entry or table "
+    "until it is accepted (V2 assay-result lists have no entry filter), so they may belong "
+    "to another entry"
+)
+
+
 def result_state(record: dict[str, Any]) -> str:
     """``archived`` when archived, ``pending`` with no entry, otherwise ``accepted``."""
     if record.get("archiveRecord"):

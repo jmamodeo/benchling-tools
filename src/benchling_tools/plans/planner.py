@@ -745,6 +745,163 @@ class ChangePlanner(
         known = await self._entry_readback(entry_id)
         return [item for item in known["items"] if item["state"] == readback.PENDING]
 
+    async def schema_pending_records(
+        self, schema_id: str, created_after: str
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Pending V2 results of one result schema created at or after a time, on any entry.
+
+        V2 ``GET /assay-results`` filters by ``schemaId`` and ``createdAt.gte`` but has
+        no entry filter, and a pending result has no entry until it is accepted, so only
+        records whose ``entryId`` is null (and that are not archived) are kept. At most
+        ``_SCHEMA_PENDING_PAGES`` pages of 100 are read; the flag is false when more
+        remain. ``results capacity --include-schema-pending`` and ``--include-pending``
+        with ``--pending-created-after`` both use it.
+        """
+        records: list[dict[str, Any]] = []
+        cursor: str | None = None
+        pages = 0
+        while pages < _SCHEMA_PENDING_PAGES:
+            page = await self.service.list_assay_results(
+                schema_id=schema_id, created_after=created_after, page_size=100, cursor=cursor
+            )
+            pages += 1
+            records.extend(
+                item
+                for item in page["items"]
+                if isinstance(item, dict)
+                and item.get("entryId") is None
+                and readback.result_state(item) == readback.PENDING
+            )
+            cursor = page["next_token"]
+            if not cursor:
+                break
+        return records, cursor is None
+
+    async def entry_pending_results(
+        self,
+        entry_id: str,
+        *,
+        created_after: str | None = None,
+        schema_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Still-pending results for one entry, from this home's plans and a schema window.
+
+        Benchling has no API filter for pending results by entry, so the records come
+        from the same plans and journals ``results pending --entry`` reads (``source``
+        ``this_home``, each with its ``table_id``). With ``created_after``, pending
+        results of each schema in ``schema_ids`` created at or after it are added
+        (``source`` ``schema_window``, ``table_id`` null): Benchling ties them to no
+        entry or table, so they may come from another entry. Records are deduplicated
+        by V2 id and this_home wins. Returns ``items``, ``plans``, ``not_found``,
+        table ``names``, the entry ``web_url``, and ``sources``.
+        """
+        known = await self._entry_readback(entry_id)
+        items = [
+            {**item, "source": "this_home"}
+            for item in known["items"]
+            if item["state"] == readback.PENDING
+        ]
+        known_ids = {
+            str(key)
+            for item in known["items"]
+            for key in (item.get("v2_id"), item.get("v3_id"))
+            if key
+        }
+        this_home = len(items)
+        window: dict[str, Any] | None = None
+        if created_after is not None:
+            schemas = list(dict.fromkeys(item for item in schema_ids or [] if item))
+            complete = True
+            added = 0
+            for schema_id in schemas:
+                records, done = await self.schema_pending_records(schema_id, created_after)
+                complete = complete and done
+                for record in records:
+                    v2_id = record.get("id")
+                    if not isinstance(v2_id, str) or v2_id in known_ids:
+                        continue
+                    known_ids.add(v2_id)
+                    items.append(
+                        readback.summarize_record(record, table_id=None, source="schema_window")
+                    )
+                    added += 1
+            window = {
+                "created_after": created_after,
+                "schema_ids": schemas,
+                "count": added,
+                "complete": complete,
+                "note": readback.SCHEMA_WINDOW_NOTE,
+            }
+        known["items"] = items
+        known["sources"] = {
+            "this_home": {"plans": len(known["plans"]), "count": this_home},
+            "schema_window": window,
+        }
+        return known
+
+    async def results_list_pending(
+        self,
+        entry: str,
+        *,
+        schema_id: str | None = None,
+        result_ids: list[str] | None = None,
+        limit: int = 100,
+        created_after: str | None = None,
+    ) -> dict[str, Any]:
+        """The ``pending`` block ``results list --include-pending`` adds to a page.
+
+        Pending results have no entry until accepted, so V3 ``entry.eq`` does not
+        list them. They are read back from this home's applied upload plans for the
+        entry and, with ``created_after``, from the result schema of each results table
+        on the entry (``entry_pending_results``), and kept when they match
+        ``schema_id`` and ``result_ids`` (V2 or V3 ids). At most ``limit`` are listed;
+        ``count`` covers every pending record found.
+        """
+        limit = self._readback_limit(limit, "limit", 100)
+        resolved = await self.service.resolve_entry(entry)
+        entry_id = str(resolved["entry_id"])
+        schema_ids: list[str] | None = None
+        if created_after is not None:
+            tables = (await self.service.list_result_tables(entry_id))["items"]
+            schema_ids = [
+                str(table["schema_id"])
+                for table in tables
+                if isinstance(table.get("schema_id"), str)
+                and (schema_id is None or table["schema_id"] == schema_id)
+            ]
+        found = await self.entry_pending_results(
+            entry_id, created_after=created_after, schema_ids=schema_ids
+        )
+        wanted = set(result_ids) if result_ids else None
+        items = [
+            item
+            for item in found["items"]
+            if (schema_id is None or item.get("schema_id") == schema_id)
+            and (wanted is None or item.get("v2_id") in wanted or item.get("v3_id") in wanted)
+        ]
+        placed = [item for item in items if item.get("table_id") is not None]
+        if items:
+            next_step = readback.pending_next_step(
+                len(items),
+                entry_id=entry_id,
+                table_names=self._pending_tables(placed, found["names"]) or None,
+                web_url=resolved.get("web_url") or found["web_url"],
+            )
+        elif not found["plans"] and created_after is None:
+            next_step = readback.NO_ENTRY_PLANS_NEXT_STEP
+        else:
+            next_step = None
+        return {
+            "sources": found["sources"],
+            "entry_id": entry_id,
+            "plans": found["plans"],
+            "count": len(items),
+            "items": items[:limit],
+            "truncated": len(items) > limit,
+            "not_found": found["not_found"][:limit],
+            "next_step": next_step,
+        }
+
     async def results_capacity(
         self,
         entry: str,
@@ -832,22 +989,8 @@ class ChangePlanner(
                 table["pending_schema"] = None
                 continue
             if schema_id not in counted:
-                pending, cursor, pages = 0, None, 0
-                while pages < _SCHEMA_PENDING_PAGES:
-                    page = await self.service.list_assay_results(
-                        schema_id=schema_id,
-                        created_after=created_after,
-                        page_size=100,
-                        cursor=cursor,
-                    )
-                    pages += 1
-                    pending += sum(
-                        readback.result_state(item) == readback.PENDING for item in page["items"]
-                    )
-                    cursor = page["next_token"]
-                    if not cursor:
-                        break
-                counted[schema_id] = (pending, cursor is None)
+                records, complete = await self.schema_pending_records(schema_id, created_after)
+                counted[schema_id] = (len(records), complete)
             pending, complete = counted[schema_id]
             table["pending_schema"] = pending
             table["pending_schema_complete"] = complete

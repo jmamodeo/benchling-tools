@@ -7,6 +7,20 @@ the same match ``results tables --where`` and ``results rows --where`` use; arch
 rows and the empty placeholder row are left out on both sides. Field tokens use
 the planner's field resolver, and pairs are compared with ``readback`` helpers.
 Container barcodes come from V2 ``GET /containers:bulk-get``. Benchling is only read.
+
+With ``pending`` (``--include-pending``), each side also gets the still-pending
+results of this home's applied upload plans for its entry, as rows of the table
+they were uploaded to: Benchling lists a pending result in no table and on no
+entry until a person accepts it, so plans and journals are the only way to place
+it. A V2 ``strtbl_…`` table is matched to its part with
+``BenchlingService.document_part_for_listed_table``, and each field value goes to
+the column whose field-definition id has that system name.
+
+With ``pending_created_after`` (``--pending-created-after``), pending results of
+each results table's result schema created at or after that time are added too
+(``source`` ``schema_window``). Benchling ties them to no entry or table, so one
+goes to the only table on that side with its schema; when several tables share
+the schema it is listed in ``pending_unplaced`` instead.
 """
 
 from __future__ import annotations
@@ -15,6 +29,7 @@ import hashlib
 import json
 import os
 import tempfile
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -22,12 +37,13 @@ from . import export, row_filter
 from .blob_download import download_blob
 from .errors import AccessError, NotFoundError, ValidationError
 from .plans.fields import _resolve_field
-from .plans.readback import field_mismatches
+from .plans.readback import SCHEMA_WINDOW_NOTE, field_mismatches
 from .services import (
     BenchlingService,
     is_attachment_field,
     is_results_table,
     part_display_name,
+    part_result_schema_id,
 )
 
 POSITION_WARNING = (
@@ -46,7 +62,20 @@ FILE_COLUMNS = [
     "left_barcode",
     "right_barcode",
 ]
+PENDING_FILE_COLUMNS = ["left_pending", "right_pending"]
+PENDING_WARNING = (
+    "Pending results come from this home's applied result upload plans, because Benchling "
+    "has no filter for pending results by entry. Plans applied from another home are not "
+    "known. Pending rows are numbered after the table's rows and marked pending"
+)
+PENDING_UNPLACED_WARNING = (
+    "Some schema_window pending results were not compared: more than one results table "
+    "on that side has their result schema, and Benchling does not say which table a "
+    "pending result belongs to. They are listed in pending_unplaced"
+)
 _SAMPLE_MAX = 200
+
+PendingReader = Callable[..., Awaitable[dict[str, Any]]]
 
 
 def parse_side(value: object, label: str) -> tuple[str, str | None]:
@@ -82,8 +111,15 @@ async def diff_results(
     output: object = None,
     file_format: object = None,
     overwrite: bool = False,
+    pending: PendingReader | None = None,
+    pending_created_after: str | None = None,
 ) -> dict[str, Any]:
-    """Diff the results tables of two entries, or two runs, and return a summary."""
+    """Diff the results tables of two entries, or two runs, and return a summary.
+
+    ``pending`` reads an entry's still-pending results (``entry_pending_results``);
+    when given, they are compared as rows of the table they were uploaded to.
+    ``pending_created_after`` also reads pending results of each table's schema.
+    """
     left_ref, left_run = parse_side(left, "left")
     right_ref, right_run = parse_side(right, "right")
     run_token = _optional_text(run_field, "run_field")
@@ -94,6 +130,9 @@ async def diff_results(
     wanted = {_optional_text(item, "table") or "" for item in tables} if tables else None
     if isinstance(sample, bool) or not isinstance(sample, int) or not 1 <= sample <= _SAMPLE_MAX:
         raise ValidationError(f"sample must be an integer from 1 to {_SAMPLE_MAX}")
+    window = _optional_text(pending_created_after, "pending_created_after")
+    if window is not None and pending is None:
+        raise ValidationError("pending_created_after applies only with include_pending")
     destination = None
     selected_format = None
     if output is not None:
@@ -106,13 +145,13 @@ async def diff_results(
 
     left_entry = await service.resolve_entry(left_ref)
     right_entry = await service.resolve_entry(right_ref)
-    loaded: dict[str, tuple[dict[str, dict[str, Any]], list[str]]] = {}
+    loaded: dict[str, tuple[dict[str, dict[str, Any]], list[str], dict[str, Any] | None]] = {}
     for entry in (left_entry, right_entry):
         entry_id = str(entry["entry_id"])
         if entry_id not in loaded:
-            loaded[entry_id] = await _entry_tables(service, entry_id, wanted)
-    left_tables, left_dupes = loaded[str(left_entry["entry_id"])]
-    right_tables, right_dupes = loaded[str(right_entry["entry_id"])]
+            loaded[entry_id] = await _entry_tables(service, entry_id, wanted, pending, window)
+    left_tables, left_dupes, left_pending = loaded[str(left_entry["entry_id"])]
+    right_tables, right_dupes, right_pending = loaded[str(right_entry["entry_id"])]
 
     summary: dict[str, Any] = {
         "left": _side_summary(left_entry, left_run),
@@ -129,6 +168,14 @@ async def diff_results(
         "schema_mismatch": [],
         "tables": [],
     }
+    unplaced: dict[str, list[dict[str, Any]]] = {}
+    if pending is not None:
+        assert left_pending is not None and right_pending is not None
+        # A self-diff (two runs on one entry) shares one loaded summary; copy it per side.
+        left_pending, right_pending = dict(left_pending), dict(right_pending)
+        unplaced = {"left": left_pending.pop("unplaced"), "right": right_pending.pop("unplaced")}
+        summary["pending"] = {"left": left_pending, "right": right_pending}
+        summary["pending_unplaced"] = unplaced
     if left_dupes or right_dupes:
         summary["duplicate_table_names"] = {"left": left_dupes, "right": right_dupes}
     if wanted:
@@ -204,12 +251,19 @@ async def diff_results(
     warnings: list[str] = []
     if not key_tokens and plans:
         warnings.append(POSITION_WARNING)
+    if pending is not None:
+        warnings.append(PENDING_WARNING)
+    if window is not None:
+        warnings.append(SCHEMA_WINDOW_NOTE)
+    if unplaced.get("left") or unplaced.get("right"):
+        warnings.append(PENDING_UNPLACED_WARNING)
     if warnings:
         summary["warnings"] = warnings
     if destination is not None and selected_format is not None:
         source = {"left": summary["left"], "right": summary["right"]}
+        columns = [*FILE_COLUMNS, *PENDING_FILE_COLUMNS] if pending is not None else FILE_COLUMNS
         payload = export._render(
-            "results-diff", FILE_COLUMNS, file_rows, source, file_format=selected_format
+            "results-diff", columns, file_rows, source, file_format=selected_format
         )
         export._write(destination, payload, overwrite=bool(overwrite))
         summary["output"] = {
@@ -248,9 +302,14 @@ def _side_summary(entry: dict[str, Any], run_value: str | None) -> dict[str, Any
 
 
 async def _entry_tables(
-    service: BenchlingService, entry_id: str, wanted: set[str] | None
-) -> tuple[dict[str, dict[str, Any]], list[str]]:
-    """Every results table on the entry, by exact name, and the names used twice."""
+    service: BenchlingService,
+    entry_id: str,
+    wanted: set[str] | None,
+    pending: PendingReader | None = None,
+    created_after: str | None = None,
+) -> tuple[dict[str, dict[str, Any]], list[str], dict[str, Any] | None]:
+    """Every results table on the entry, by exact name, the names used twice, and,
+    with ``pending``, a summary of the pending results attached to those tables."""
     parts = [
         item
         async for item in service.api.paginate(
@@ -269,7 +328,96 @@ async def _entry_tables(
             continue
         by_name.setdefault(table["name"], []).append(table)
     duplicates = [name for name, found in by_name.items() if len(found) > 1]
-    return {name: found[0] for name, found in by_name.items() if len(found) == 1}, duplicates
+    tables = {name: found[0] for name, found in by_name.items() if len(found) == 1}
+    if pending is None:
+        return tables, duplicates, None
+    return (
+        tables,
+        duplicates,
+        await _attach_pending(service, entry_id, tables, parts, pending, created_after),
+    )
+
+
+async def _attach_pending(
+    service: BenchlingService,
+    entry_id: str,
+    tables: dict[str, dict[str, Any]],
+    parts: list[dict[str, Any]],
+    pending: PendingReader,
+    created_after: str | None = None,
+) -> dict[str, Any]:
+    """Give each loaded table the pending results uploaded to it, in ``pending``.
+
+    A this_home record goes to the part its ``strtbl_…`` table matches. A
+    schema_window record goes to the only results-table part on the entry with
+    its schema; with two or more it is returned in ``unplaced``. A record whose
+    table matches no single part, or a part not compared here (another name, or
+    filtered out by ``tables``), is not attached and is counted in ``not_attached``.
+    """
+    results_parts = [
+        part for part in parts if is_results_table(part) and isinstance(part.get("id"), str)
+    ]
+    parts_by_schema: dict[str, list[dict[str, Any]]] = {}
+    for part in results_parts:
+        schema_id = part_result_schema_id(part)
+        if schema_id:
+            parts_by_schema.setdefault(schema_id, []).append(part)
+    found = await pending(entry_id, created_after=created_after, schema_ids=sorted(parts_by_schema))
+    items = [item for item in found.get("items") or [] if isinstance(item, dict)]
+    by_part = {str(table["part_id"]): table for table in tables.values()}
+    for table in tables.values():
+        table["pending"] = []
+    part_of: dict[str, str | None] = {}
+    unplaced: list[dict[str, Any]] = []
+    for item in items:
+        if item.get("source") != "schema_window":
+            continue
+        candidates = parts_by_schema.get(str(item.get("schema_id")), [])
+        if len(candidates) > 1:
+            unplaced.append(
+                {
+                    "id": item.get("id"),
+                    "v3_id": item.get("v3_id"),
+                    "schema_id": item.get("schema_id"),
+                    "created_at": item.get("created_at"),
+                    "tables": [part_display_name(part) or part["id"] for part in candidates],
+                }
+            )
+        item["_part_id"] = str(candidates[0]["id"]) if len(candidates) == 1 else None
+    table_ids = {str(item["table_id"]) for item in items if isinstance(item.get("table_id"), str)}
+    if table_ids:
+        listed = await service.list_result_tables(entry_id)
+        notes = {str(note.get("table_id")): note for note in listed["items"]}
+        for table_id in sorted(table_ids):
+            note = notes.get(table_id)
+            part_of[table_id] = (
+                await service.document_part_for_listed_table(
+                    entry_id, note, unstructured=False, parts=parts
+                )
+                if note is not None
+                else None
+            )
+    attached = 0
+    for item in items:
+        if "_part_id" in item:
+            part_id = item.pop("_part_id")
+        else:
+            part_id = part_of.get(str(item.get("table_id")))
+        target = by_part.get(part_id) if part_id is not None else None
+        if target is None:
+            continue
+        target["pending"].append(item)
+        attached += 1
+    return {
+        "plans": len(found.get("plans") or []),
+        "pending": len(items),
+        "attached": attached,
+        "not_attached": len(items) - attached - len(unplaced),
+        "unplaced_count": len(unplaced),
+        "not_found": len(found.get("not_found") or []),
+        "sources": found.get("sources"),
+        "unplaced": unplaced,
+    }
 
 
 async def _load_table(
@@ -409,6 +557,7 @@ def _plan_table(
         "blob_fields": blob_fields,
         "left": sides["left"]["records"],
         "right": sides["right"]["records"],
+        "include_pending": "pending" in left or "pending" in right,
     }
 
 
@@ -422,12 +571,20 @@ def _records(
     bound: list[tuple[int, str]] = []
     if run_value is not None and run_column is not None:
         bound = [(table["columns"].index(run_column), run_value)]
-    kept = {
-        id(row) for row, raw in zip(rows, table["raw_rows"]) if row_filter.row_matches(raw, bound)
-    }
+    rows = list(rows)
+    raw_rows = list(table["raw_rows"])
+    pending_ids: list[Any] = [None] * len(raw_rows)
+    sources: list[Any] = [None] * len(raw_rows)
+    for item in table.get("pending") or []:
+        raw = _pending_row(item, definitions)
+        raw_rows.append(raw)
+        rows.append(export._table_row(raw, table["columns"]))
+        pending_ids.append(item.get("v3_id") or item.get("id"))
+        sources.append(item.get("source"))
+    kept = {id(row) for row, raw in zip(rows, raw_rows) if row_filter.row_matches(raw, bound)}
     attachment_columns = {item["column"] for item in definitions if item["attachment"]}
     records = []
-    for index, (row, raw) in enumerate(zip(rows, table["raw_rows"])):
+    for index, (row, raw) in enumerate(zip(rows, raw_rows)):
         if id(row) not in kept:
             continue
         containers: dict[str, str] = {}
@@ -440,10 +597,29 @@ def _records(
                 containers[column] = linked
             elif typename == "Attachment" or column in attachment_columns:
                 attachments[column] = linked
-        records.append(
-            {"index": index, "values": row, "containers": containers, "attachments": attachments}
-        )
+        record = {
+            "index": index,
+            "values": row,
+            "containers": containers,
+            "attachments": attachments,
+        }
+        if pending_ids[index] is not None:
+            record.update(pending=True, result_id=pending_ids[index], source=sources[index])
+        records.append(record)
     return records
+
+
+def _pending_row(item: dict[str, Any], definitions: list[dict[str, Any]]) -> dict[str, Any]:
+    """A pending result as a table row: each field value in the column with its system name."""
+    fields = item.get("fields")
+    if not isinstance(fields, dict):
+        fields = {}
+    cells = []
+    for definition in definitions:
+        name = definition.get("systemName")
+        value = fields.get(name) if isinstance(name, str) else None
+        cells.append({"inputValue": {"value": value}})
+    return {"cells": cells, "submissionStatus": "PENDING"}
 
 
 def _link(cell: dict[str, Any]) -> tuple[str | None, str | None]:
@@ -595,6 +771,8 @@ async def _changes(
 
 def _row_view(key: Any, record: dict[str, Any], barcodes: dict[str, str] | None) -> dict[str, Any]:
     view: dict[str, Any] = {"key": key, "row_index": record["index"], "values": record["values"]}
+    if record.get("pending"):
+        view.update(pending=True, result_id=record["result_id"], source=record["source"])
     if barcodes is not None and record["containers"]:
         view["barcodes"] = {
             column: barcodes.get(container) for column, container in record["containers"].items()
@@ -610,6 +788,7 @@ async def _diff_table(
     file_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
     plan["blob_counts"] = {"compared": 0, "changed": 0}
+    pending = bool(plan["include_pending"])
     pairs, only_left, only_right, duplicates = _pairs(plan, barcodes)
     changed: list[dict[str, Any]] = []
     changed_rows = 0
@@ -618,17 +797,28 @@ async def _diff_table(
         if changes:
             changed_rows += 1
         for change in changes:
+            for label, record in (("left", left), ("right", right)):
+                if record.get("pending"):
+                    change[f"{label}_pending"] = True
+                    change[f"{label}_source"] = record["source"]
             entry = {"key": key, **change}
             changed.append(entry)
             file_rows.append(
-                _file_row(plan["table"], "changed", key, left["index"], right["index"], change)
+                _file_row(
+                    plan["table"], "changed", key, left["index"], right["index"], change, pending
+                )
             )
     for label, rows in (("only_left", only_left), ("only_right", only_right)):
         for key, record in rows:
             left_index = record["index"] if label == "only_left" else None
             right_index = record["index"] if label == "only_right" else None
-            values = {"left" if label == "only_left" else "right": record["values"]}
-            file_rows.append(_file_row(plan["table"], label, key, left_index, right_index, values))
+            side = "left" if label == "only_left" else "right"
+            values = {side: record["values"]}
+            if record.get("pending"):
+                values[f"{side}_pending"] = True
+            file_rows.append(
+                _file_row(plan["table"], label, key, left_index, right_index, values, pending)
+            )
     table: dict[str, Any] = {
         "table": plan["table"],
         "schema_id": plan["schema_id"],
@@ -651,6 +841,11 @@ async def _diff_table(
     }
     if blobs is not None:
         table["blobs"] = plan["blob_counts"]
+    if pending:
+        for label in ("left", "right"):
+            table["counts"][f"pending_{label}"] = sum(
+                bool(record.get("pending")) for record in plan[label]
+            )
     return table
 
 
@@ -661,8 +856,9 @@ def _file_row(
     left_row: int | None,
     right_row: int | None,
     values: dict[str, Any],
+    pending: bool = False,
 ) -> dict[str, Any]:
-    return {
+    row = {
         "table": table,
         "change": change,
         "key": key,
@@ -674,3 +870,7 @@ def _file_row(
         "left_barcode": values.get("left_barcode"),
         "right_barcode": values.get("right_barcode"),
     }
+    if pending:
+        row["left_pending"] = bool(values.get("left_pending"))
+        row["right_pending"] = bool(values.get("right_pending"))
+    return row
