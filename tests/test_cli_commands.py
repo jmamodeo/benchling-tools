@@ -1288,14 +1288,17 @@ def test_container_find_many_barcodes_reports_invalid_and_missing(invoke, fake) 
     assert len([call for call in fake.calls if call.path == "/api/v2/containers"]) == 2
 
 
-def test_container_find_single_invalid_barcode_is_validation_error(invoke, fake) -> None:
+def test_container_find_single_invalid_barcode_is_reported_like_several(invoke, fake) -> None:
     fake.invalid_barcodes = {"BAR-BAD"}
     code, payload, _ = invoke("container", "find", "--barcode", "BAR-BAD")
-    assert code == 2
-    error = payload["error"]
-    assert error["code"] == "validation_error"
-    assert error["details"]["invalid_barcodes"] == ["BAR-BAD"]
-    assert error["details"]["hint"] == "Benchling did not recognise these barcodes: BAR-BAD"
+    assert code == 0, payload
+    data = payload["data"]
+    assert data["items"] == [] and data["invalid_barcodes"] == ["BAR-BAD"]
+    assert data["hint"] == "Benchling did not recognise these barcodes: BAR-BAD"
+    code, payload, _ = invoke(
+        "container", "find", "--barcode", "BAR-BAD", "--barcode", "BAR-SOURCE"
+    )
+    assert code == 0 and payload["data"]["invalid_barcodes"] == ["BAR-BAD"]
 
 
 def test_container_find_rejects_comma_in_one_barcode(invoke, fake) -> None:
