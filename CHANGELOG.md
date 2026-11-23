@@ -9,6 +9,11 @@ All notable changes to this project are documented here. The format is based on
 ### Added
 
 - Read-only `users list` and `users get` (MCP `users_list` and `users_get`) and server-side `entry list --creator` and `--author` filters accepting user IDs or handles.
+- `results pending --entry REF` (MCP `results_pending` `entry`) reads back the records of every applied result upload plan for that entry in this home, newest first, each marked pending, accepted, or archived with `v2_id` and `v3_id`. The entry may be an ID, display ID, or URL. `plans` lists each plan's `plan_id`, `applied_at`, and `record_count`. Benchling has no API filter for pending results by entry, so this reads local plans and journals; result updates and unapplied or failed plans are left out. With no matching plan the reply is empty and `next_step` points to `results pending --plan BUNDLE.json` or `--schema … --created-after …`.
+
+### Changed
+
+- A `usage_error` for an unknown option lists that command's long options in `details.valid_options` and, where known, the right alternative in `details.hint`: `results pending` names its four sources, and `results list --plan` points to `results pending --plan` or `results verify`. An extra positional argument that looks like an entry reference (`results pending EXP-1`, `results list etr_…`) gets the hint `Pass the entry with --entry REF`, and a plan ID gets `--plan`.
 
 ### Fixed
 
