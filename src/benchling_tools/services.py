@@ -875,11 +875,14 @@ class BenchlingService:
             "resolved_by": "display_id",
         }
 
-    async def get_entry(self, reference: str, *, full: bool = False) -> dict[str, Any]:
+    async def get_entry(
+        self, reference: str, *, full: bool = False, include_results: bool = True
+    ) -> dict[str, Any]:
         """Fetch an entry; with full=True assemble a snapshot of parts, tables and schema.
 
         A full snapshot is retried once if the entry version changes mid-read,
-        then raises ConflictError.
+        then raises ConflictError. ``include_results=False`` skips the walk over
+        the entry's linked results, for callers that do not return them.
         """
         resolved = await self.resolve_entry(reference)
         entry_id = resolved["entry_id"]
@@ -894,7 +897,9 @@ class BenchlingService:
         for attempt in range(2):
             first = await self.api.request("GET", f"/entry/{entry_id}")
             version = entry_version(first)
-            snapshot = await self._assemble_snapshot(first, version)
+            snapshot = await self._assemble_snapshot(
+                first, version, include_results=include_results
+            )
             last = await self.api.request("GET", f"/entry/{entry_id}")
             final_version = entry_version(last)
             if final_version == version:
@@ -1077,7 +1082,7 @@ class BenchlingService:
 
     async def inspect_entry(self, reference: str) -> dict[str, Any]:
         """Summarize a full entry snapshot: sections, part summaries, table sizes and completeness."""
-        snapshot = await self.get_entry(reference, full=True)
+        snapshot = await self.get_entry(reference, full=True, include_results=False)
         return {
             "resolved": snapshot["resolved"],
             "entry": snapshot["entry"],
@@ -1114,7 +1119,7 @@ class BenchlingService:
 
         Raises NotFoundError if none match and ValidationError if the title is ambiguous.
         """
-        snapshot = await self.get_entry(reference, full=True)
+        snapshot = await self.get_entry(reference, full=True, include_results=False)
         matches = [
             item
             for item in snapshot["sections"]
@@ -1719,12 +1724,18 @@ class BenchlingService:
                     )
                 return await self._find_containers_by_barcodes(barcodes)
             params["barcodes"] = barcodes[0]
+            if cursor is None:
+                return await self._find_one_barcode(params)
         else:
             params["name"] = self._container_reference(name, "name")
         if cursor is not None:
             if not isinstance(cursor, str) or not cursor:
                 raise ValidationError("cursor must be a non-empty string")
             params["nextToken"] = cursor
+        return await self._container_page(params)
+
+    async def _container_page(self, params: dict[str, Any]) -> dict[str, Any]:
+        """One V2 GET /containers page as items and next_token."""
         try:
             payload = await self.api.request("GET", "/containers", version=2, params=params)
         except ValidationError as exc:
@@ -1739,6 +1750,27 @@ class BenchlingService:
         if next_token is not None and not isinstance(next_token, str):
             raise UpstreamError("Benchling returned an invalid container pagination token")
         return {"items": containers, "next_token": next_token or None}
+
+    async def _find_one_barcode(self, params: dict[str, Any]) -> dict[str, Any]:
+        """One barcode's first page, with ``invalid_barcodes`` like the several-barcode summary.
+
+        Benchling answers an invalid barcode with a 400 listing it; that is reported as
+        ``invalid_barcodes`` with ``items: []`` and a ``hint``, not raised.
+        """
+        barcode = str(params["barcodes"])
+        try:
+            page = await self._container_page(params)
+        except ValidationError as exc:
+            _lift_invalid_barcodes(exc)
+            if barcode not in (exc.details.get("invalid_barcodes") or ()):
+                raise
+            return {
+                "items": [],
+                "next_token": None,
+                "invalid_barcodes": [barcode],
+                "hint": exc.details.get("hint"),
+            }
+        return {**page, "invalid_barcodes": []}
 
     async def _find_containers_by_filters(
         self,
@@ -2285,6 +2317,14 @@ class BenchlingService:
             params["schema.eq"] = schema_id
         if v3_ids:
             params["id.anyOf"] = ",".join(v3_ids)
+        return await self._result_page(params)
+
+    async def _result_page(
+        self, params: dict[str, Any], *, cursor: str | None = None
+    ) -> dict[str, Any]:
+        """One V3 GET /result/items page; the caller has already resolved any entry."""
+        if cursor:
+            params = {**params, "nextToken": cursor}
         payload = await self.api.request("GET", "/result/items", params=params)
         return {
             "items": payload.get("items", []),
@@ -2708,7 +2748,9 @@ class BenchlingService:
             "ok": all(check["ok"] for check in checks),
         }
 
-    async def _assemble_snapshot(self, entry: dict[str, Any], version: str) -> EntrySnapshot:
+    async def _assemble_snapshot(
+        self, entry: dict[str, Any], version: str, *, include_results: bool = True
+    ) -> EntrySnapshot:
         entry_id = str(entry["id"])
         parts = [
             item
@@ -2720,7 +2762,10 @@ class BenchlingService:
         tables = await self._collect_part_tables(parts, issues)
         schema = await self._fetch_entry_schema(entry, issues)
         fields = await self._fetch_entry_fields(entry_id, issues)
-        results, result_retrieval = await self._fetch_linked_results(entry_id, issues)
+        if include_results:
+            results, result_retrieval = await self._fetch_linked_results(entry_id, issues)
+        else:
+            results, result_retrieval = [], {"skipped": True, "entry_filter": entry_id}
 
         return EntrySnapshot(
             entry=entry,
@@ -2833,7 +2878,9 @@ class BenchlingService:
         try:
             cursor: str | None = None
             while True:
-                page = await self.list_results(entry=entry_id, page_size=100, cursor=cursor)
+                page = await self._result_page(
+                    {"pageSize": 100, "entry.eq": entry_id}, cursor=cursor
+                )
                 result_retrieval["pages"] += 1
                 results.extend(page["items"])
                 cursor = page["next_token"]
