@@ -106,6 +106,18 @@ async def test_find_containers_chunks_barcodes_at_100_and_follows_pages(runtime,
     assert [call.params.get("nextToken") for call in _container_lists(fake)] == [None, "2"]
 
 
+@pytest.mark.parametrize(("count", "chunks"), [(100, [100]), (101, [100, 1])])
+async def test_find_containers_chunk_boundary(runtime, fake, count, chunks) -> None:
+    barcodes = [f"BAR-{index:03d}" for index in range(count)]
+    found = await runtime.service.find_containers(barcode=barcodes)
+    assert found["requested"] == count
+    assert found["missing_barcodes"] == barcodes
+    requests = _container_lists(fake)
+    assert [len(call.params["barcodes"].split(",")) for call in requests] == chunks
+    sent = [item for call in requests for item in call.params["barcodes"].split(",")]
+    assert sent == barcodes
+
+
 async def test_find_containers_all_invalid_chunk_is_not_retried(runtime, fake) -> None:
     fake.invalid_barcodes = {"BAR-BAD1", "BAR-BAD2"}
     found = await runtime.service.find_containers(barcode=["BAR-BAD1", "BAR-BAD2"])
