@@ -76,6 +76,7 @@ Every command, the six change families, spec shapes, result uploads and attachme
 | `entry list` | List entries with server-side filters, including creator and author, optionally ordered with `--sort`. |
 | `container find` | Find containers by exact name, or check many barcodes in one call and list the invalid, missing, and empty ones. Read-only. |
 | `results capacity` | Report each results table's used rows, known pending results, planned rows, and remaining room under Benchling's 1,000-row limit. Read-only. |
+| `results verify` | Diff a result upload plan, or with `--payload` the bulk-create body an SDK client sent, against the records Benchling holds. Read-only. |
 
 For example, resolve a handle with `benchling-tools users get HANDLE --env dev`, then use the returned ID with `benchling-tools entry list --creator USER_ID --folder lib_example --env dev`. Handles may also be passed directly to `--creator` or `--author`. To get the newest entry a user created, run `benchling-tools entry list --creator USER_ID --sort created-desc --limit 1 --env dev`.
 
@@ -89,6 +90,14 @@ Preview also refuses a result upload that would push any results table past Benc
 is staged. Run `benchling-tools results capacity ENTRY --spec FILE --env dev` to see the
 same numbers first. 500 records per table in one plan is this toolkit's own batch size;
 Benchling documents 4,000 results per bulk-create request.
+
+To check a push the toolkit did not make, pass the JSON body an SDK client sent to
+[`POST /assay-results:bulk-create`](https://docs.benchling.com/docs/api/v2/benchling-api/assay-results/bulk-create-assay-results):
+`benchling-tools results verify --payload body.json --created-after 2026-11-19T00:00:00Z --env dev`
+(or `--id ID` for each created result, V2 or V3). It reports matched, mismatched, missing,
+and extra rows and pending versus accepted, the same report as `results verify PLAN_ID`.
+`--entry ENTRY` drops accepted records of other entries but keeps pending ones, which
+have no entry until accepted. Nothing is saved.
 
 ## MCP server
 

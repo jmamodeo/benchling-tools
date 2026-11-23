@@ -1529,26 +1529,120 @@ async def results_pending(
     )
 
 
+def _mcp_payload(value: Any) -> Any:
+    """Take the MCP payload only as parsed JSON, never as a path to read."""
+    if value is None or isinstance(value, dict | list):
+        return value
+    raise ValidationError(
+        "payload must be the bulk-create request body as a JSON object or array, not a path"
+    )
+
+
+_RESULTS_PAYLOAD = McpParam(
+    annotation=Annotated[Any, WithJsonSchema({"type": ["object", "array"]})],
+    description=(
+        "The JSON body an SDK client sent to V2 POST /assay-results:bulk-create, as a "
+        "JSON object: assayResults (each with schemaId, fields, and optional id) and "
+        "optional tableId. A list of result objects, or a list of such bodies, also "
+        "works. Use instead of plan_id, with result_ids or created_after. Nothing is "
+        "saved, and only counts and field names are echoed back."
+    ),
+    convert=_mcp_payload,
+)
+
+
 @results_app.command("verify")
-@command(read_only=True)
+@command(read_only=True, mcp_params={"payload": _RESULTS_PAYLOAD})
 async def results_verify(
     call: Call,
-    plan_id: str = typer.Argument(
-        ..., help="Applied result upload plan ID in this home, or a portable plan JSON file."
+    plan_id: str | None = typer.Argument(
+        None,
+        help=(
+            "Applied result upload plan ID in this home, or a portable plan JSON file. "
+            "Omit it with --payload."
+        ),
+    ),
+    payload: str | None = typer.Option(
+        None,
+        "--payload",
+        help=(
+            "JSON file of the body an SDK client sent to POST /assay-results:bulk-create, "
+            "or '-' for stdin. Use instead of plan_id."
+        ),
+    ),
+    result_ids: list[str] | None = typer.Option(
+        None,
+        "--id",
+        help=(
+            "With --payload: id of a created result, a V2 assay result UUID or a V3 "
+            "result id (result_…). Repeat for each; namespaces may be mixed."
+        ),
+    ),
+    created_after: str | None = typer.Option(
+        None,
+        "--created-after",
+        help=(
+            "With --payload and no --id: RFC 3339 time, e.g. 2026-11-19T00:00:00Z; "
+            "reads results of each payload schema created at or after it."
+        ),
+    ),
+    created_before: str | None = typer.Option(
+        None,
+        "--created-before",
+        help="With --created-after: RFC 3339 time; results created at or before it.",
+    ),
+    entry: str | None = typer.Option(
+        None,
+        "--entry",
+        help=(
+            "With --payload: entry ID (etr_…), display ID, or URL. Drops accepted "
+            "results of other entries; pending results have no entry and are kept."
+        ),
     ),
     sample: int = typer.Option(
         20, "--sample", min=1, max=200, help="Rows to list per category, from 1 to 200."
     ),
 ) -> Any:
-    """Diff a result upload plan against the records Benchling created.
+    """Diff a result upload plan, or an SDK upload payload, against the records Benchling created.
 
     Compares planned fields by system name and reports matched, mismatched,
     missing, and extra rows, and which rows still need the plug-icon accept. Reads only.
     The plan's record ids may be V2 assay result UUIDs or V3 result ids (result_…).
     Each row reports result_id and v2_id (the V2 UUID) and v3_id (result_…), so
     either id can be passed to results get or results pending --id.
+
+    Pass exactly one of plan_id or --payload. A payload is the JSON body an SDK
+    client sent to V2 POST /assay-results:bulk-create (assayResults, each with
+    schemaId, fields, and an optional client id, plus an optional tableId; at most
+    4000 results per body), a list of result objects, or a list of bodies. The
+    same diff runs: rows are grouped by schemaId and plan_row_index counts payload
+    rows from 0 across bodies. Records are read with --id (V2 or V3 ids, mixed) or,
+    for each payload schema, with V2 GET /assay-results created at or after
+    --created-after (and at or before --created-before); that list has no entry
+    filter. --entry drops accepted records of other entries but keeps pending ones,
+    because a pending result has no entry until it is accepted. A row with a client
+    id is paired with that record first. source has mode payload and the lookup.
+    Nothing is saved, and only counts and field names of the payload are echoed back.
+
+    MCP: payload is the request body as a JSON object (or array), not a file path.
     """
-    return await call.runtime.planner.verify_results(plan_id, sample=sample)
+    if (plan_id is None) == (payload is None):
+        raise ValidationError("Pass exactly one of plan_id or --payload")
+    if plan_id is not None:
+        if result_ids or any(value is not None for value in (created_after, created_before, entry)):
+            raise ValidationError(
+                "--id, --created-after, --created-before, and --entry apply only with --payload"
+            )
+        return await call.runtime.planner.verify_results(plan_id, sample=sample)
+    body = _read_json(payload, "--payload") if isinstance(payload, str) else payload
+    return await call.runtime.planner.verify_payload(
+        body,
+        result_ids=result_ids or None,
+        created_after=created_after,
+        created_before=created_before,
+        entry=entry,
+        sample=sample,
+    )
 
 
 @results_app.command("diff")
@@ -1715,15 +1809,20 @@ async def export_data(
     )
 
 
-def _read_spec(path: str) -> dict[str, Any]:
+def _read_json(path: str, what: str) -> Any:
+    """Parse a JSON file, or stdin for '-'. Errors name the path, never the content."""
     try:
         raw = sys.stdin.read() if path == "-" else Path(path).read_text("utf-8")
-        parsed = json.loads(raw)
+        return json.loads(raw)
     except (OSError, json.JSONDecodeError) as exc:
         raise ValidationError(
-            "Could not read change spec",
+            f"Could not read {what}",
             details={"path": path, "reason": redact_text(str(exc))},
         ) from exc
+
+
+def _read_spec(path: str) -> dict[str, Any]:
+    parsed = _read_json(path, "change spec")
     if not isinstance(parsed, dict):
         raise ValidationError("Change spec must be a JSON object")
     return parsed
