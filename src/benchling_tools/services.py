@@ -1385,6 +1385,8 @@ class BenchlingService:
         name: object = None,
         modified_after: object = None,
         modified_before: object = None,
+        creator: object = None,
+        author: object = None,
         limit: object = listing.LIST_LIMIT,
         cursor: object = None,
     ) -> dict[str, Any]:
@@ -1397,6 +1399,8 @@ class BenchlingService:
             name=name,
             modified_after=modified_after,
             modified_before=modified_before,
+            creator=creator,
+            author=author,
             limit=limit,
             cursor=cursor,
         )

@@ -245,10 +245,62 @@ async def test_plan_resolves_project_and_warns_when_unscoped(runtime) -> None:
         "src_abc123": {"id": "src_abc123", "name": "Synthetic project"}
     }
     assert not any("creator" in warning for warning in scoped.warnings)
-    unscoped = await plan(runtime, [record()])
-    assert any("creator" in warning for warning in unscoped.warnings)
+    unscoped = await plan(runtime, [record(projectId=None)])
+    assert unscoped.after["records"][0]["projectId"] is None
+    assert any("projectId is a required field" in warning for warning in unscoped.warnings)
     assert len(unscoped.after["client_record_ids"]) == 1
     assert unscoped.after["state"] == "pending_integration"
+
+
+async def test_default_project_is_previewed_and_sent(runtime, fake) -> None:
+    planned = await plan(runtime, [record(), record(projectId=None), record()])
+    assert [r["projectId"] for r in planned.after["records"]] == ["src_abc123", None, "src_abc123"]
+    assert planned.after["project_defaults"] == [
+        {
+            "table_id": TABLE,
+            "row_indexes": [0, 2],
+            "project_id": "src_abc123",
+            "source": "entry_folder",
+        }
+    ]
+    assert len([c for c in fake.calls if c.path.endswith("/folders/lib_abc123")]) == 1
+    await runtime.planner.apply(planned.id)
+    assert [r["projectId"] for r in fake.bulk_payloads[0]["assayResults"]] == [
+        "src_abc123",
+        None,
+        "src_abc123",
+    ]
+
+
+@pytest.mark.parametrize("unreadable", [False, True])
+async def test_missing_entry_project_refuses_plan(runtime, fake, monkeypatch, unreadable) -> None:
+    if unreadable:
+        fake.fail("GET", "/folders/", 403)
+    else:
+        monkeypatch.setattr(
+            fake, "_get_folder", lambda call, folder_id: (200, {"folder": {"id": folder_id}})
+        )
+    with pytest.raises(ValidationError) as caught:
+        await plan(runtime, [record()])
+    assert caught.value.details["reason"] == "project_required"
+    assert '"projectId": null' in caught.value.details["hint"]
+    assert not list(runtime.repository.config.plans_dir.glob("*.json"))
+    assert fake.writes() == []
+    await plan(runtime, [record(projectId=None)])
+
+
+async def test_entry_project_takes_precedence_over_folder(runtime, fake, monkeypatch) -> None:
+    get_entry = fake._get_entry_v2
+
+    def with_project(call, entry_id):
+        status, payload = get_entry(call, entry_id)
+        payload["entry"]["project"] = {"id": "src_abc123"}
+        return status, payload
+
+    monkeypatch.setattr(fake, "_get_entry_v2", with_project)
+    planned = await plan(runtime, [record()])
+    assert planned.after["project_defaults"][0]["source"] == "entry_project"
+    assert not any("/folders/" in call.path for call in fake.calls)
 
 
 async def test_apply_posts_normalized_records_once(runtime, fake) -> None:

@@ -18,7 +18,7 @@ import typer
 from pydantic import WithJsonSchema
 from typer.core import TyperGroup
 
-from . import __version__
+from . import __version__, listing
 from .blob_download import download_blob
 from .change_spec import CHANGE_SPECIFICATION_SCHEMA, parse_change_specification
 from .commands import CLI_ONLY_ATTR, TOOL_ATTR, Call, Command, McpParam, declare, surface_text
@@ -167,6 +167,7 @@ entry_app = typer.Typer(help="Resolve, list, fetch, and inspect entries.")
 entry_fields_app = typer.Typer(help="Read entry schema fields.")
 template_app = typer.Typer(help="List and inspect entry templates.")
 folder_app = typer.Typer(help="Read notebook folders.")
+users_app = typer.Typer(help="List and read users.")
 section_app = typer.Typer(help="Read entry sections.")
 part_app = typer.Typer(help="Read document parts.")
 table_app = typer.Typer(help="Read unstructured tables.")
@@ -187,6 +188,7 @@ app.add_typer(entry_app, name="entry")
 entry_app.add_typer(entry_fields_app, name="fields")
 app.add_typer(template_app, name="template")
 app.add_typer(folder_app, name="folder")
+app.add_typer(users_app, name="users")
 app.add_typer(section_app, name="section")
 app.add_typer(part_app, name="part")
 app.add_typer(table_app, name="table")
@@ -873,6 +875,47 @@ async def folder_get(
     return await call.runtime.service.get_folder(folder_id)
 
 
+@users_app.command("list")
+@command(read_only=True)
+async def users_list(
+    call: Call,
+    handle: list[str] | None = typer.Option(None, "--handle", help="Exact handle; repeatable."),
+    email: list[str] | None = typer.Option(
+        None, "--email", help="Exact email; repeatable, max 100."
+    ),
+    name: str | None = typer.Option(None, "--name", help="Exact user name."),
+    name_includes: str | None = typer.Option(None, "--name-includes", help="User name substring."),
+    id: list[str] | None = typer.Option(None, "--id", help="User ID (ent_…); repeatable."),
+    member_of: list[str] | None = typer.Option(
+        None, "--member-of", help="Organization ID; repeatable."
+    ),
+    limit: int = typer.Option(50, "--limit", min=1, max=100, help=_LIMIT_HELP),
+    cursor: str | None = typer.Option(None, "--cursor", help=_CURSOR_HELP),
+) -> Any:
+    """List one page of visible users using V2 server-side filters."""
+    return await listing.list_users(
+        call.runtime.api,
+        handles=handle,
+        emails=email,
+        name=name,
+        name_includes=name_includes,
+        ids=id,
+        member_of=member_of,
+        limit=limit,
+        cursor=cursor,
+    )
+
+
+@users_app.command("get")
+@command(read_only=True)
+async def users_get(
+    call: Call,
+    user_id_or_handle: str = typer.Argument(..., help="User ID (ent_…) or exact handle."),
+) -> Any:
+    """Get one visible user by ID or exact handle."""
+    return await listing.get_user(call.runtime.api, user_id_or_handle)
+
+
 @entry_app.command("list")
 @command(read_only=True)
 async def entry_list(
@@ -911,6 +954,12 @@ async def entry_list(
             "a timestamp must include a time zone."
         ),
     ),
+    creator: list[str] | None = typer.Option(
+        None, "--creator", help="Creator user ID (ent_…) or exact handle; repeatable."
+    ),
+    author: list[str] | None = typer.Option(
+        None, "--author", help="Author user ID (ent_…) or exact handle; repeatable."
+    ),
     limit: int = typer.Option(50, "--limit", min=1, max=100, help=_LIMIT_HELP),
     cursor: str | None = typer.Option(None, "--cursor", help=_CURSOR_HELP),
 ) -> Any:
@@ -925,6 +974,8 @@ async def entry_list(
         name=name,
         modified_after=modified_after,
         modified_before=modified_before,
+        creator=creator,
+        author=author,
         limit=limit,
         cursor=cursor,
     )
@@ -1598,6 +1649,9 @@ async def changes_plan(
 
     Inline result uploads pass table_id and assay_results, or batches containing
     table_id and assay_results for each table, up to 500 records per table.
+    A missing projectId defaults to the entry's project; if unavailable, set
+    projectId explicitly. Explicit null creates creator-only results and some
+    tenants reject it with projectId is a required field.
     Created results land pending until accepted in each table. On a result
     attachment field, a value of {"file": PATH} (or a CSV cell file:PATH) uploads
     that local file as a blob at apply and links its blob ID. The preview shows

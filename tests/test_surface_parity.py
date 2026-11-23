@@ -70,6 +70,21 @@ def _without_clock(value):
 @pytest.mark.parametrize(
     ("args", "tool", "arguments"),
     [
+        (
+            ["users", "list", "--handle", "fixture_handle_1"],
+            "users_list",
+            {"handle": ["fixture_handle_1"]},
+        ),
+        (
+            ["users", "get", "fixture_handle_1"],
+            "users_get",
+            {"user_id_or_handle": "fixture_handle_1"},
+        ),
+        (
+            ["entry", "list", "--creator", "fixture_handle_1"],
+            "entry_list",
+            {"creator": ["fixture_handle_1"]},
+        ),
         (["entry", "resolve", ENTRY_ID], "entry_resolve", {"reference": ENTRY_ID}),
         (["entry", "resolve", "EXP-99"], "entry_resolve", {"reference": "EXP-99"}),
         (

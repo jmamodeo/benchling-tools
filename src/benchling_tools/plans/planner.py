@@ -255,6 +255,12 @@ class ChangePlanner(
             ):
                 submitted_tables.add(table_id)
         next_step = pending_results_next_step(plan, submitted_tables or None)
+        if exc.details.get("next_step"):
+            next_step = " ".join(
+                item
+                for item in (exc.details["next_step"], next_step if submitted_tables else None)
+                if item
+            )
         exc.details = {
             **exc.details,
             "plan_id": plan_id,
@@ -279,12 +285,23 @@ class ChangePlanner(
                 ):
                     submitted_tables.add(table_id)
             next_step = pending_results_next_step(plan, submitted_tables or None)
+            if exc.details.get("next_step"):
+                next_step = " ".join(
+                    item
+                    for item in (exc.details["next_step"], next_step if submitted_tables else None)
+                    if item
+                )
             raise PartialCompletionError(
                 "Some plan steps completed before a later step failed",
                 details={
                     "plan_id": plan_id,
                     "cause": exc.message,
                     "journal": journal.model_dump(mode="json"),
+                    **(
+                        {"orphaned_blob_ids": exc.details["orphaned_blob_ids"]}
+                        if "orphaned_blob_ids" in exc.details
+                        else {}
+                    ),
                     **({"next_step": next_step} if next_step else {}),
                 },
             ) from exc

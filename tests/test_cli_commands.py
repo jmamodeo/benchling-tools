@@ -457,6 +457,48 @@ def test_apply_with_unconfirmed_write_exits_with_partial_code(invoke, fake, tmp_
     assert payload["error"]["details"]["journal"]["status"] == "unknown"
 
 
+def test_result_upload_failure_reports_orphaned_blob(invoke, fake, tmp_path) -> None:
+    fake.field_defs["assaysch_abc123"].append(
+        {
+            "id": "assayfield_plot",
+            "systemName": "plot",
+            "name": "Plot",
+            "__typename": "AttachmentLinkFieldDefinition",
+            "derivationType": "DIRECT",
+        }
+    )
+    path = tmp_path / "plot.png"
+    path.write_bytes(b"plot")
+    spec = {
+        "table_id": "strtbl_example",
+        "assay_results": [
+            {
+                "schemaId": "assaysch_abc123",
+                "fields": {"ct": {"value": 12}, "plot": {"value": {"file": str(path)}}},
+            }
+        ],
+    }
+    code, preview, _ = invoke(
+        "changes",
+        "plan",
+        "--entry",
+        ENTRY_ID,
+        "--family",
+        "results",
+        "--spec",
+        write_spec(tmp_path, spec),
+    )
+    assert code == 0
+    fake.fail("POST", "/assay-results:bulk-create", 400)
+    code, payload, _ = invoke("changes", "apply", preview["data"]["id"])
+    assert code == 8
+    assert payload["error"]["code"] == "partial_or_unknown_completion"
+    assert payload["error"]["details"]["orphaned_blob_ids"] == [
+        "00000000-0000-4000-8000-000000000001"
+    ]
+    assert "unlinked" in payload["error"]["details"]["next_step"]
+
+
 def test_apply_rejects_malformed_plan_id(invoke) -> None:
     code, payload, _ = invoke("changes", "apply", "../etc/passwd")
     assert code == 2
