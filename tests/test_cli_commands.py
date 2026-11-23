@@ -360,6 +360,31 @@ def test_results_status_wait_is_available_through_cli(invoke, fake, tmp_path) ->
     assert status["data"]["tasks"][0]["task_status"] == "SUCCEEDED"
 
 
+def test_changes_status_reads_a_task_by_id(invoke, fake) -> None:
+    created = [{"id": "00000000-0000-4000-8000-000000000001", "v3Id": "result_cli1"}]
+    fake.tasks["task_cli1"] = {"status": "SUCCEEDED", "response": {"assayResults": created}}
+    code, status, _ = invoke("changes", "status", "--task", "task_cli1", "--wait", "--timeout", "1")
+    assert code == 0, status
+    assert status["data"]["record_ids"] == [created[0]["id"]]
+    assert f"results pending --id {created[0]['id']}" in status["data"]["next_step"]
+    assert fake.writes() == []
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("changes", "status"),
+        ("changes", "status", "0" * 32, "--task", "task_cli1"),
+        ("changes", "status", "--task", "task/cli1"),
+    ],
+)
+def test_changes_status_needs_exactly_one_valid_plan_or_task(invoke, fake, args) -> None:
+    code, payload, _ = invoke(*args)
+    assert code == 2
+    assert payload["error"]["code"] == "validation_error"
+    assert fake.task_requests == []
+
+
 def test_plan_reads_spec_from_stdin(invoke) -> None:
     code, planned, _ = invoke(
         "changes",

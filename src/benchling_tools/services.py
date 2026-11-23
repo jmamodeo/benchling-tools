@@ -155,6 +155,21 @@ def _require_part_id(value: object) -> str:
     return value.strip()
 
 
+def require_task_id(value: object) -> str:
+    """A Benchling task ID: a non-empty string with no '/' and no whitespace."""
+    if (
+        not isinstance(value, str)
+        or value in {"", ".", ".."}
+        or "/" in value
+        or any(character.isspace() for character in value)
+    ):
+        raise ValidationError(
+            "task_id must be a non-empty string with no '/' and no whitespace",
+            details={"task_id": value},
+        )
+    return value
+
+
 def entry_version(entry: dict[str, Any]) -> str:
     """Return the entry's version ID; raises UpstreamError if version metadata is absent."""
     metadata = entry.get("versionMetadata") or {}
@@ -1764,8 +1779,12 @@ class BenchlingService:
         )
 
     async def get_task(self, task_id: str) -> dict[str, Any]:
-        """Fetch a V2 task; raises UpstreamError if the response has no string status."""
-        payload = await self.api.request("GET", f"/tasks/{task_id}", version=2)
+        """Fetch a V2 task; raises UpstreamError if the response has no string status.
+
+        Raises ValidationError for an empty task ID or one with '/' or whitespace.
+        """
+        task_id = require_task_id(task_id)
+        payload = await self.api.request("GET", f"/tasks/{quote(task_id, safe='')}", version=2)
         task = payload.get("task", payload)
         # Task responses may be a flat status object without an id property.
         if not isinstance(task, dict) or not isinstance(task.get("status"), str):

@@ -63,6 +63,7 @@ benchling-tools export --kind table --part docpart_table1 --format csv --output 
 benchling-tools changes plan --entry etr_abc123 --family table --spec examples/table-set-cells.json --env dev
 benchling-tools changes apply PLAN_ID --env dev
 benchling-tools changes status PLAN_ID --env dev
+benchling-tools changes status --task TASK_ID --wait --env dev
 ```
 
 Every command, the six change families, spec shapes, result uploads and attachments, pending results, and the canned examples are in the [CLI and MCP reference](docs/reference.md#cli-examples).

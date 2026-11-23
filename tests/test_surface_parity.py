@@ -250,6 +250,17 @@ async def test_changes_plan_and_status_replies_match(cli_reply, mcp_reply, fake)
     assert fake.writes() == []
 
 
+async def test_changes_status_task_replies_match(cli_reply, mcp_reply, fake) -> None:
+    fake.tasks["task_parity1"] = {
+        "status": "SUCCEEDED",
+        "response": {"assayResults": [{"id": "00000000-0000-4000-8000-000000000001"}]},
+    }
+    printed = await cli_reply("changes", "status", "--task", "task_parity1")
+    assert printed["ok"] is True, printed
+    assert printed == await mcp_reply("changes_status", task_id="task_parity1")
+    assert fake.writes() == []
+
+
 async def test_export_replies_match(cli_reply, mcp_reply, fake, tmp_path) -> None:
     output = tmp_path / "table.csv"
     printed = await cli_reply(

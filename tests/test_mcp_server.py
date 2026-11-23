@@ -1338,6 +1338,27 @@ async def test_apply_changes_for_results_returns_the_next_step(writer, fake) -> 
     assert status["data"]["result_state"] == "pending_integration"
 
 
+async def test_changes_status_reads_a_task_without_allow_writes(client, fake) -> None:
+    fake.tasks["task_mcp1"] = {"status": "FAILED", "message": "failed", "errors": [{"index": 0}]}
+    tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+    schema = tools["changes_status"].inputSchema
+    assert "task_id" in schema["properties"]
+    assert "plan_id" not in schema.get("required", [])
+    assert "task_id" in tools["changes_status"].description
+    status = await call(client, "changes_status", env="sandbox", task_id="task_mcp1")
+    assert status["ok"] is True, status
+    assert status["data"]["result_state"] == "submission_failed"
+    assert status["data"]["errors"] == [{"index": 0}]
+    both = await call(
+        client, "changes_status", env="sandbox", plan_id="0" * 32, task_id="task_mcp1"
+    )
+    assert both["error"]["code"] == "validation_error"
+    assert "task_id" in both["error"]["message"]
+    neither = await call(client, "changes_status", env="sandbox")
+    assert neither["error"]["code"] == "validation_error"
+    assert fake.writes() == []
+
+
 async def test_entry_tools_return_web_url(client) -> None:
     url = entry_web_url(ENTRY_ID)
     resolved = (await call(client, "entry_resolve", env="sandbox", reference=ENTRY_ID))["data"]
