@@ -132,6 +132,63 @@ async def test_read_replies_match(cli_reply, mcp_reply, fake, args, tool, argume
     assert fake.writes() == []
 
 
+@pytest.mark.parametrize(
+    ("args", "tool", "arguments"),
+    [
+        (["results", "tables", ENTRY_ID], "results_tables", {"reference": ENTRY_ID}),
+        (
+            ["results", "tables", ENTRY_ID, "--no-counts"],
+            "results_tables",
+            {"reference": ENTRY_ID, "counts": False},
+        ),
+        (
+            [
+                "results",
+                "tables",
+                ENTRY_ID,
+                "--name-prefix",
+                "Panel Testing",
+                "--where",
+                "Processing run=run_a",
+                "--where",
+                "sample=con_tube1",
+            ],
+            "results_tables",
+            {
+                "reference": ENTRY_ID,
+                "name_prefix": "Panel Testing",
+                "where": ["Processing run=run_a", "sample=con_tube1"],
+            },
+        ),
+        (
+            [
+                "results",
+                "rows",
+                "strtbl_panel2",
+                "--entry",
+                ENTRY_ID,
+                "--where",
+                "Sample=con_tube3",
+            ],
+            "results_rows",
+            {"part_id": "strtbl_panel2", "entry": ENTRY_ID, "where": ["Sample=con_tube3"]},
+        ),
+        (
+            ["results", "rows", "docpart_panel1", "--where", "Operator=me"],
+            "results_rows",
+            {"part_id": "docpart_panel1", "where": ["Operator=me"]},
+        ),
+    ],
+)
+async def test_results_count_and_filter_replies_match(
+    cli_reply, mcp_reply, fake, args, tool, arguments
+) -> None:
+    fake.add_panel_tables()
+    printed = await cli_reply(*args)
+    assert _without_clock(printed) == _without_clock(await mcp_reply(tool, **arguments))
+    assert fake.writes() == []
+
+
 async def test_changes_plan_and_status_replies_match(cli_reply, mcp_reply, fake) -> None:
     printed = await cli_reply(
         "changes",
