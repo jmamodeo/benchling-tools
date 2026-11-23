@@ -1519,7 +1519,8 @@ async def results_rows(
         "--where",
         help=(
             "FIELD=VALUE; repeatable, all must match. FIELD is a column display name, "
-            "system name, or field-definition id. Keeps only matching rows of the page."
+            "system name, or field-definition id. Keeps only matching rows of this page "
+            "(where_scope: page); use results tables --where for whole-table counts."
         ),
     ),
 ) -> Any:
@@ -1540,7 +1541,10 @@ async def results_rows(
     which the API cannot do. stale_check counts compared and stale rows. Reads only.
 
     --where keeps only the rows of this page that match, and adds scanned (rows
-    read) and matched; next_token still pages the underlying table. The filter
+    read) and matched; next_token still pages the underlying table. The filter is
+    page-scoped: the reply has where_scope "page" and complete (false while a
+    next page exists, with where_scope_note); for whole-table counts use
+    results tables ENTRY --where, which reads every row. The filter
     is client-side: Benchling has no server-side filter on text field values.
     A cell matches when its value is exactly VALUE as text; a link cell matches
     on the linked id. An unknown FIELD is a validation_error listing the
@@ -1594,8 +1598,8 @@ async def results_pending(
 ) -> Any:
     """Read back results, including pending ones, and mark each pending, accepted, or archived.
 
-    Pending results have no entry until a person accepts them with the plug icon
-    in the results table, so listing results by entry does not find them. Pass
+    Pending results have no entry until a person reviews and accepts them in
+    Benchling, so listing results by entry does not find them. Pass
     exactly one of --entry, --plan, --id, or --schema with --created-after. Relay
     next_step. Reads only.
 
@@ -1701,7 +1705,7 @@ async def results_verify(
     """Diff a result upload plan, or an SDK upload payload, against the records Benchling created.
 
     Compares planned fields by system name and reports matched, mismatched,
-    missing, and extra rows, and which rows still need the plug-icon accept. Reads only.
+    missing, and extra rows, and which rows are still pending review. Reads only.
     The plan's record ids may be V2 assay result UUIDs or V3 result ids (result_…).
     Each row reports result_id and v2_id (the V2 UUID) and v3_id (result_…), so
     either id can be passed to results get or results pending --id.

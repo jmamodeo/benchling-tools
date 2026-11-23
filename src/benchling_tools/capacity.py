@@ -6,9 +6,10 @@ the check a plan runs. Rows come from V3 ``rowCount`` on
 ``GET /document-part-results-table/{id}``. The V2 ``strtbl_…`` table is matched to
 its V3 part with ``BenchlingService.document_part_for_listed_table``.
 
-Benchling does not document whether pending results (created through the API but
-not yet accepted with the plug icon) count toward the limit, so both numbers are
-reported and neither is assumed.
+Pending results (created through the API but not yet accepted into the table)
+are not table rows yet, but Benchling says they "can't be integrated if doing so
+would push the table past that maximum", so both numbers are reported and
+neither is assumed.
 """
 
 from __future__ import annotations
