@@ -1595,7 +1595,10 @@ async def results_rows(
     is client-side: Benchling has no server-side filter on text field values.
     A cell matches when its value is exactly VALUE as text; a link cell matches
     on the linked id. An unknown FIELD is a validation_error listing the
-    available names. Pending results are not table rows; use results pending.
+    available names. Pending results are not table rows, so this command leaves
+    them out and takes no pending option. After a push, see them with
+    results list --include-pending or results pending (each given the entry),
+    results diff --include-pending, or results verify --payload FILE.
     """
     conditions = parse_where(where)
     service = call.runtime.service

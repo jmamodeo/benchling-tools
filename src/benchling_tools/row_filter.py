@@ -31,7 +31,8 @@ from .services import BenchlingService
 WHERE_NOTE = (
     "--where is evaluated client-side over accepted table rows, because Benchling has no "
     "server-side filter on text field values. Pending results are not table rows and are "
-    "not counted; use results pending for them."
+    "not counted. To see them, use results list --include-pending or results pending (each "
+    "given the entry), results diff --include-pending, or results verify --payload FILE."
 )
 
 
