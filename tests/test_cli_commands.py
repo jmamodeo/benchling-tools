@@ -754,6 +754,50 @@ def test_entry_list_sends_a_comma_name_as_the_v2_name_parameter(invoke, fake) ->
     assert fake.writes() == []
 
 
+def test_entry_list_sort_finds_the_newest_entry_a_user_created(invoke, fake) -> None:
+    for number, created in ((1, "2026-04-01T00:00:00Z"), (2, "2026-05-01T00:00:00Z")):
+        fake.extra_entries.append(
+            {
+                "id": f"etr_fixture{number}",
+                "name": f"Fixture entry {number}",
+                "displayId": f"EXP-F{number}",
+                "createdAt": created,
+                "modifiedAt": "2026-01-01T00:00:00Z",
+                "schemaId": "entsch_abc123",
+                "projectId": "src_abc123",
+                "folderId": "lib_abc123",
+                "creatorId": "ent_fixture",
+            }
+        )
+    code, payload, _ = invoke(
+        "entry", "list", "--creator", "ent_fixture", "--sort", "created-desc", "--limit", "1"
+    )
+    assert code == 0, payload
+    assert [item["id"] for item in payload["data"]["items"]] == ["etr_fixture2"]
+    assert payload["data"]["sort"] == "createdAt:desc"
+    assert payload["data"]["next_token"]
+    (call,) = fake.calls
+    assert call.path == "/api/v2/entries"
+    assert call.params == {"sort": "createdAt:desc", "creatorIds": "ent_fixture", "pageSize": "1"}
+    assert fake.writes() == []
+
+
+def test_entry_list_rejects_an_unknown_sort_with_the_choices(invoke, fake) -> None:
+    code, payload, _ = invoke("entry", "list", "--sort", "newest")
+    assert code == ExitCode.USAGE
+    assert payload["error"]["code"] == "usage_error"
+    for choice in (
+        "created-desc",
+        "created-asc",
+        "modified-desc",
+        "modified-asc",
+        "name-asc",
+        "name-desc",
+    ):
+        assert choice in payload["error"]["message"]
+    assert fake.calls == []
+
+
 def test_entry_list_rejects_a_timestamp_without_a_zone(invoke, fake) -> None:
     code, payload, _ = invoke("entry", "list", "--modified-after", "2026-06-15T12:00:00")
     assert code == 2

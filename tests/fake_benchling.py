@@ -903,6 +903,7 @@ class FakeBenchling:
                 "id": ENTRY_ID,
                 "name": self.entry_name,
                 "displayId": self.display_id,
+                "createdAt": "2025-09-01T09:00:00Z",
                 "modifiedAt": "2026-06-15T12:00:00Z",
                 "schemaId": self.entry_schema_id,
                 "projectId": "src_abc123",
@@ -912,6 +913,7 @@ class FakeBenchling:
                 "id": "etr_list2",
                 "name": "Other experiment",
                 "displayId": "EXP-2",
+                "createdAt": "2025-12-15T00:00:00Z",
                 "modifiedAt": "2026-01-01T00:00:00Z",
                 "schemaId": "entsch_other",
                 "projectId": "src_other",
@@ -921,6 +923,7 @@ class FakeBenchling:
                 "id": "etr_list3",
                 "name": "Third note",
                 "displayId": "EXP-3",
+                "createdAt": "2025-11-20T00:00:00Z",
                 "modifiedAt": "2025-12-01T00:00:00Z",
                 "schemaId": "entsch_abc123",
                 "projectId": "src_abc123",
@@ -930,6 +933,7 @@ class FakeBenchling:
                 "id": "etr_list4",
                 "name": "Late note",
                 "displayId": "EXP-4",
+                "createdAt": "2026-03-01T00:00:00Z",
                 "modifiedAt": "2026-11-01T08:30:00Z",
                 "schemaId": "entsch_other",
                 "projectId": "src_abc123",
@@ -988,6 +992,13 @@ class FakeBenchling:
                     for row in rows
                     if self._modified_matches(str(row["modifiedAt"]), params["modifiedAt"])
                 ]
+            if params.get("sort"):
+                key, _, direction = params["sort"].partition(":")
+                rows = sorted(
+                    rows,
+                    key=lambda row: str(row.get(key) or row["modifiedAt"]),
+                    reverse=direction != "asc",
+                )
             return rows
         # V3 entry listing does not apply folderId. Leave it unread on purpose.
         if params.get("project.eq"):
@@ -1035,6 +1046,7 @@ class FakeBenchling:
                     "id": row["id"],
                     "name": row["name"],
                     "displayId": row["displayId"],
+                    "createdAt": _offset_stamp(str(row.get("createdAt") or row["modifiedAt"])),
                     "modifiedAt": _offset_stamp(str(row["modifiedAt"])),
                     "schemaId": row["schemaId"],
                     "projectId": row["projectId"],
@@ -1060,6 +1072,7 @@ class FakeBenchling:
                     "id": row["id"],
                     "name": row["name"],
                     "displayId": row["displayId"],
+                    "createdAt": _offset_stamp(str(row.get("createdAt") or row["modifiedAt"])),
                     "modifiedAt": _offset_stamp(str(row["modifiedAt"])),
                     "schemaId": row["schemaId"],
                     "projectId": row["projectId"],

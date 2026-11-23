@@ -868,6 +868,29 @@ async def test_list_entries_is_read_only_and_routes_folder_filters_to_v2(client,
     assert all(not call.path.endswith("/entry/items") for call in fake.calls)
 
 
+async def test_list_entries_tool_accepts_a_sort_enum(client, fake) -> None:
+    tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+    tool = tools["entry_list"]
+    assert tool.annotations.readOnlyHint is True
+    assert set(tool.inputSchema["$defs"]["EntrySort"]["enum"]) == {
+        "created-desc",
+        "created-asc",
+        "modified-desc",
+        "modified-asc",
+        "name-asc",
+        "name-desc",
+    }
+    assert "next_token from one sort" in tool.inputSchema["properties"]["sort"]["description"]
+    data = (await call(client, "entry_list", env="sandbox", sort="created-desc", limit=1))["data"]
+    assert [item["id"] for item in data["items"]] == ["etr_list4"]
+    assert data["sort"] == "createdAt:desc"
+    (listed,) = [item for item in fake.calls if item.path.endswith("/entries")]
+    assert listed.params == {"sort": "createdAt:desc", "pageSize": "1"}
+    rejected = await client.call_tool("entry_list", {"env": "sandbox", "sort": "newest"})
+    assert rejected.isError is True
+    assert fake.writes() == []
+
+
 async def test_list_results_table_rows_is_read_only_and_paged(client, fake) -> None:
     fake.add_results_table()
     first = (await call(client, "results_rows", env="sandbox", part_id="docpart_rt1", limit=2))[
