@@ -58,6 +58,7 @@ async def test_inspect_is_complete_when_only_linked_results_fail(runtime, fake) 
     fake.parts = [part for part in fake.parts if part["id"] != "docpart_struct1"]
     _fail_results(fake)
     inspected = await runtime.service.inspect_entry(ENTRY_ID)
+    assert inspected["completeness"] == "complete"
     assert "linked_results_unavailable" not in _reasons(inspected)
     full = await runtime.service.get_entry(ENTRY_ID, full=True)
     assert full["completeness"] == "partial"
