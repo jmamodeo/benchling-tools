@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- Result uploads default missing `projectId` values to the entry's project at preview, reject unresolved projects, check all batches before uploading blobs, and report unlinked blobs after failed creation. Explicit null remains creator-only and may be rejected by some tenants.
+
 ## [0.7.0] - 2026-11-22
 
 ### Breaking

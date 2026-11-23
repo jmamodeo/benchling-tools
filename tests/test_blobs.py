@@ -17,6 +17,7 @@ from benchling_tools import cli
 from benchling_tools.config import ConfigStore
 from benchling_tools.errors import ConflictError, PartialCompletionError, ValidationError
 from benchling_tools.plans import blobs
+from benchling_tools.plans.repository import checksum_for
 from benchling_tools.services import is_attachment_field
 
 PLOT = {
@@ -120,6 +121,128 @@ async def test_apply_uploads_once_then_links_the_blob_id(
     assert journal["result"]["blobs"][0]["blob_id"] == BLOB_1
     assert str(tmp_path) not in json.dumps(applied)
     assert _sidecars() == []
+
+
+async def test_all_batches_are_checked_before_upload(runtime, fake, tmp_path, attachments) -> None:
+    fake.field_defs["assaysch_other"] = [
+        dict(field) for field in fake.field_defs["assaysch_abc123"]
+    ]
+    fake.extra_result_tables.append(
+        {
+            "type": "results_table",
+            "apiId": "strtbl_other",
+            "name": "Other",
+            "assayResultSchemaId": "assaysch_other",
+            "columns": ["ct"],
+        }
+    )
+    path = _write(tmp_path / "plot.png", b"plot")
+    first = _upload({"plot": {"value": {"file": str(path)}}})
+    planned = await runtime.planner.plan(
+        ENTRY_ID,
+        "results",
+        {
+            "batches": [
+                first,
+                {
+                    "table_id": "strtbl_other",
+                    "assay_results": [
+                        {"schemaId": "assaysch_other", "fields": {"ct": {"value": 12}}}
+                    ],
+                },
+            ]
+        },
+    )
+    fake.field_defs["assaysch_other"][0]["isRequired"] = not fake.field_defs["assaysch_other"][
+        0
+    ].get("isRequired", False)
+    with pytest.raises(ConflictError, match="Result schema fields"):
+        await runtime.planner.apply(planned.id)
+    assert fake.writes() == []
+    journal = runtime.repository.load_journal(planned.id)
+    assert not any(event.stage == "upload_blob" for event in journal.events)
+
+
+async def test_old_plan_without_project_is_refused_before_upload(
+    runtime, fake, tmp_path, attachments
+) -> None:
+    path = _write(tmp_path / "plot.png", b"plot")
+    planned = await runtime.planner.plan(
+        ENTRY_ID, "results", _upload({"plot": {"value": {"file": str(path)}}})
+    )
+    planned.after["batches"][0]["records"][0].pop("projectId")
+    planned.after["records"][0].pop("projectId", None)
+    planned.checksum = checksum_for(planned.model_dump(mode="json"))
+    runtime.repository._plan_path(planned.id).write_text(planned.model_dump_json(indent=2))
+    with pytest.raises(ConflictError, match="create a new preview"):
+        await runtime.planner.apply(planned.id)
+    assert fake.writes() == []
+    assert not any(
+        e.stage == "upload_blob" for e in runtime.repository.load_journal(planned.id).events
+    )
+
+
+async def test_later_batch_changed_file_is_checked_before_first_upload(
+    runtime, fake, tmp_path, attachments
+) -> None:
+    fake.extra_result_tables.append(
+        {
+            "type": "results_table",
+            "apiId": "strtbl_other",
+            "name": "Other",
+            "assayResultSchemaId": "assaysch_abc123",
+            "columns": ["ct"],
+        }
+    )
+    first = _write(tmp_path / "first.png", b"first")
+    second = _write(tmp_path / "second.png", b"second")
+    first_batch = _upload({"plot": {"value": {"file": str(first)}}})
+    second_batch = _upload({"plot": {"value": {"file": str(second)}}})
+    second_batch["table_id"] = "strtbl_other"
+    planned = await runtime.planner.plan(
+        ENTRY_ID, "results", {"batches": [first_batch, second_batch]}
+    )
+    second.write_bytes(b"changed")
+    with pytest.raises(ConflictError, match="missing or changed"):
+        await runtime.planner.apply(planned.id)
+    assert fake.writes() == []
+
+
+async def test_failed_result_create_reports_orphaned_blob(
+    runtime, fake, tmp_path, attachments
+) -> None:
+    path = _write(tmp_path / "plot.png", b"plot")
+    planned = await runtime.planner.plan(
+        ENTRY_ID, "results", _upload({"plot": {"value": {"file": str(path)}}})
+    )
+    fake.fail("POST", "/assay-results:bulk-create", 400)
+    with pytest.raises(PartialCompletionError) as caught:
+        await runtime.planner.apply(planned.id)
+    assert caught.value.exit_code == 8
+    assert caught.value.details["journal"]["status"] == "partial"
+    assert caught.value.details["orphaned_blob_ids"] == [BLOB_1]
+    assert "uploaded but are unlinked" in caught.value.details["next_step"]
+    assert "no delete operation" in caught.value.details["next_step"]
+    assert "new plan will upload" in caught.value.details["next_step"]
+    assert not fake.bulk_payloads
+
+
+async def test_uncertain_second_blob_reports_first_as_unlinked(runtime, fake, tmp_path) -> None:
+    fake.field_defs["assaysch_abc123"].append({**PLOT, "isMulti": True})
+    first = _write(tmp_path / "first.png", b"first")
+    second = _write(tmp_path / "second.png", b"second")
+    planned = await runtime.planner.plan(
+        ENTRY_ID,
+        "results",
+        _upload({"plot": {"value": [{"file": str(first)}, {"file": str(second)}]}}),
+    )
+    fake.fail("POST", "/api/v2/blobs", 500, skip=1)
+    with pytest.raises(PartialCompletionError) as caught:
+        await runtime.planner.apply(planned.id)
+    assert caught.value.details["journal"]["status"] == "unknown"
+    assert caught.value.details["orphaned_blob_ids"] == [BLOB_1]
+    assert "unlinked" in caught.value.details["next_step"]
+    assert not fake.bulk_payloads
 
 
 async def test_verify_compares_an_uploaded_file_by_its_blob_id(

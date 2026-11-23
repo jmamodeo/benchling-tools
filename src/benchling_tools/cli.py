@@ -1530,6 +1530,9 @@ async def changes_plan(
 
     Inline result uploads pass table_id and assay_results, or batches containing
     table_id and assay_results for each table, up to 500 records per table.
+    A missing projectId defaults to the entry's project; if unavailable, set
+    projectId explicitly. Explicit null creates creator-only results and some
+    tenants reject it with projectId is a required field.
     Created results land pending until accepted in each table. On a result
     attachment field, a value of {"file": PATH} (or a CSV cell file:PATH) uploads
     that local file as a blob at apply and links its blob ID. The preview shows
