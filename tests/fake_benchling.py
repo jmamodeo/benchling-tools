@@ -845,6 +845,21 @@ class FakeBenchling:
         if not any(item["id"] == registry_id for item in self.registries):
             return 404, {"error": {"message": "registry not found"}}
         wanted = call.params.get("entityRegistryIds", "").split(",")
+        known = {
+            item["entityRegistryId"]
+            for item in self.registered_entities
+            if item["registryId"] == registry_id
+        }
+        invalid = [item for item in wanted if item not in known]
+        if invalid:
+            # Benchling rejects the whole request and lists the unregistered ids.
+            return 400, {
+                "error": {
+                    "invalidIds": invalid,
+                    "message": "Invalid entityRegistryId: " + ", ".join(invalid),
+                    "type": "invalid_request_error",
+                }
+            }
         entities = [
             item
             for item in self.registered_entities

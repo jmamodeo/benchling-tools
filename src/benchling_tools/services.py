@@ -635,6 +635,14 @@ def with_result_ids(record: dict[str, Any], v2_id: Any, v3_id: Any) -> dict[str,
     }
 
 
+def _invalid_ids(exc: ValidationError) -> list[str]:
+    """The ids a V2 400 lists under error.invalidIds, or none."""
+    response = (exc.details or {}).get("response")
+    error = response.get("error") if isinstance(response, dict) else None
+    ids = error.get("invalidIds") if isinstance(error, dict) else None
+    return [str(item) for item in ids] if isinstance(ids, list) else []
+
+
 def _lift_invalid_barcodes(exc: ValidationError) -> None:
     """Copy a V2 400's error.invalidBarcodes to details.invalid_barcodes, with a hint."""
     response = exc.details.get("response")
@@ -1629,10 +1637,7 @@ class BenchlingService:
         route = f"/registries/{quote(registry_id, safe='')}/registered-entities:bulk-get"
         for offset in range(0, len(registry_ids), REGISTRY_ID_CHUNK):
             chunk = registry_ids[offset : offset + REGISTRY_ID_CHUNK]
-            payload = await self.api.request(
-                "GET", route, version=2, params={"entityRegistryIds": ",".join(chunk)}
-            )
-            entities = payload.get("entities")
+            entities = await self._registered_entity_chunk(route, chunk)
             if not isinstance(entities, list) or any(
                 not isinstance(item, dict) for item in entities
             ):
@@ -1653,6 +1658,25 @@ class BenchlingService:
             ],
             "unregistered_ids": [item for item in registry_ids if item not in by_registry_id],
         }
+
+    async def _registered_entity_chunk(self, route: str, chunk: list[str]) -> object:
+        """One bulk-get of registry IDs. Benchling rejects the whole request with a 400
+        that lists invalidIds when any ID is not registered; those IDs are dropped and
+        the rest read again, so they end up in unregistered_ids."""
+        while chunk:
+            try:
+                payload = await self.api.request(
+                    "GET", route, version=2, params={"entityRegistryIds": ",".join(chunk)}
+                )
+            except ValidationError as exc:
+                rejected = set(_invalid_ids(exc))
+                rest = [item for item in chunk if item not in rejected]
+                if not rejected or len(rest) == len(chunk):
+                    raise
+                chunk = rest
+                continue
+            return payload.get("entities")
+        return []
 
     def _container_barcodes(self, value: object) -> list[str]:
         """Barcodes in the caller's order without duplicates; one value per barcode."""

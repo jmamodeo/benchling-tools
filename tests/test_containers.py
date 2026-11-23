@@ -183,10 +183,14 @@ async def test_find_containers_by_registry_id_resolves_and_reports_unregistered(
     assert found["found"][1]["parent_storage_id"] == "plt_plate1:A1"
     assert found["truncated"] is False
     bulk = [call for call in fake.calls if call.path.endswith("registered-entities:bulk-get")]
-    assert [call.path for call in bulk] == [
-        "/api/v2/registries/src_registry1/registered-entities:bulk-get"
+    # Benchling rejects the whole request and names REG-9999, so the rest is read again.
+    assert [call.params for call in bulk] == [
+        {"entityRegistryIds": "REG-0001,REG-9999"},
+        {"entityRegistryIds": "REG-0001"},
     ]
-    assert bulk[0].params == {"entityRegistryIds": "REG-0001,REG-9999"}
+    assert {call.path for call in bulk} == {
+        "/api/v2/registries/src_registry1/registered-entities:bulk-get"
+    }
     assert [call.params["storageContentsIds"] for call in _container_lists(fake)] == [
         "ent_registered1"
     ]
@@ -223,6 +227,12 @@ async def test_find_containers_unregistered_ids_skip_the_container_list(runtime,
     assert found["entities"] == found["found"] == []
     assert found["unregistered_ids"] == ["REG-9999"]
     assert _container_lists(fake) == []
+
+
+async def test_find_containers_other_registry_rejections_are_raised(runtime, fake) -> None:
+    fake.fail("GET", "registered-entities:bulk-get", 400)
+    with pytest.raises(ValidationError):
+        await runtime.service.find_containers(registry_ids=["REG-0001"], registry="src_registry1")
 
 
 async def test_find_containers_malformed_registry_replies_are_upstream_errors(
