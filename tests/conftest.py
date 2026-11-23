@@ -10,13 +10,13 @@ import pytest_asyncio
 from fake_benchling import TENANT, FakeBenchling
 from memory_keyring import MemoryKeyring
 
-from benchlingtk.api import BenchlingAPI
-from benchlingtk.auth import AuthManager
-from benchlingtk.environment import EnvironmentConfigStore
-from benchlingtk.keychain import Keychain
-from benchlingtk.models import AuthMethod, Environment
-from benchlingtk.redact import clear_registered_secrets
-from benchlingtk.runtime import Runtime, RuntimePool
+from benchling_tools.api import BenchlingAPI
+from benchling_tools.auth import AuthManager
+from benchling_tools.environment import EnvironmentConfigStore
+from benchling_tools.keychain import Keychain
+from benchling_tools.models import AuthMethod, Environment
+from benchling_tools.redact import clear_registered_secrets
+from benchling_tools.runtime import Runtime, RuntimePool
 
 SANDBOX_SECRET = "sandbox-client-secret"
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -30,7 +30,7 @@ def plain_stdout(args: list[str]) -> str:
     """Run the CLI and return stdout with ANSI escapes removed."""
     from typer.testing import CliRunner
 
-    from benchlingtk import cli
+    from benchling_tools import cli
 
     result = CliRunner().invoke(cli.app, args, env=_PLAIN_TERMINAL)
     return _ANSI.sub("", result.stdout)
@@ -38,7 +38,7 @@ def plain_stdout(args: list[str]) -> str:
 
 @pytest.fixture(autouse=True)
 def isolated_home(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("BENCHLINGTK_HOME", str(tmp_path / "app"))
+    monkeypatch.setenv("BENCHLING_TOOLS_HOME", str(tmp_path / "app"))
 
 
 @pytest.fixture(autouse=True)
@@ -107,7 +107,7 @@ def token_client() -> httpx.Client:
 @pytest.fixture
 def benchling_env(monkeypatch) -> None:
     for name in list(os.environ):
-        if name.startswith("BENCHLING_"):
+        if name.startswith("BENCHLING_") and name != "BENCHLING_TOOLS_HOME":
             monkeypatch.delenv(name)
     configure_env("sandbox", TENANT, "client", SANDBOX_SECRET)
 

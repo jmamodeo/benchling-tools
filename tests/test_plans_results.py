@@ -5,7 +5,7 @@ import asyncio
 import pytest
 from fake_benchling import ENTRY_ID, entry_web_url
 
-from benchlingtk.errors import (
+from benchling_tools.errors import (
     ConflictError,
     NotFoundError,
     PartialCompletionError,

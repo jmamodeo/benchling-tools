@@ -89,7 +89,7 @@ def test_cast_is_asciinema_v2_from_the_fixture() -> None:
     header, *events = CAST.splitlines()
     parsed = json.loads(header)
     assert parsed["version"] == 2
-    assert parsed["title"] == "benchlingtk fixture demo"
+    assert parsed["title"] == "benchling-tools fixture demo"
     assert "USER" not in parsed.get("env", {})
     assert events
     payload = "\n".join(json.loads(line)[2] for line in events)

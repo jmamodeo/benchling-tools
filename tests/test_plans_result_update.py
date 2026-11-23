@@ -10,8 +10,8 @@ from typing import Any
 import pytest
 from fake_benchling import ENTRY_ID
 
-from benchlingtk.errors import ConflictError, PartialCompletionError, ValidationError
-from benchlingtk.export import export_dataset
+from benchling_tools.errors import ConflictError, PartialCompletionError, ValidationError
+from benchling_tools.export import export_dataset
 
 MODIFIED = "2026-01-02T00:00:00Z"
 

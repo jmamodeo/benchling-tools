@@ -8,7 +8,7 @@ import pytest
 
 
 @pytest.mark.skipif(
-    os.environ.get("BENCHLINGTK_NATIVE_KEYRING_TEST") != "1",
+    os.environ.get("BENCHLING_TOOLS_NATIVE_KEYRING_TEST") != "1",
     reason="requires a native keyring",
 )
 def test_native_keyring_round_trip() -> None:
@@ -18,7 +18,7 @@ def test_native_keyring_round_trip() -> None:
         f"{type(backend).__module__}.{type(backend).__name__}"
         == os.environ["PYTHON_KEYRING_BACKEND"]
     )
-    service = f"benchlingtk-ci-{uuid4()}"
+    service = f"benchling-tools-ci-{uuid4()}"
     username = "ci-test"
     value = "synthetic-test-value"
     keyring.set_password(service, username, value)

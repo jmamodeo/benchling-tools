@@ -9,7 +9,7 @@ from conftest import runtime_for
 from fake_benchling import ENTRY_ID
 from typer.testing import CliRunner
 
-from benchlingtk import cli, stale
+from benchling_tools import cli, stale
 
 PART = "docpart_rt1"
 FIELD = "assayfield_ct"

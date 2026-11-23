@@ -13,11 +13,11 @@ from conftest import runtime_for
 from fake_benchling import ENTRY_ID
 from typer.testing import CliRunner
 
-from benchlingtk import cli
-from benchlingtk.config import ConfigStore
-from benchlingtk.errors import ConflictError, PartialCompletionError, ValidationError
-from benchlingtk.plans import blobs
-from benchlingtk.services import is_attachment_field
+from benchling_tools import cli
+from benchling_tools.config import ConfigStore
+from benchling_tools.errors import ConflictError, PartialCompletionError, ValidationError
+from benchling_tools.plans import blobs
+from benchling_tools.services import is_attachment_field
 
 PLOT = {
     "id": "assayfield_plot",

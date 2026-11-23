@@ -4,7 +4,7 @@ import pytest
 from conftest import runtime_for
 from fake_benchling import ENTRY_ID, TEXT_PART
 
-from benchlingtk.errors import (
+from benchling_tools.errors import (
     ConflictError,
     ValidationError,
 )

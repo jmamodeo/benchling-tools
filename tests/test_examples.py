@@ -12,8 +12,8 @@ from fake_benchling import ENTRY_ID
 from test_contract_requests import _bulk_create_errors
 from typer.testing import CliRunner
 
-from benchlingtk import cli
-from benchlingtk.change_spec import parse_change_specification
+from benchling_tools import cli
+from benchling_tools.change_spec import parse_change_specification
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 RESULT_FIXTURES = sorted(EXAMPLES.glob("results-*.json"))

@@ -10,7 +10,7 @@ from pathlib import Path
 import yaml
 from typer.testing import CliRunner
 
-from benchlingtk import __version__, cli
+from benchling_tools import __version__, cli
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = (ROOT / "SKILL.md").read_text(encoding="utf-8")
@@ -79,7 +79,7 @@ def test_frontmatter_follows_the_agent_skills_spec() -> None:
     assert description.strip()
     assert len(description) <= 1024
     assert "Use when" in description
-    assert "benchlingtk auth login --env NAME" in description
+    assert "benchling-tools auth login --env NAME" in description
     assert "--allow-writes ENV" in description
 
     assert meta["license"] == "Apache-2.0"
@@ -94,7 +94,7 @@ def test_frontmatter_follows_the_agent_skills_spec() -> None:
     assert summary.strip()
     assert len(summary) <= 300
     assert metadata["version"] == __version__
-    assert metadata["docs_url"] == "https://github.com/jmamodeo/benchlingtk"
+    assert metadata["docs_url"] == "https://github.com/jmamodeo/benchling-tools"
 
 
 def test_listing_lists_stay_out_of_the_skill_frontmatter() -> None:
@@ -117,7 +117,7 @@ def test_body_covers_the_read_and_preview_workflows() -> None:
         "read-only by default",
         "--allow-writes ENV",
         "OS keychain",
-        "benchlingtk auth login --env NAME",
+        "benchling-tools auth login --env NAME",
         "entry list",
         "entry inspect",
         "table get",
@@ -186,7 +186,7 @@ def test_every_documented_command_is_accepted_by_the_cli() -> None:
     runner = CliRunner()
     for command in commands:
         argv = shlex.split(command)
-        assert argv[0] == "benchlingtk", command
+        assert argv[0] == "benchling-tools", command
         if "--help" not in argv:
             argv.append("--help")
         result = runner.invoke(cli.app, argv[1:])
@@ -197,4 +197,4 @@ def test_every_documented_command_is_accepted_by_the_cli() -> None:
 def test_pip_package_ships_skill_md() -> None:
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     data_files = pyproject["tool"]["setuptools"]["data-files"]
-    assert "SKILL.md" in data_files["share/benchlingtk"]
+    assert "SKILL.md" in data_files["share/benchling-tools"]

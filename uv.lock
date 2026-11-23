@@ -58,7 +58,7 @@ wheels = [
 ]
 
 [[package]]
-name = "benchlingtk"
+name = "benchling-tools"
 source = { editable = "." }
 dependencies = [
     { name = "filelock" },

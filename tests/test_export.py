@@ -15,16 +15,16 @@ from fake_benchling import ENTRY_ID, TABLE_PART, TENANT, text_cell
 from mcp.shared.memory import create_connected_server_and_client_session as Client
 from typer.testing import CliRunner
 
-from benchlingtk import cli
-from benchlingtk.errors import NotFoundError, UpstreamError, ValidationError
-from benchlingtk.export import (
+from benchling_tools import cli
+from benchling_tools.errors import NotFoundError, UpstreamError, ValidationError
+from benchling_tools.export import (
     _assay_columns,
     _assay_row,
     _cell_value,
     _table_row,
     export_dataset,
 )
-from benchlingtk.mcp_server import build_mcp_server
+from benchling_tools.mcp_server import build_mcp_server
 
 SUMMARY_KEYS = {
     "kind",

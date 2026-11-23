@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from fake_benchling import ENTRY_ID
 
-from benchlingtk.errors import ConflictError, UnsupportedError, ValidationError
+from benchling_tools.errors import ConflictError, UnsupportedError, ValidationError
 
 
 async def plan(runtime, fields):

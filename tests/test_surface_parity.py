@@ -11,9 +11,9 @@ from fake_benchling import ENTRY_ID, TABLE_PART, TENANT
 from mcp.shared.memory import create_connected_server_and_client_session as Client
 from typer.testing import CliRunner
 
-from benchlingtk import cli
-from benchlingtk.environment import EnvironmentConfigStore
-from benchlingtk.mcp_server import build_mcp_server
+from benchling_tools import cli
+from benchling_tools.environment import EnvironmentConfigStore
+from benchling_tools.mcp_server import build_mcp_server
 
 TABLE_SPEC = {"operation": "append_rows", "table_part_id": TABLE_PART, "rows": [["D", "4"]]}
 

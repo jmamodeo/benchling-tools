@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from fake_benchling import ENTRY_ID, TABLE_PART, TEXT_PART, entry_web_url
 
-from benchlingtk.errors import (
+from benchling_tools.errors import (
     AccessError,
     ConflictError,
     NotFoundError,
@@ -11,8 +11,8 @@ from benchlingtk.errors import (
     UpstreamError,
     ValidationError,
 )
-from benchlingtk.listing import entry_web_url as web_url_of
-from benchlingtk.services import (
+from benchling_tools.listing import entry_web_url as web_url_of
+from benchling_tools.services import (
     build_sections,
     entry_version,
     field_definition_type,

@@ -9,8 +9,8 @@ from conftest import configure_env, plain_stdout, runtime_for
 from fake_benchling import ENTRY_ID, TABLE_PART, TEXT_PART, entry_web_url
 from typer.testing import CliRunner
 
-from benchlingtk import cli
-from benchlingtk.errors import ExitCode
+from benchling_tools import cli
+from benchling_tools.errors import ExitCode
 
 
 @pytest.fixture
@@ -105,15 +105,17 @@ def test_version_flag_matches_package_metadata(invoke) -> None:
 
     result = CliRunner().invoke(cli.app, ["--version"])
     assert result.exit_code == 0
-    assert result.stdout.strip() == f"benchlingtk {version('benchlingtk')}"
+    assert result.stdout.strip() == f"benchling-tools {version('benchling-tools')}"
 
 
-def test_distribution_and_command_are_named_benchlingtk() -> None:
+def test_distribution_and_command_are_named_benchling_tools() -> None:
     from importlib.metadata import distribution
 
-    entry_points = distribution("benchlingtk").entry_points.select(group="console_scripts")
-    assert {ep.name: ep.value for ep in entry_points} == {"benchlingtk": "benchlingtk.cli:main"}
-    assert cli.app.info.name == "benchlingtk"
+    entry_points = distribution("benchling-tools").entry_points.select(group="console_scripts")
+    assert {ep.name: ep.value for ep in entry_points} == {
+        "benchling-tools": "benchling_tools.cli:main"
+    }
+    assert cli.app.info.name == "benchling-tools"
 
 
 @pytest.mark.parametrize(
@@ -472,7 +474,7 @@ def test_auth_status_lists_environments_without_secrets_or_a_trailing_slash(invo
 
 def test_auth_status_is_an_empty_envelope_when_nothing_is_configured(monkeypatch) -> None:
     for name in list(os.environ):
-        if name.startswith("BENCHLING_"):
+        if name.startswith("BENCHLING_") and name != "BENCHLING_TOOLS_HOME":
             monkeypatch.delenv(name)
     result = CliRunner().invoke(cli.app, ["auth", "status"])
     assert result.exit_code == 0
@@ -492,7 +494,7 @@ def test_envs_list_is_removed() -> None:
 
 
 def test_doctor_names_login_when_the_secret_is_missing(invoke) -> None:
-    from benchlingtk.keychain import Keychain
+    from benchling_tools.keychain import Keychain
 
     Keychain().delete("sandbox")
     code, payload, _ = invoke("doctor")
@@ -501,16 +503,16 @@ def test_doctor_names_login_when_the_secret_is_missing(invoke) -> None:
     assert (
         payload["error"]["message"]
         == "App client credentials are missing. Client secret is not in the keychain; "
-        "run benchlingtk auth login --env sandbox"
+        "run benchling-tools auth login --env sandbox"
     )
     assert payload["error"]["details"]["checks"][0]["hint"].endswith(
-        "run benchlingtk auth login --env sandbox"
+        "run benchling-tools auth login --env sandbox"
     )
 
 
 def test_mcp_logging_is_quiet_unless_verbose(benchling_env) -> None:
-    from benchlingtk.mcp_server import build_mcp_server
-    from benchlingtk.runtime import RuntimePool
+    from benchling_tools.mcp_server import build_mcp_server
+    from benchling_tools.runtime import RuntimePool
 
     quiet = build_mcp_server(RuntimePool())
     assert quiet.settings.log_level == "WARNING"
@@ -525,8 +527,8 @@ def test_mcp_keychain_startup_error_is_json_on_stderr(monkeypatch) -> None:
 
     configure_env("dev", "https://your-tenant.benchling.com", secret="dev-client-secret")
     keyring.set_keyring(keyring.backends.fail.Keyring())
-    monkeypatch.setattr("benchlingtk.keychain.provider_installed", lambda: True)
-    monkeypatch.setattr("benchlingtk.keychain.secret_service_reachable", lambda: False)
+    monkeypatch.setattr("benchling_tools.keychain.provider_installed", lambda: True)
+    monkeypatch.setattr("benchling_tools.keychain.secret_service_reachable", lambda: False)
     result = CliRunner().invoke(cli.app, ["mcp", "serve"])
     assert result.exit_code == 3
     assert result.stdout == ""
@@ -546,7 +548,7 @@ def test_doctor_reports_an_unexpected_local_failure(monkeypatch) -> None:
     async def boom(self: object) -> dict[str, object]:
         raise RuntimeError("doctor-boom")
 
-    monkeypatch.setattr("benchlingtk.services.BenchlingService.doctor", boom)
+    monkeypatch.setattr("benchling_tools.services.BenchlingService.doctor", boom)
     result = CliRunner().invoke(cli.app, ["doctor", "--env", "dev"])
     assert result.exit_code == 7
     payload = json.loads(result.stdout)
@@ -555,7 +557,7 @@ def test_doctor_reports_an_unexpected_local_failure(monkeypatch) -> None:
 
 
 def test_saved_tenant_url_must_be_text() -> None:
-    from benchlingtk.environment import EnvironmentConfigStore
+    from benchling_tools.environment import EnvironmentConfigStore
 
     store = EnvironmentConfigStore()
     store.ensure()
@@ -578,7 +580,7 @@ def test_mcp_serve_forwards_verbose(monkeypatch) -> None:
     def record(**kwargs: object) -> None:
         seen.update(kwargs)
 
-    monkeypatch.setattr("benchlingtk.mcp_server.run_mcp_server", record)
+    monkeypatch.setattr("benchling_tools.mcp_server.run_mcp_server", record)
     result = CliRunner().invoke(cli.app, ["mcp", "serve", "--verbose"])
     assert result.exit_code == 0
     assert seen["verbose"] is True
@@ -588,7 +590,7 @@ def test_mcp_unexpected_startup_error_stays_on_stderr(monkeypatch) -> None:
     def boom(**kwargs: object) -> None:
         raise RuntimeError("boom-start")
 
-    monkeypatch.setattr("benchlingtk.mcp_server.run_mcp_server", boom)
+    monkeypatch.setattr("benchling_tools.mcp_server.run_mcp_server", boom)
     result = CliRunner().invoke(cli.app, ["mcp", "serve"])
     assert result.stdout == ""
     assert result.exit_code == 7
@@ -598,7 +600,7 @@ def test_mcp_unexpected_startup_error_stays_on_stderr(monkeypatch) -> None:
 
 
 def test_mcp_serve_reports_startup_errors_as_json_on_stderr(invoke, monkeypatch) -> None:
-    from benchlingtk.keychain import Keychain
+    from benchling_tools.keychain import Keychain
 
     unknown = CliRunner().invoke(cli.app, ["mcp", "serve", "--allow-writes", "prod"])
     assert unknown.exit_code == 2
@@ -624,7 +626,7 @@ def test_auth_status_reports_without_calling_the_api(invoke, fake) -> None:
 
 
 def test_invalid_saved_endpoint_fails_validation_without_echoing_value(invoke) -> None:
-    from benchlingtk.environment import EnvironmentConfigStore
+    from benchling_tools.environment import EnvironmentConfigStore
 
     path = EnvironmentConfigStore().environments_path
     saved = json.loads(path.read_text())
@@ -1054,7 +1056,7 @@ def test_entry_get_takes_env_after_the_reference(fake, monkeypatch) -> None:
 
 
 def test_every_command_that_needs_an_env_takes_env() -> None:
-    from benchlingtk.commands import TOOL_ATTR
+    from benchling_tools.commands import TOOL_ATTR
 
     def walk(command, path=()):
         for name, child in getattr(command, "commands", {}).items():

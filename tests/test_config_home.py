@@ -7,13 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from benchlingtk import config
-from benchlingtk.config import ConfigStore, application_home
+from benchling_tools import config
+from benchling_tools.config import ConfigStore, application_home
 
 
 @pytest.fixture
 def clean_home(monkeypatch, tmp_path):
-    monkeypatch.delenv("BENCHLINGTK_HOME", raising=False)
+    monkeypatch.delenv("BENCHLING_TOOLS_HOME", raising=False)
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.delenv("APPDATA", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
@@ -22,29 +22,37 @@ def clean_home(monkeypatch, tmp_path):
 
 
 def test_override_is_expanded_and_resolved(monkeypatch, tmp_path, clean_home) -> None:
-    monkeypatch.setenv("BENCHLINGTK_HOME", "~/custom/../state")
+    monkeypatch.setenv("BENCHLING_TOOLS_HOME", "~/custom/../state")
     assert application_home() == (clean_home / "state").resolve()
+
+
+def test_legacy_override_is_not_used(monkeypatch, clean_home) -> None:
+    monkeypatch.setenv("BENCHLINGTK_HOME", str(clean_home / "old"))
+    monkeypatch.setattr(config.sys, "platform", "linux")
+    assert application_home() == clean_home / ".config" / "benchling-tools"
 
 
 def test_linux_prefers_xdg_config_home(monkeypatch, tmp_path, clean_home) -> None:
     monkeypatch.setattr(config.sys, "platform", "linux")
-    assert application_home() == clean_home / ".config" / "benchlingtk"
+    assert application_home() == clean_home / ".config" / "benchling-tools"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    assert application_home() == tmp_path / "xdg" / "benchlingtk"
+    assert application_home() == tmp_path / "xdg" / "benchling-tools"
 
 
 def test_macos_uses_application_support(monkeypatch, clean_home) -> None:
     monkeypatch.setattr(config.sys, "platform", "darwin")
     monkeypatch.setenv("XDG_CONFIG_HOME", "/ignored")
-    assert application_home() == (clean_home / "Library" / "Application Support" / "benchlingtk")
+    assert application_home() == (
+        clean_home / "Library" / "Application Support" / "benchling-tools"
+    )
 
 
 def test_windows_uses_appdata_with_profile_fallback(monkeypatch, tmp_path, clean_home) -> None:
     windows = types.SimpleNamespace(name="nt", getenv=os.getenv)
     monkeypatch.setattr(config, "os", windows)
-    assert application_home() == clean_home / "AppData" / "Roaming" / "benchlingtk"
+    assert application_home() == clean_home / "AppData" / "Roaming" / "benchling-tools"
     monkeypatch.setenv("APPDATA", str(tmp_path / "roaming"))
-    assert application_home() == tmp_path / "roaming" / "benchlingtk"
+    assert application_home() == tmp_path / "roaming" / "benchling-tools"
 
 
 def test_store_layout_follows_root(tmp_path) -> None:
@@ -59,7 +67,7 @@ def test_store_layout_follows_root(tmp_path) -> None:
 
 
 def test_default_store_uses_application_home(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("BENCHLINGTK_HOME", str(tmp_path / "configured"))
+    monkeypatch.setenv("BENCHLING_TOOLS_HOME", str(tmp_path / "configured"))
     assert ConfigStore().root == (tmp_path / "configured").resolve()
 
 

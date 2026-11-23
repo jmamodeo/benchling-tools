@@ -10,11 +10,11 @@ from conftest import runtime_for
 from fake_benchling import ENTRY_ID, entry_web_url
 from typer.testing import CliRunner
 
-from benchlingtk import cli
-from benchlingtk.config import ConfigStore
-from benchlingtk.errors import ValidationError
-from benchlingtk.plans import readback
-from benchlingtk.plans.repository import checksum_for
+from benchling_tools import cli
+from benchling_tools.config import ConfigStore
+from benchling_tools.errors import ValidationError
+from benchling_tools.plans import readback
+from benchling_tools.plans.repository import checksum_for
 
 TABLE = "strtbl_example"
 

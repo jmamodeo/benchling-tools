@@ -113,7 +113,7 @@ async def download_blob(
     md5 = hashlib.md5(usedforsecurity=False)
     try:
         with tempfile.NamedTemporaryFile(
-            dir=destination.parent, prefix=".benchlingtk-", delete=False
+            dir=destination.parent, prefix=".benchling-tools-", delete=False
         ) as temp:
             temp_path = temp.name
             request = httpx.Request(

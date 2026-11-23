@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.invalid/benchlingtk/change-spec.schema.json",
+  "$id": "https://example.invalid/benchling-tools/change-spec.schema.json",
   "title": "Benchling Toolkit Change Specification",
   "description": "Select the matching object for the --family argument. Container operations use the containers family and do not require an entry.",
   "$defs": {

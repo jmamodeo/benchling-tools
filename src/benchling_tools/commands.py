@@ -21,8 +21,8 @@ from .errors import ValidationError
 if TYPE_CHECKING:
     from .runtime import Runtime
 
-TOOL_ATTR = "__benchlingtk_command__"
-CLI_ONLY_ATTR = "__benchlingtk_cli_only__"
+TOOL_ATTR = "__benchling_tools_command__"
+CLI_ONLY_ATTR = "__benchling_tools_cli_only__"
 REQUIRED = inspect.Parameter.empty
 
 

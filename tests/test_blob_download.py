@@ -11,9 +11,9 @@ import pytest
 from conftest import runtime_for
 from typer.testing import CliRunner
 
-from benchlingtk import cli
-from benchlingtk.blob_download import download_blob
-from benchlingtk.errors import ConflictError, NotFoundError, UpstreamError, ValidationError
+from benchling_tools import cli
+from benchling_tools.blob_download import download_blob
+from benchling_tools.errors import ConflictError, NotFoundError, UpstreamError, ValidationError
 
 BLOB = "00000000-0000-4000-8000-000000000001"
 ATTACHMENT = "attachment_example"
@@ -97,7 +97,7 @@ def test_cli_download_unverified_and_mismatches(benchling_env, fake, files, monk
         result = runner.invoke(cli.app, args + flags)
         assert json.loads(result.stdout)["error"]["code"] == code
         assert not output.exists()
-        assert not list(tmp_path.glob(".benchlingtk-*"))
+        assert not list(tmp_path.glob(".benchling-tools-*"))
     reference = tmp_path / "reference"
     reference.write_bytes(b"x" * len(DATA))
     result = runner.invoke(cli.app, args + ["--compare", str(reference)])
@@ -188,7 +188,7 @@ async def test_invalid_download_url(runtime, fake, files, tmp_path, url):
     fake.attachments[ATTACHMENT]["downloadUrl"] = url
     with pytest.raises(UpstreamError):
         await download_blob(runtime.service, ATTACHMENT, str(tmp_path / "output"))
-    assert not list(tmp_path.glob(".benchlingtk-*"))
+    assert not list(tmp_path.glob(".benchling-tools-*"))
 
 
 @pytest.mark.parametrize("failure", ["status", "network"])
@@ -202,17 +202,17 @@ async def test_download_transport_failure(runtime, files, tmp_path, failure):
     with pytest.raises(UpstreamError):
         await download_blob(runtime.service, BLOB, str(tmp_path / "output"))
     assert not (tmp_path / "output").exists()
-    assert not list(tmp_path.glob(".benchlingtk-*"))
+    assert not list(tmp_path.glob(".benchling-tools-*"))
 
 
 async def test_output_race_and_invalid_metadata(runtime, fake, files, tmp_path, monkeypatch):
     def occupied(*args):
         raise FileExistsError
 
-    monkeypatch.setattr("benchlingtk.blob_download.os.link", occupied)
+    monkeypatch.setattr("benchling_tools.blob_download.os.link", occupied)
     with pytest.raises(ConflictError):
         await download_blob(runtime.service, BLOB, str(tmp_path / "output"))
-    assert not list(tmp_path.glob(".benchlingtk-*"))
+    assert not list(tmp_path.glob(".benchling-tools-*"))
     fake.attachments[ATTACHMENT]["id"] = "attachment_other"
     with pytest.raises(UpstreamError) as error:
         await runtime.service.get_blob(ATTACHMENT)

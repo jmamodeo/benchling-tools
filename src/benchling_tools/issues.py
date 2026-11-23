@@ -23,7 +23,7 @@ from . import __version__
 from .errors import ValidationError
 from .redact import registered_secrets
 
-REPOSITORY = "jmamodeo/benchlingtk"
+REPOSITORY = "jmamodeo/benchling-tools"
 NEW_ISSUE_URL = f"https://github.com/{REPOSITORY}/issues/new"
 # GitHub rejects very long prefilled URLs. Above this length the URL carries the
 # title and label only, and the body is pasted or filed with `gh`.
@@ -238,7 +238,7 @@ def render_body(request: IssueDraftRequest, environment: dict[str, str]) -> str:
         "",
         "## Environment",
         "",
-        f"- benchlingtk version: {environment['toolkit_version']}",
+        f"- benchling-tools version: {environment['toolkit_version']}",
         f"- Interface: {request.interface.value.upper()}",
         f"- Command or MCP tool: `{request.command_or_tool}`",
         f"- Python version: {environment['python_version']}",
@@ -260,7 +260,7 @@ def render_body(request: IssueDraftRequest, environment: dict[str, str]) -> str:
         "",
         "---",
         "",
-        "_Drafted with the benchlingtk issue draft tool after the user agreed to log it. "
+        "_Drafted with the benchling-tools issue draft tool after the user agreed to log it. "
         "No tenant URLs, record IDs, secrets, or personal data are included._",
     ]
     return "\n".join(lines) + "\n"
@@ -334,7 +334,7 @@ def build_issue_draft(spec: dict[str, Any]) -> dict[str, Any]:
         "filed": False,
         "next_step": (
             "Show the user this title and body. File it only after they say yes: open "
-            "new_issue_url, or run `benchlingtk issue draft --spec FILE --file` with gh "
+            "new_issue_url, or run `benchling-tools issue draft --spec FILE --file` with gh "
             "signed in."
         ),
     }

@@ -9,7 +9,7 @@ build/
 dist/
 .coverage
 htmlcov/
-.benchlingtk/
+.benchling-tools/
 .env
 .env.*
 work/live-test/

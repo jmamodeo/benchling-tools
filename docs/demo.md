@@ -8,7 +8,7 @@ The picture and the [asciinema cast](demo.cast) are a scripted playback of one r
 ```console
 # 1. Read an entry (envelope trimmed for readability)
 
-$ benchlingtk entry inspect etr_abc123 --env demo
+$ benchling-tools entry inspect etr_abc123 --env demo
 {
   "ok": true,
   "data": {
@@ -20,11 +20,11 @@ $ benchlingtk entry inspect etr_abc123 --env demo
 
 # 2. Preview: reads Benchling, writes nothing remotely
 
-$ benchlingtk changes plan --entry etr_abc123 --family table --spec set-cell-b2.json --env demo
+$ benchling-tools changes plan --entry etr_abc123 --family table --spec set-cell-b2.json --env demo
 {
   "ok": true,
   "data": {
-    "id": "b7a812bc920d407e9df9b23ef6ef749e",
+    "id": "28e6765ddcbc4b28bc25386a6c6923c2",
     "family": "table",
     "env": "demo",
     "preconditions": {
@@ -45,7 +45,7 @@ remote writes so far: 0
 
 # 3. Apply the first plan
 
-$ benchlingtk changes apply b7a812bc920d407e9df9b23ef6ef749e --env demo
+$ benchling-tools changes apply 28e6765ddcbc4b28bc25386a6c6923c2 --env demo
 {
   "ok": true,
   "data": {
@@ -72,7 +72,7 @@ $ benchlingtk changes apply b7a812bc920d407e9df9b23ef6ef749e --env demo
 
 # 4. The second plan was previewed against the old entry version: apply is refused
 
-$ benchlingtk changes apply c2eac4de90534faeabea68cac9cf2a05 --env demo
+$ benchling-tools changes apply da9c14532b7a4276a7948041d3505c1f --env demo
 {
   "ok": false,
   "error": {
@@ -89,7 +89,7 @@ $ benchlingtk changes apply c2eac4de90534faeabea68cac9cf2a05 --env demo
 
 # 5. A plan cannot be applied twice
 
-$ benchlingtk changes apply b7a812bc920d407e9df9b23ef6ef749e --env demo
+$ benchling-tools changes apply 28e6765ddcbc4b28bc25386a6c6923c2 --env demo
 {
   "ok": false,
   "error": {
@@ -97,7 +97,7 @@ $ benchlingtk changes apply b7a812bc920d407e9df9b23ef6ef749e --env demo
     "message": "Plan has already been applied or attempted",
     "retryable": false,
     "details": {
-      "plan_id": "b7a812bc920d407e9df9b23ef6ef749e",
+      "plan_id": "28e6765ddcbc4b28bc25386a6c6923c2",
       "status": "succeeded"
     }
   }
@@ -111,7 +111,7 @@ remote writes in total: 1
 changes_apply(env="demo", plan_id=...) ->
 {
   "code": "unsupported_capability",
-  "message": "MCP writes are disabled for demo; restart with `benchlingtk mcp serve --allow-writes demo`",
+  "message": "MCP writes are disabled for demo; restart with `benchling-tools mcp serve --allow-writes demo`",
   "retryable": false,
   "details": {}
 }

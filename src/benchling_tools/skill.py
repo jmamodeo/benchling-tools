@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .errors import NotFoundError
 
-SKILL_RELATIVE_PATH = Path("share", "benchlingtk", "SKILL.md")
+SKILL_RELATIVE_PATH = Path("share", "benchling-tools", "SKILL.md")
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -54,7 +54,7 @@ def find_skill_md() -> Path:
         if candidate.is_file():
             return Path(os.path.abspath(candidate))
     raise NotFoundError(
-        "SKILL.md was not found. Reinstall benchlingtk with pip, or run from a source checkout.",
+        "SKILL.md was not found. Reinstall benchling-tools with pip, or run from a source checkout.",
         details={"searched": [str(path) for path in skill_candidates()]},
     )
 

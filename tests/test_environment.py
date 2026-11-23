@@ -9,20 +9,21 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs
 
 import httpx
+import keyring
 import pytest
 from conftest import configure_env
 from mcp.shared.memory import create_connected_server_and_client_session as Client
 from typer.testing import CliRunner
 
-from benchlingtk.auth import AuthManager
-from benchlingtk.cli import app
-from benchlingtk.environment import ENV_NAME, EnvironmentConfigStore, write_private
-from benchlingtk.errors import AuthenticationError, ValidationError
-from benchlingtk.keychain import SERVICE_NAME, Keychain
-from benchlingtk.mcp_server import build_mcp_server
-from benchlingtk.models import AuthMethod, Environment
-from benchlingtk.runtime import Runtime, RuntimePool
-from benchlingtk.tls import verified_context
+from benchling_tools.auth import AuthManager
+from benchling_tools.cli import app
+from benchling_tools.environment import ENV_NAME, EnvironmentConfigStore, write_private
+from benchling_tools.errors import AuthenticationError, ValidationError
+from benchling_tools.keychain import SERVICE_NAME, Keychain
+from benchling_tools.mcp_server import build_mcp_server
+from benchling_tools.models import AuthMethod, Environment
+from benchling_tools.runtime import Runtime, RuntimePool
+from benchling_tools.tls import verified_context
 
 SECRET = "sensitive-test-secret"
 
@@ -259,6 +260,11 @@ def test_cli_status_lists_the_environment_without_a_secret_or_network(monkeypatc
     listed = json.dumps(EnvironmentConfigStore().metadata())
     assert SECRET not in listed
     assert SERVICE_NAME == "benchlingtk"
+
+
+def test_legacy_keychain_credentials_remain_accessible():
+    keyring.set_password("benchlingtk", "dev", SECRET)
+    assert Keychain().get("dev") == SECRET
 
 
 @pytest.mark.asyncio
