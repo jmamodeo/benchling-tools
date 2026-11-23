@@ -15,6 +15,10 @@ from benchling_tools import cli
 from benchling_tools.environment import EnvironmentConfigStore
 from benchling_tools.mcp_server import build_mcp_server
 
+RESULT_SPEC = {
+    "table_id": "strtbl_example",
+    "assay_results": [{"schemaId": "assaysch_abc123", "fields": {"ct": {"value": 12}}}],
+}
 TABLE_SPEC = {"operation": "append_rows", "table_part_id": TABLE_PART, "rows": [["D", "4"]]}
 
 
@@ -118,6 +122,30 @@ def _without_clock(value):
             {"entry": "EXP-1", "limit": 2},
         ),
         (
+            ["results", "capacity", ENTRY_ID],
+            "results_capacity",
+            {"reference": ENTRY_ID},
+        ),
+        (
+            [
+                "results",
+                "capacity",
+                ENTRY_ID,
+                "--spec-json",
+                json.dumps(RESULT_SPEC),
+                "--include-schema-pending",
+                "--created-after",
+                "2026-01-01T00:00:00Z",
+            ],
+            "results_capacity",
+            {
+                "reference": ENTRY_ID,
+                "spec": RESULT_SPEC,
+                "include_schema_pending": True,
+                "created_after": "2026-01-01T00:00:00Z",
+            },
+        ),
+        (
             ["results", "rows", "docpart_rt1", "--limit", "2"],
             "results_rows",
             {"part_id": "docpart_rt1", "limit": 2},
@@ -126,6 +154,7 @@ def _without_clock(value):
 )
 async def test_read_replies_match(cli_reply, mcp_reply, fake, args, tool, arguments) -> None:
     fake.add_results_table()
+    fake.add_example_results_part()
     printed = await cli_reply(*args)
     assert printed["meta"] == {"env": "sandbox", "tenant_url": TENANT}
     assert _without_clock(printed) == _without_clock(await mcp_reply(tool, **arguments))

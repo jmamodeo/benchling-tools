@@ -1564,6 +1564,7 @@ class BenchlingService:
         note: dict[str, Any],
         *,
         unstructured: bool,
+        parts: list[dict[str, Any]] | None = None,
     ) -> str | None:
         """Return the V3 document-part id for a V2 ``strtbl_`` note, when one part matches.
 
@@ -1571,17 +1572,19 @@ class BenchlingService:
         otherwise matches its result schema, and its name when several parts share
         that schema. The only results part is used when the note has no schema.
         An unstructured table matches only by handle. ``strtbl_`` is not itself a
-        document-part id.
+        document-part id. ``parts`` are the entry's V3 parts when the caller has
+        already read them; otherwise they are read here.
         """
         table_id = note.get("table_id")
         if not isinstance(table_id, str) or not table_id:
             return None
-        parts = [
-            item
-            async for item in self.api.paginate(
-                f"/entry/{entry_id}/parts/items", params={"pageSize": 100}
-            )
-        ]
+        if parts is None:
+            parts = [
+                item
+                async for item in self.api.paginate(
+                    f"/entry/{entry_id}/parts/items", params={"pageSize": 100}
+                )
+            ]
         predicate = is_unstructured_table if unstructured else is_results_table
         typed = [part for part in parts if predicate(part) and isinstance(part.get("id"), str)]
         direct = [part for part in typed if table_id in table_handle_ids(part)]

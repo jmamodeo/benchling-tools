@@ -1602,6 +1602,83 @@ _SPECIFICATION = McpParam(
 )
 
 
+_RESULTS_SPECIFICATION = McpParam(
+    annotation=Annotated[Any, WithJsonSchema(CHANGE_SPECIFICATION_SCHEMA)],
+    description=(
+        "Result upload spec as a JSON object, the same one changes plan takes for the "
+        "results family: table_id and assay_results, or batches of them. Only the "
+        "number of records per table is used; nothing is saved."
+    ),
+    convert=_mcp_specification,
+)
+
+
+@results_app.command("capacity")
+@command(read_only=True, cli_only=("spec_json",), mcp_params={"spec": _RESULTS_SPECIFICATION})
+async def results_capacity(
+    call: Call,
+    reference: str = typer.Argument(..., help=_ENTRY_REF_HELP),
+    plan_id: str | None = typer.Option(
+        None,
+        "--plan",
+        help="Result upload plan ID in this home, or a portable plan JSON file.",
+    ),
+    spec: str | None = typer.Option(
+        None, "--spec", help="Result upload spec JSON file path, or '-' for stdin."
+    ),
+    spec_json: str | None = typer.Option(
+        None, "--spec-json", help="The result upload spec as inline JSON text."
+    ),
+    include_schema_pending: bool = typer.Option(
+        False,
+        "--include-schema-pending",
+        help=(
+            "Also count pending results of each table's schema on any entry since "
+            "--created-after. Reported only; not used for fits."
+        ),
+    ),
+    created_after: str | None = typer.Option(
+        None,
+        "--created-after",
+        help="RFC 3339 time, e.g. 2026-11-19T00:00:00Z. Used with --include-schema-pending.",
+    ),
+) -> Any:
+    """Report how many rows each results table on an entry can still take.
+
+    It is the same check changes plan --family results runs before staging
+    anything, run on its own. Benchling limits a results table to 1,000 rows
+    ("Result tables cannot have more than 1000 rows", Benchling Help, Capture
+    data with Results). Pass --plan, or a result upload spec with --spec or
+    --spec-json, to count planned rows; with neither it reports current usage.
+    Nothing is saved.
+
+    MCP: spec is the result upload spec as a JSON object.
+
+    Each table has table_id, part_id, name, schema_id, row_count (V3 rowCount),
+    submission_status, placeholder_rows, used_rows, pending_known, planned, limit,
+    remaining_without_pending, remaining_with_pending, and fits. A table whose
+    only row is an empty unsubmitted placeholder uses 0 rows. pending_known
+    counts still-pending records from this home's applied upload plans for the
+    entry. Benchling does not document whether pending results count toward the
+    limit, so fits is unknown_pending when the rows fit only if they do not
+    count; fits is unknown when no single V3 part matches the table. An already
+    applied --plan adds no planned rows. It exits 0 even when a table does not
+    fit; relay next_step. Reads only.
+    """
+    request = (
+        None
+        if spec is None and spec_json is None
+        else _plan_request(PlanFamily.RESULTS, spec, None, None, [], spec_json)
+    )
+    return await call.runtime.planner.results_capacity(
+        reference,
+        plan_id=plan_id,
+        spec=request,
+        include_schema_pending=include_schema_pending,
+        created_after=created_after,
+    )
+
+
 @changes_app.command("plan")
 @command(read_only=False, cli_only=("spec_json",), mcp_params={"spec": _SPECIFICATION})
 async def changes_plan(
@@ -1650,7 +1727,11 @@ async def changes_plan(
     names a field by display name, system name, or field-definition id.
 
     Inline result uploads pass table_id and assay_results, or batches containing
-    table_id and assay_results for each table, up to 500 records per table. Result
+    table_id and assay_results for each table. This toolkit takes up to 500
+    records per table in one plan (Benchling documents 4,000 results per
+    bulk-create request). The plan is refused with reason table_capacity_exceeded,
+    before any file is staged, when existing plus planned rows would pass a
+    table's 1,000-row limit; see results capacity. Result
     fields accept system names, field-definition IDs, or display names. Display
     names are translated to system names in the plan; ambiguous names are rejected.
     Dropdown values are option IDs (sfso_…), not labels. Schema-constrained

@@ -71,6 +71,7 @@ Every command, the six change families, spec shapes, result uploads and attachme
 | `users list` | List visible users by handle, email, name, ID, or organization. |
 | `users get` | Read a visible user by ID or exact handle. |
 | `entry list` | List entries with server-side filters, including creator and author. |
+| `results capacity` | Report each results table's used rows, known pending results, planned rows, and remaining room under Benchling's 1,000-row limit. Read-only. |
 
 For example, resolve a handle with `benchling-tools users get HANDLE --env dev`, then use the returned ID with `benchling-tools entry list --creator USER_ID --folder lib_example --env dev`. Handles may also be passed directly to `--creator` or `--author`.
 
@@ -78,6 +79,12 @@ For result uploads, preview defaults a missing `projectId` to the entry's projec
 the plan if none is available. An explicit `projectId: null` requests creator-only access,
 but some tenants reject it. Apply checks every batch before uploading attachments; if a
 result creation fails after an upload, the error identifies unlinked blobs.
+
+Preview also refuses a result upload that would push any results table past Benchling's
+1,000-row table limit, with `details.reason` `table_capacity_exceeded`, before any file
+is staged. Run `benchling-tools results capacity ENTRY --spec FILE --env dev` to see the
+same numbers first. 500 records per table in one plan is this toolkit's own batch size;
+Benchling documents 4,000 results per bulk-create request.
 
 ## MCP server
 
@@ -110,7 +117,6 @@ The full safety model, design tradeoffs, exit codes, and known limitations are i
 - [SKILL.md](SKILL.md): the agent guide, also installed with the package (`benchling-tools skill show`)
 - [CLI and MCP reference](docs/reference.md): every command and tool, configuration, safety model, exit codes, and known limitations
 - [Setup guide](docs/setup.md), [API limitations](docs/api-limitations.md), and [research record](docs/research.md)
-- [Downstream app coverage matrix](docs/coverage-matrix.md): testing and debugging workflows mapped to commands and MCP tools, with status and follow-ups
 - [Threat model](docs/threat-model.md): credentials, stale or replayed plans, write scoping, and agent misuse, including the limits of those controls
 - [ARCHITECTURE.md](ARCHITECTURE.md): the plan, apply, and journal sequence and the module map
 - [CHANGELOG.md](CHANGELOG.md)
