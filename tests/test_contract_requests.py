@@ -381,3 +381,70 @@ def test_recorded_list_enums_are_documented_query_values() -> None:
     sort = _query_parameter("benchling-v2", "/entries", "sort")["schema"]
     assert sort["default"] == "modifiedAt:desc"
     assert sorted(ENTRY_SORTS.values()) == sorted(LISTS["enums"]["GET /api/v2/entries"]["sort"])
+
+
+INVENTORY_ROUTES = {
+    "/containers",
+    "/containers/{container_id}",
+    "/registries",
+    "/registries/{registry_id}/registered-entities:bulk-get",
+    "/locations/{location_id}",
+    "/boxes/{box_id}",
+    "/plates/{plate_id}",
+}
+
+
+def _template_pattern(route: str) -> str:
+    pieces = re.split(r"(\{[^}]+\})", route)
+    return "".join("[^/]+" if piece.startswith("{") else re.escape(piece) for piece in pieces)
+
+
+def _query_parameters(spec: dict[str, Any], operation: dict[str, Any]) -> set[str]:
+    names = set()
+    for parameter in operation.get("parameters", []):
+        if "$ref" in parameter:
+            parameter = spec["components"]["parameters"][parameter["$ref"].rsplit("/", 1)[-1]]
+        if parameter.get("in") == "query":
+            names.add(parameter["name"])
+    return names
+
+
+def test_every_v2_route_used_is_a_vendored_path() -> None:
+    paths = _spec("benchling-v2")["paths"]
+    routes = _contract("benchling-v2")["routes_used"]
+    assert INVENTORY_ROUTES <= set(routes)
+    for route in routes:
+        assert route in paths, route
+
+
+async def test_inventory_reads_use_listed_v2_routes_and_parameters(runtime, fake) -> None:
+    """Container find and location reads send only routes and query names the V2 spec declares."""
+    fake.add_stored_containers()
+    await runtime.service.find_containers(barcode="BAR-SOURCE", limit=10)
+    await runtime.service.find_containers(barcode=["BAR-SOURCE", "BAR-DEST"])
+    await runtime.service.find_containers(name="Boxed tube")
+    await runtime.service.find_containers(registry_ids=["REG-0001"])
+    await runtime.service.find_containers(
+        registry_ids=["REG-0001"], registry="src_registry1", in_storage="loc_freezer1"
+    )
+    await runtime.service.find_containers(contents=["ent_sample1"], in_storage="box_rack1")
+    await runtime.service.find_containers(name="Boxed tube", in_storage="box_rack1")
+    await runtime.service.get_container("con_well1", location=True)
+    await runtime.service.get_container("con_boxed1", location=True)
+    spec = _spec("benchling-v2")
+    routes = _contract("benchling-v2")["routes_used"]
+    used = set()
+    for call in fake.calls:
+        if not call.path.startswith("/api/v2/"):
+            continue
+        assert call.method == "GET", call.path
+        path = call.path.removeprefix("/api/v2")
+        matches = [route for route in routes if re.fullmatch(_template_pattern(route), path)]
+        assert len(matches) == 1, (call.path, matches)
+        used.add(matches[0])
+        declared = _query_parameters(spec, spec["paths"][matches[0]]["get"])
+        assert set(call.params) <= declared, (call.path, call.params)
+        allowed = _allowed_for("GET", call.path)
+        assert allowed is not None, call.path
+        assert set(call.params) <= allowed, (call.path, call.params)
+    assert used == INVENTORY_ROUTES

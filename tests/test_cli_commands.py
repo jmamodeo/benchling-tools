@@ -1309,3 +1309,72 @@ def test_container_find_help_cites_list_containers() -> None:
     help_text = plain_stdout(["container", "find", "--help"])
     for token in ("100 per request", "invalidBarcodes", "List containers"):
         assert token in help_text, token
+
+
+def test_container_find_by_registry_id_and_storage(invoke, fake) -> None:
+    fake.add_stored_containers()
+    code, payload, _ = invoke(
+        "container",
+        "find",
+        "--registry-id",
+        "REG-0001",
+        "--registry-id",
+        "REG-9999",
+        "--registry",
+        "src_registry1",
+        "--in",
+        "plt_plate1",
+    )
+    assert code == 0, payload
+    data = payload["data"]
+    assert [item["entity_id"] for item in data["entities"]] == ["ent_registered1"]
+    assert data["unregistered_ids"] == ["REG-9999"]
+    assert [item["container_id"] for item in data["found"]] == ["con_well1"]
+    assert data["truncated"] is False
+    listed = [call for call in fake.calls if call.path == "/api/v2/containers"]
+    assert listed[-1].params["ancestorStorageId"] == "plt_plate1"
+    assert listed[-1].params["storageContentsIds"] == "ent_registered1"
+
+    code, payload, _ = invoke("container", "find", "--contents", "ent_sample1", "--limit", "500")
+    assert code == 0, payload
+    assert [item["container_id"] for item in payload["data"]["found"]] == [
+        "con_source1",
+        "con_batch1",
+        "con_boxed1",
+    ]
+
+
+def test_container_find_conflicting_filters_are_validation_errors(invoke, fake) -> None:
+    code, payload, _ = invoke(
+        "container", "find", "--barcode", "BAR-SOURCE", "--contents", "ent_sample1"
+    )
+    assert code == 2
+    assert payload["error"]["code"] == "validation_error"
+    assert "exactly one" in payload["error"]["message"]
+    code, payload, _ = invoke("container", "find", "--name", "Source vial", "--limit", "500")
+    assert code == 2
+    assert payload["error"]["code"] == "validation_error"
+    assert fake.calls == []
+
+
+def test_container_get_location_returns_the_parent_chain(invoke, fake) -> None:
+    fake.add_stored_containers()
+    code, payload, _ = invoke("container", "get", "con_well1", "--location")
+    assert code == 0, payload
+    path = payload["data"]["location_path"]
+    assert [(item["id"], item["kind"]) for item in path] == [
+        ("plt_plate1:A1", "well"),
+        ("plt_plate1", "plate"),
+        ("loc_freezer1", "location"),
+        ("loc_room1", "location"),
+    ]
+    assert fake.writes() == []
+
+
+def test_container_find_and_get_help_cite_the_inventory_docs() -> None:
+    find_help = plain_stdout(["container", "find", "--help"])
+    for token in ("storageContentsIds", "ancestorStorageId", "Bulk get registered", "--in"):
+        assert token in find_help, token
+    get_help = plain_stdout(["container", "get", "--help"])
+    for token in ("--location", "Get location", "Get box", "Get plate", "10 levels"):
+        assert token in get_help, token

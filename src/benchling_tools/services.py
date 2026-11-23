@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from contextlib import aclosing
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote, urlparse
@@ -113,6 +114,14 @@ ENTRY_BULK_GET_LIMIT = 100
 ASSAY_RESULT_BULK_GET_LIMIT = 200
 RESULT_ID_FILTER_LIMIT = 100
 CONTAINER_BARCODE_CHUNK = 100
+CONTAINER_FIND_LIMIT_MAX = 1000
+REGISTRY_ID_CHUNK = 100
+LOCATION_DEPTH_MAX = 10
+STORAGE_KINDS = {
+    "loc_": ("location", "/locations"),
+    "box_": ("box", "/boxes"),
+    "plt_": ("plate", "/plates"),
+}
 V2_ID_LOOKUP_MAX_PAGES = 5
 TEMPLATE_TEXT_PREVIEW_LIMIT = 160
 
@@ -641,6 +650,14 @@ def with_result_ids(record: dict[str, Any], v2_id: Any, v3_id: Any) -> dict[str,
     }
 
 
+def _invalid_ids(exc: ValidationError) -> list[str]:
+    """The ids a V2 400 lists under error.invalidIds, or none."""
+    response = (exc.details or {}).get("response")
+    error = response.get("error") if isinstance(response, dict) else None
+    ids = error.get("invalidIds") if isinstance(error, dict) else None
+    return [str(item) for item in ids] if isinstance(ids, list) else []
+
+
 def _lift_invalid_barcodes(exc: ValidationError) -> None:
     """Copy a V2 400's error.invalidBarcodes to details.invalid_barcodes, with a hint."""
     response = exc.details.get("response")
@@ -654,8 +671,8 @@ def _lift_invalid_barcodes(exc: ValidationError) -> None:
         exc.details["hint"] = "Benchling did not recognise these barcodes: " + ", ".join(barcodes)
 
 
-def _container_summary(barcode: str, container: dict[str, Any]) -> dict[str, Any]:
-    """The fields a barcode preflight reads: container, schema, contents, archived."""
+def _container_summary(barcode: str | None, container: dict[str, Any]) -> dict[str, Any]:
+    """The fields a barcode preflight reads: container, schema, contents, archived, parent."""
     contents: list[dict[str, Any]] = []
     for content in container.get("contents") or []:
         if not isinstance(content, dict):
@@ -678,6 +695,26 @@ def _container_summary(barcode: str, container: dict[str, Any]) -> dict[str, Any
         "schema_id": schema.get("id") if isinstance(schema, dict) else None,
         "contents": contents,
         "archived": container.get("archiveRecord") is not None,
+        "parent_storage_id": container.get("parentStorageId"),
+    }
+
+
+def _schema_id_of(record: dict[str, Any]) -> Any:
+    schema = record.get("schema")
+    return schema.get("id") if isinstance(schema, dict) else record.get("schemaId")
+
+
+def _location_step(
+    storage_id: str, kind: str | None, record: dict[str, Any] | None
+) -> dict[str, Any]:
+    """One location_path item: a location, box or plate, or a well or box position."""
+    record = record or {}
+    return {
+        "id": storage_id,
+        "kind": kind,
+        "name": record.get("name"),
+        "barcode": record.get("barcode"),
+        "schema_id": _schema_id_of(record),
     }
 
 
@@ -1354,13 +1391,54 @@ class BenchlingService:
         ]
         return detail
 
-    async def get_container(self, container_id: str) -> dict[str, Any]:
-        """Return one V2 inventory container by ID."""
+    async def get_container(self, container_id: str, *, location: bool = False) -> dict[str, Any]:
+        """Return one V2 inventory container by ID.
+
+        With location, add location_path from the parent storage up to the top; see
+        _location_path.
+        """
         container_id = self._container_reference(container_id, "container_id")
         payload = await self.api.request(
             "GET", f"/containers/{quote(container_id, safe='')}", version=2
         )
-        return self._v2_object(payload, "container")
+        container = self._v2_object(payload, "container")
+        if not location:
+            return container
+        return {**container, **await self._location_path(container.get("parentStorageId"))}
+
+    async def _location_path(self, parent: object) -> dict[str, Any]:
+        """Follow parentStorageId with one V2 location, box or plate GET per level.
+
+        A ``plt_…:A1`` or ``box_…:A1`` parent adds the well or position before its
+        plate or box. Reading stops at the top, at an unknown ID prefix (kind None),
+        or after LOCATION_DEPTH_MAX reads, which guards against a cycle.
+        """
+        path: list[dict[str, Any]] = []
+        reads = 0
+        while isinstance(parent, str) and parent:
+            if reads >= LOCATION_DEPTH_MAX:
+                return {"location_path": path, "location_truncated": True}
+            storage_id, _, position = parent.partition(":")
+            known = next(
+                (item for prefix, item in STORAGE_KINDS.items() if storage_id.startswith(prefix)),
+                None,
+            )
+            if known is None:
+                path.append(_location_step(parent, None, None))
+                break
+            kind, route = known
+            if position:
+                step = _location_step(parent, "well" if kind == "plate" else "position", None)
+                step["name"] = position
+                path.append(step)
+            payload = await self.api.request(
+                "GET", f"{route}/{quote(storage_id, safe='')}", version=2
+            )
+            reads += 1
+            record = self._v2_object(payload, kind)
+            path.append(_location_step(storage_id, kind, record))
+            parent = record.get("parentStorageId")
+        return {"location_path": path, "location_truncated": False}
 
     async def bulk_get_containers(self, container_ids: list[str]) -> dict[str, dict[str, Any]]:
         """Return V2 containers by ID, keyed by ID, reading up to 100 IDs per call.
@@ -1405,16 +1483,44 @@ class BenchlingService:
         *,
         barcode: object = None,
         name: object = None,
+        contents: object = None,
+        registry_ids: object = None,
+        registry: object = None,
+        in_storage: object = None,
         limit: object = listing.LIST_LIMIT,
         cursor: object = None,
     ) -> dict[str, Any]:
-        """Find V2 containers by exact barcode or exact name.
+        """Find V2 containers by barcode, name, contents, registry ID or storage.
 
         A name or one barcode returns one page. Several barcodes return a summary of
         found, invalid, missing and empty containers; see _find_containers_by_barcodes.
+        contents, registry_ids and in_storage read every page up to limit; see
+        _find_containers_by_filters.
         """
-        if (barcode is None) == (name is None):
-            raise ValidationError("Specify exactly one of barcode or name")
+        filters = [item for item in (barcode, name, contents, registry_ids) if item is not None]
+        if len(filters) > 1 or (not filters and in_storage is None):
+            raise ValidationError(
+                "Specify exactly one of --barcode, --name, --contents or --registry-id, "
+                "or --in on its own"
+            )
+        if barcode is not None and in_storage is not None:
+            raise ValidationError("--in combines with --name, --contents or --registry-id")
+        if registry is not None and registry_ids is None:
+            raise ValidationError("--registry applies only with --registry-id")
+        if contents is not None or registry_ids is not None or in_storage is not None:
+            if cursor is not None:
+                raise ValidationError(
+                    "--cursor pages one barcode or a name; --contents, --registry-id and "
+                    "--in read every page up to --limit"
+                )
+            return await self._find_containers_by_filters(
+                name=name,
+                contents=contents,
+                registry_ids=registry_ids,
+                registry=registry,
+                in_storage=in_storage,
+                limit=limit,
+            )
         page_size = listing.check_limit(limit)
         params: dict[str, Any] = {"pageSize": page_size}
         if barcode is not None:
@@ -1447,20 +1553,162 @@ class BenchlingService:
             raise UpstreamError("Benchling returned an invalid container pagination token")
         return {"items": containers, "next_token": next_token or None}
 
+    async def _find_containers_by_filters(
+        self,
+        *,
+        name: object,
+        contents: object,
+        registry_ids: object,
+        registry: object,
+        in_storage: object,
+        limit: object,
+    ) -> dict[str, Any]:
+        """List containers by storageContentsIds and/or ancestorStorageId, up to limit.
+
+        Entity IDs are sent 100 per request and every page is followed. A container
+        found by two chunks is listed once. truncated is true when more matched.
+        """
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise ValidationError(f"limit must be between 1 and {CONTAINER_FIND_LIMIT_MAX}")
+        if not 1 <= limit <= CONTAINER_FIND_LIMIT_MAX:
+            raise ValidationError(f"limit must be between 1 and {CONTAINER_FIND_LIMIT_MAX}")
+        params: dict[str, Any] = {"pageSize": min(limit + 1, CONTAINER_BARCODE_CHUNK)}
+        if name is not None:
+            params["name"] = self._container_reference(name, "name")
+        if in_storage is not None:
+            storage_id = self._container_reference(in_storage, "in_storage")
+            if not storage_id.startswith(tuple(STORAGE_KINDS)):
+                raise ValidationError(
+                    "--in must be a location (loc_…), box (box_…) or plate (plt_…) ID"
+                )
+            params["ancestorStorageId"] = storage_id
+        reply: dict[str, Any] = {}
+        entity_ids: list[str] | None = None
+        if registry_ids is not None:
+            reply = await self._registered_entities(
+                self._reference_list(registry_ids, "registry_ids", "--registry-id"), registry
+            )
+            entity_ids = list(
+                dict.fromkeys(
+                    item["entity_id"]
+                    for item in reply["entities"]
+                    if isinstance(item["entity_id"], str) and item["entity_id"]
+                )
+            )
+        elif contents is not None:
+            entity_ids = self._reference_list(contents, "contents", "--contents")
+        found: list[dict[str, Any]] = []
+        truncated = False
+        if entity_ids is None:
+            chunks: list[list[str] | None] = [None]
+        else:
+            chunks = [
+                entity_ids[offset : offset + CONTAINER_BARCODE_CHUNK]
+                for offset in range(0, len(entity_ids), CONTAINER_BARCODE_CHUNK)
+            ]
+        seen: set[Any] = set()
+        for chunk in chunks:
+            query = dict(params)
+            if chunk is not None:
+                query["storageContentsIds"] = ",".join(chunk)
+            async with aclosing(
+                self.api.paginate("/containers", version=2, params=query, item_key="containers")
+            ) as pages:
+                async for container in pages:
+                    if container.get("id") in seen:
+                        continue
+                    if len(found) >= limit:
+                        truncated = True
+                        break
+                    seen.add(container.get("id"))
+                    found.append(_container_summary(container.get("barcode"), container))
+            if truncated:
+                break
+        return {**reply, "found": found, "truncated": truncated}
+
+    async def _registered_entities(
+        self, registry_ids: list[str], registry: object
+    ) -> dict[str, Any]:
+        """Resolve registry IDs with V2 registered-entities:bulk-get, 100 per request.
+
+        Without registry, the tenant's only registry (V2 GET /registries) is used.
+        """
+        if registry is None:
+            payload = await self.api.request("GET", "/registries", version=2)
+            registries = payload.get("registries")
+            if not isinstance(registries, list) or any(
+                not isinstance(item, dict) for item in registries
+            ):
+                raise UpstreamError("Benchling returned an unexpected registry list")
+            if len(registries) != 1:
+                choices = [{"id": item.get("id"), "name": item.get("name")} for item in registries]
+                raise ValidationError(
+                    f"{len(registries)} registries are visible; pass --registry with one id",
+                    details={"registries": choices},
+                )
+            registry = registries[0].get("id")
+        registry_id = self._container_reference(registry, "registry")
+        by_registry_id: dict[str, list[dict[str, Any]]] = {}
+        route = f"/registries/{quote(registry_id, safe='')}/registered-entities:bulk-get"
+        for offset in range(0, len(registry_ids), REGISTRY_ID_CHUNK):
+            chunk = registry_ids[offset : offset + REGISTRY_ID_CHUNK]
+            entities = await self._registered_entity_chunk(route, chunk)
+            if not isinstance(entities, list) or any(
+                not isinstance(item, dict) for item in entities
+            ):
+                raise UpstreamError("Benchling returned an unexpected registered entity list")
+            for entity in entities:
+                by_registry_id.setdefault(str(entity.get("entityRegistryId")), []).append(entity)
+        return {
+            "registry": registry_id,
+            "entities": [
+                {
+                    "registry_id": item,
+                    "entity_id": entity.get("id"),
+                    "name": entity.get("name"),
+                    "schema_id": _schema_id_of(entity),
+                }
+                for item in registry_ids
+                for entity in by_registry_id.get(item, [])
+            ],
+            "unregistered_ids": [item for item in registry_ids if item not in by_registry_id],
+        }
+
+    async def _registered_entity_chunk(self, route: str, chunk: list[str]) -> object:
+        """One bulk-get of registry IDs. Benchling rejects the whole request with a 400
+        that lists invalidIds when any ID is not registered; those IDs are dropped and
+        the rest read again, so they end up in unregistered_ids."""
+        while chunk:
+            try:
+                payload = await self.api.request(
+                    "GET", route, version=2, params={"entityRegistryIds": ",".join(chunk)}
+                )
+            except ValidationError as exc:
+                rejected = set(_invalid_ids(exc))
+                rest = [item for item in chunk if item not in rejected]
+                if not rejected or len(rest) == len(chunk):
+                    raise
+                chunk = rest
+                continue
+            return payload.get("entities")
+        return []
+
     def _container_barcodes(self, value: object) -> list[str]:
         """Barcodes in the caller's order without duplicates; one value per barcode."""
+        return self._reference_list(value, "barcode", "--barcode")
+
+    def _reference_list(self, value: object, label: str, flag: str) -> list[str]:
+        """Values in the caller's order without duplicates; one value per item, no commas."""
         values = [value] if isinstance(value, str) else value
         if not isinstance(values, (list, tuple)) or not values:
-            raise ValidationError("barcode must be a non-empty string or list of strings")
-        barcodes: dict[str, None] = {}
+            raise ValidationError(f"{label} must be a non-empty string or list of strings")
+        items: dict[str, None] = {}
         for item in values:
-            text = self._container_reference(item, "barcode")
+            text = self._container_reference(item, label)
             if "," in text:
-                raise ValidationError(
-                    "barcode must identify one container; repeat --barcode for each barcode"
-                )
-            barcodes[text] = None
-        return list(barcodes)
+                raise ValidationError(f"{label} must hold one value; repeat {flag} for each")
+            items[text] = None
+        return list(items)
 
     async def _find_containers_by_barcodes(self, barcodes: list[str]) -> dict[str, Any]:
         """Look up barcodes 100 per V2 GET /containers request, following nextToken.

@@ -1145,10 +1145,26 @@ async def schema_list(
 @container_app.command("get")
 @command(read_only=True)
 async def container_get(
-    call: Call, container_id: str = typer.Argument(..., help="Inventory container ID (con_…).")
+    call: Call,
+    container_id: str = typer.Argument(..., help="Inventory container ID (con_…)."),
+    location: bool = typer.Option(
+        False,
+        "--location",
+        help="Also follow parentStorageId up to the top and return location_path.",
+    ),
 ) -> Any:
-    """Get an inventory container by container ID (con_…)."""
-    return await call.runtime.service.get_container(container_id)
+    """Get an inventory container by container ID (con_…).
+
+    --location adds location_path, from the container's parent up to the top.
+    Each item has id, kind (well, position, plate, box or location), name,
+    barcode and schema_id. A parentStorageId of loc_…, box_… or plt_… is read
+    with V2 Get location, Get box or Get plate, one read per level; a
+    coordinate such as plt_…:A1 adds the well (or box position) before its
+    plate or box. An unknown ID prefix ends the path with kind null. Reading
+    stops after 10 levels, a guard against cycles, and location_truncated is
+    then true.
+    """
+    return await call.runtime.service.get_container(container_id, location=location)
 
 
 @container_app.command("find")
@@ -1164,28 +1180,91 @@ async def container_find(
         ),
     ),
     name: str | None = typer.Option(None, "--name", help="Exact container name."),
-    limit: int = typer.Option(50, "--limit", min=1, max=100, help=_LIMIT_HELP),
-    cursor: str | None = typer.Option(None, "--cursor", help=_CURSOR_HELP),
+    contents: list[str] | None = typer.Option(
+        None,
+        "--contents",
+        help=(
+            "Entity ID a container holds (sent as storageContentsIds). Repeat for "
+            "several; one value holds one ID (no commas)."
+        ),
+    ),
+    registry_ids: list[str] | None = typer.Option(
+        None,
+        "--registry-id",
+        help=(
+            "Entity registry ID, resolved to its entity in --registry. Repeat for "
+            "several; one value holds one ID (no commas)."
+        ),
+    ),
+    registry: str | None = typer.Option(
+        None,
+        "--registry",
+        help="Registry ID (src_…) for --registry-id. Omit when the tenant has one registry.",
+    ),
+    in_storage: str | None = typer.Option(
+        None,
+        "--in",
+        help="Location, box or plate ID (loc_…, box_…, plt_…); sent as ancestorStorageId.",
+    ),
+    limit: int = typer.Option(
+        50,
+        "--limit",
+        min=1,
+        max=1000,
+        help=(
+            "Page size, from 1 to 100, for --name or one --barcode. With --contents, "
+            "--registry-id or --in: most containers to return, from 1 to 1000."
+        ),
+    ),
+    cursor: str | None = typer.Option(
+        None,
+        "--cursor",
+        help=_CURSOR_HELP + " Only for --name or one --barcode.",
+    ),
 ) -> Any:
-    """Find containers by exact barcode (repeatable) or exact name.
+    """Find containers by barcode (repeatable), name, contents, registry ID or storage.
+
+    Give exactly one of --barcode, --name, --contents or --registry-id, or --in
+    on its own. --in combines with --name, --contents and --registry-id.
 
     One --barcode, or --name, returns one page as items and next_token. Several
     --barcode values return requested, found, invalid_barcodes,
     missing_barcodes (valid, but no container matched) and empty_containers
     (found with no contents). Each found item has barcode, container_id,
-    schema_id, archived, and contents with entity_id, entity_registry_id and
-    batch_id. The barcodes are sent to V2 GET /containers 100 per request and
-    every page is read, so --limit and --cursor do not apply. Benchling answers
-    an invalid barcode with a 400 that lists invalidBarcodes ("returns a 400
-    error that includes a list of which barcodes are invalid", Benchling docs,
-    List containers). Those barcodes are reported, not failed, and the rest of
-    that chunk is read again once. With one barcode, an invalid barcode is a
-    validation_error with details.invalid_barcodes and a hint.
+    schema_id, archived, parent_storage_id, and contents with entity_id,
+    entity_registry_id and batch_id. The barcodes are sent to V2 GET
+    /containers 100 per request and every page is read, so --limit and
+    --cursor do not apply. Benchling answers an invalid barcode with a 400 that
+    lists invalidBarcodes ("returns a 400 error that includes a list of which
+    barcodes are invalid", Benchling docs, List containers). Those barcodes are
+    reported, not failed, and the rest of that chunk is read again once. With
+    one barcode, an invalid barcode is a validation_error with
+    details.invalid_barcodes and a hint.
 
-    MCP: barcodes is a list; one item keeps the one-page reply.
+    --contents, --registry-id and --in return found (the same items) and
+    truncated, reading every page up to --limit containers (default 50, at
+    most 1000). Entity IDs are sent as storageContentsIds ("Restricts results
+    to those that hold containers with at least one of the specified
+    entities", List containers) 100 per request, and --in as
+    ancestorStorageId ("Restricts results to those located in the specified
+    inventory"). --registry-id values are resolved with V2 Bulk get registered
+    entities in --registry, or in the tenant's only registry from V2 List
+    registries; with several, the error lists their id and name. The reply
+    adds registry, entities (registry_id, entity_id, name, schema_id) and
+    unregistered_ids (IDs the registry did not return).
+
+    MCP: barcodes, contents and registry_ids are lists; one barcode keeps the
+    one-page reply.
     """
     return await call.runtime.service.find_containers(
-        barcode=barcodes or None, name=name, limit=limit, cursor=cursor
+        barcode=barcodes or None,
+        name=name,
+        contents=contents or None,
+        registry_ids=registry_ids or None,
+        registry=registry,
+        in_storage=in_storage,
+        limit=limit,
+        cursor=cursor,
     )
 
 
