@@ -14,10 +14,11 @@ All notable changes to this project are documented here. The format is based on
 ### Changed
 
 - A `usage_error` for an unknown option lists that command's long options in `details.valid_options` and, where known, the right alternative in `details.hint`: `results pending` names its four sources, and `results list --plan` points to `results pending --plan` or `results verify`. An extra positional argument that looks like an entry reference (`results pending EXP-1`, `results list etr_…`) gets the hint `Pass the entry with --entry REF`, and a plan ID gets `--plan`.
-- Result upload plans accept schema display names as field keys, translate them to system names, and show the mapping in the preview; ambiguous names are rejected.
+- Result upload plans accept schema display names as field keys, translate them to system names, and show the mapping in the preview. An ambiguous name is reported as an `ambiguous_field` row problem alongside the row's other problems, and unknown-field errors list `available_display_names` only where display names are accepted (not entry field updates).
 
 ### Fixed
 
+- Result upload plans validate unconstrained links and decimal bounds correctly and report multiple field constraint problems per row, including invalid or unavailable dropdown options.
 - Result uploads default missing `projectId` values to the entry's project at preview, reject unresolved projects, check all batches before uploading blobs, and report unlinked blobs after failed creation. Explicit null remains creator-only and may be rejected by some tenants.
 
 ## [0.7.0] - 2026-11-22

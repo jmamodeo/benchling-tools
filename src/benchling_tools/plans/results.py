@@ -20,7 +20,7 @@ from ..models import (
     ChangeJournal,
     ChangePlan,
 )
-from ..services import field_definition_type, is_attachment_field
+from ..services import field_definition_type, is_attachment_field, link_kind
 from . import readback
 from .base import PlanParts, write_event_details
 from .blobs import (
@@ -376,16 +376,43 @@ class ResultsPlanning(ResultUpdatePlanning):
                         row_index=plan_row_offset + row_index,
                     )
                     record["fields"] = deepcopy(raw_record["fields"])
+                field_errors: list[ValidationError | UnsupportedError] = []
                 normalized, _, field_name_map = self._normalize_schema_field_updates(
                     record["fields"],
                     definitions,
                     require_all_required=True,
                     local_files=stager is not None,
                     allow_display_names=True,
+                    value_errors=field_errors,
                 )
-                await self._validate_result_field_constraints(
-                    normalized, definitions, linked_schema_cache
+                field_errors.extend(
+                    await self._validate_result_field_constraints(
+                        normalized, definitions, linked_schema_cache
+                    )
                 )
+                for exc in field_errors:
+                    reason = exc.details.get("reason")
+                    if not isinstance(reason, str):
+                        reason = (
+                            "invalid_field_value"
+                            if isinstance(exc, ValidationError)
+                            and "schema field" in exc.message.lower()
+                            else "invalid_row"
+                        )
+                    problems.append(
+                        {
+                            "row_index": plan_row_offset + row_index,
+                            "batch_row_index": row_index,
+                            "table_id": table_id,
+                            "reason": reason,
+                            "message": exc.message,
+                            "details": exc.details,
+                        }
+                    )
+                if field_errors:
+                    planned.append(record)
+                    client_record_ids.append(str(uuid.uuid4()))
+                    continue
                 record["fields"] = normalized
                 if "id" in record:
                     raise UnsupportedError(
@@ -437,7 +464,8 @@ class ResultsPlanning(ResultUpdatePlanning):
         fields: dict[str, Any],
         definitions: list[dict[str, Any]],
         linked_schema_cache: dict[str, str | None],
-    ) -> None:
+    ) -> list[ValidationError]:
+        problems: list[ValidationError] = []
         for definition in definitions:
             system_name = definition.get("systemName")
             if not isinstance(system_name, str) or system_name not in fields:
@@ -456,28 +484,67 @@ class ResultsPlanning(ResultUpdatePlanning):
                     if isinstance(item, dict) and isinstance(item.get("id"), str)
                 }
                 if not option_ids:
-                    raise ValidationError(
-                        "Dropdown field options are unavailable for validation",
-                        details={"reason": "dropdown_options_unavailable", "field": system_name},
+                    problems.append(
+                        ValidationError(
+                            "Dropdown field options are unavailable for validation",
+                            details={
+                                "reason": "dropdown_options_unavailable",
+                                "field": system_name,
+                                "value": value,
+                            },
+                        )
                     )
-                if any(item not in option_ids for item in values):
-                    raise ValidationError(
-                        "Dropdown value is not one of the field's options",
-                        details={"reason": "invalid_dropdown_value", "field": system_name},
+                    continue
+                invalid = next((item for item in values if item not in option_ids), None)
+                if invalid is not None:
+                    problems.append(
+                        ValidationError(
+                            "Dropdown value is not one of the field's options",
+                            details={
+                                "reason": "invalid_dropdown_value",
+                                "field": system_name,
+                                "value": invalid,
+                            },
+                        )
                     )
             elif field_type == "LINK":
+                kind = link_kind(definition)
+                if kind != "schema_constrained":
+                    prefixes = {"entry": ("etr_",), "storable": ("con_", "box_", "plt_", "loc_")}
+                    allowed = prefixes.get(kind)
+                    if allowed and any(
+                        not any(
+                            item.startswith(prefix) and len(item) > len(prefix)
+                            for prefix in allowed
+                        )
+                        for item in values
+                    ):
+                        problems.append(
+                            ValidationError(
+                                "Schema field value has an invalid link ID",
+                                details={
+                                    "reason": "invalid_field_value",
+                                    "field": system_name,
+                                    "value": value,
+                                },
+                            )
+                        )
+                    continue
                 link_definition = definition.get("linkDefinition")
                 allowed_schema_id = (
                     link_definition.get("id") if isinstance(link_definition, dict) else None
                 )
                 if not isinstance(allowed_schema_id, str) or not allowed_schema_id:
-                    raise ValidationError(
-                        "Linked field does not expose an allowed schema",
-                        details={
-                            "reason": "link_definition_unavailable",
-                            "field": system_name,
-                        },
+                    problems.append(
+                        ValidationError(
+                            "Linked field does not expose an allowed schema",
+                            details={
+                                "reason": "link_definition_unavailable",
+                                "field": system_name,
+                            },
+                        )
                     )
+                    continue
                 for entity_id in values:
                     if entity_id not in linked_schema_cache:
                         try:
@@ -488,25 +555,32 @@ class ResultsPlanning(ResultUpdatePlanning):
                             linked_schema_cache[entity_id] = None
                     actual_schema_id = linked_schema_cache[entity_id]
                     if actual_schema_id is None:
-                        raise ValidationError(
-                            "Linked entity was not found",
-                            details={
-                                "reason": "link_target_not_found",
-                                "field": system_name,
-                                "entity_id": entity_id,
-                            },
+                        problems.append(
+                            ValidationError(
+                                "Linked entity was not found",
+                                details={
+                                    "reason": "link_target_not_found",
+                                    "field": system_name,
+                                    "entity_id": entity_id,
+                                },
+                            )
                         )
+                        break
                     if actual_schema_id != allowed_schema_id:
-                        raise ValidationError(
-                            "Linked entity does not use a schema allowed by this field",
-                            details={
-                                "reason": "invalid_link_target",
-                                "field": system_name,
-                                "entity_id": entity_id,
-                                "expected_schema_id": allowed_schema_id,
-                                "actual_schema_id": actual_schema_id,
-                            },
+                        problems.append(
+                            ValidationError(
+                                "Linked entity does not use a schema allowed by this field",
+                                details={
+                                    "reason": "invalid_link_target",
+                                    "field": system_name,
+                                    "entity_id": entity_id,
+                                    "expected_schema_id": allowed_schema_id,
+                                    "actual_schema_id": actual_schema_id,
+                                },
+                            )
                         )
+                        break
+        return problems
 
     @staticmethod
     def _result_validation_summary(

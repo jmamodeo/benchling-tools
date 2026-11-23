@@ -12,8 +12,16 @@ from fake_benchling import ENTRY_ID
 
 from benchling_tools.errors import ConflictError, PartialCompletionError, ValidationError
 from benchling_tools.export import export_dataset
+from benchling_tools.plans.result_update import _parse_cell
 
 MODIFIED = "2026-01-02T00:00:00Z"
+
+
+def test_decimal_csv_cell_is_parsed_as_a_number():
+    definition = {"__typename": "DecimalFieldDefinition"}
+    assert _parse_cell(definition, "2.5", column="Quantity") == 2.5
+    with pytest.raises(ValidationError, match="must be a number"):
+        _parse_cell(definition, "bad", column="Quantity")
 
 
 def _field(field_id: str, value: Any) -> dict[str, Any]:

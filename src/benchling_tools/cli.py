@@ -1653,6 +1653,9 @@ async def changes_plan(
     table_id and assay_results for each table, up to 500 records per table. Result
     fields accept system names, field-definition IDs, or display names. Display
     names are translated to system names in the plan; ambiguous names are rejected.
+    Dropdown values are option IDs (sfso_…), not labels. Schema-constrained
+    links are checked against their allowed schema; storable, any-entity, entry,
+    request, system-category, and attachment links do not require one.
     A missing projectId defaults to the entry's project; if unavailable, set
     projectId explicitly. Explicit null creates creator-only results and some
     tenants reject it with projectId is a required field.

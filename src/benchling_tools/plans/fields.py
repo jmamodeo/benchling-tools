@@ -90,6 +90,7 @@ class FieldNormalization(PlannerBase):
         address_by: Literal["system_name", "field_definition_id"] = "system_name",
         local_files: bool = False,
         allow_display_names: bool = False,
+        value_errors: list[ValidationError | UnsupportedError] | None = None,
     ) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, str]]:
         by_system = {
             str(item["systemName"]): item for item in definitions if item.get("systemName")
@@ -104,25 +105,38 @@ class FieldNormalization(PlannerBase):
         field_name_map: dict[str, str] = {}
         unknown: list[str] = []
         seen_systems: set[str] = set()
+        ambiguous_systems: set[str] = set()
+
+        def report(exc: ValidationError | UnsupportedError) -> None:
+            if value_errors is None:
+                raise exc
+            value_errors.append(exc)
+
         for supplied_key, field_input in updates.items():
             if allow_display_names:
                 resolved = _resolve_field(supplied_key, definitions)
                 if isinstance(resolved, list):
-                    raise ValidationError(
-                        "Schema field name is ambiguous",
-                        details={
-                            "reason": "ambiguous_field",
-                            "field": supplied_key,
-                            "candidates": [
-                                {
-                                    "system_name": item.get("systemName"),
-                                    "field_definition_id": item.get("id"),
-                                    "name": item.get("name"),
-                                }
-                                for item in resolved
-                            ],
-                        },
+                    ambiguous_systems.update(
+                        str(item["systemName"]) for item in resolved if item.get("systemName")
                     )
+                    report(
+                        ValidationError(
+                            "Schema field name is ambiguous",
+                            details={
+                                "reason": "ambiguous_field",
+                                "field": supplied_key,
+                                "candidates": [
+                                    {
+                                        "system_name": item.get("systemName"),
+                                        "field_definition_id": item.get("id"),
+                                        "name": item.get("name"),
+                                    }
+                                    for item in resolved
+                                ],
+                            },
+                        )
+                    )
+                    continue
                 definition = resolved
             else:
                 definition = by_system.get(supplied_key) or by_id.get(supplied_key)
@@ -133,32 +147,48 @@ class FieldNormalization(PlannerBase):
             if supplied_key != system_name:
                 field_name_map[supplied_key] = system_name
             if system_name in seen_systems:
-                raise ValidationError(
-                    "The same schema field was supplied more than once",
-                    details={"system_name": system_name},
+                report(
+                    ValidationError(
+                        "The same schema field was supplied more than once",
+                        details={"system_name": system_name},
+                    )
                 )
+                continue
             seen_systems.add(system_name)
             if not isinstance(field_input, dict) or set(field_input) != {"value"}:
-                raise ValidationError(
-                    "Each schema field input must contain exactly one value property",
-                    details={"field": supplied_key},
+                report(
+                    ValidationError(
+                        "Each schema field input must contain exactly one value property",
+                        details={"field": supplied_key},
+                    )
                 )
+                continue
             if definition.get("archived"):
-                raise UnsupportedError(
-                    "Archived schema fields cannot be updated",
-                    details={"field": system_name},
+                report(
+                    UnsupportedError(
+                        "Archived schema fields cannot be updated",
+                        details={"field": system_name},
+                    )
                 )
+                continue
             if definition.get("derivationType") not in {None, "DIRECT"}:
-                raise UnsupportedError(
-                    "Computed or snapshot schema fields cannot be updated directly",
-                    details={
-                        "field": system_name,
-                        "derivation_type": definition.get("derivationType"),
-                    },
+                report(
+                    UnsupportedError(
+                        "Computed or snapshot schema fields cannot be updated directly",
+                        details={
+                            "field": system_name,
+                            "derivation_type": definition.get("derivationType"),
+                        },
+                    )
                 )
-            self._validate_schema_field_value(
-                definition, field_input["value"], local_files=local_files
-            )
+                continue
+            try:
+                self._validate_schema_field_value(
+                    definition, field_input["value"], local_files=local_files
+                )
+            except (ValidationError, UnsupportedError) as exc:
+                report(exc)
+                continue
             field_id = definition.get("id")
             if address_by == "field_definition_id":
                 if not isinstance(field_id, str) or not field_id:
@@ -179,14 +209,18 @@ class FieldNormalization(PlannerBase):
                 }
             )
         if unknown:
-            raise ValidationError(
-                "Schema fields must be addressed by system name or field-definition ID",
-                details={
-                    "unknown_fields": unknown,
-                    "available_system_names": sorted(by_system),
-                    "available_field_ids": sorted(by_id),
-                    "available_display_names": _available_display_names(definitions),
-                },
+            unknown_details: dict[str, Any] = {
+                "unknown_fields": unknown,
+                "available_system_names": sorted(by_system),
+                "available_field_ids": sorted(by_id),
+            }
+            if allow_display_names:
+                unknown_details["available_display_names"] = _available_display_names(definitions)
+            report(
+                ValidationError(
+                    "Schema fields must be addressed by system name or field-definition ID",
+                    details=unknown_details,
+                )
             )
         if require_all_required:
             missing_required = sorted(
@@ -197,11 +231,14 @@ class FieldNormalization(PlannerBase):
                 and not item.get("archived")
                 and item.get("derivationType") in {None, "DIRECT"}
                 and str(item["systemName"]) not in seen_systems
+                and str(item["systemName"]) not in ambiguous_systems
             )
             if missing_required:
-                raise ValidationError(
-                    "Result records must provide every required schema field",
-                    details={"missing_required_fields": missing_required},
+                report(
+                    ValidationError(
+                        "Result records must provide every required schema field",
+                        details={"missing_required_fields": missing_required},
+                    )
                 )
         return normalized, targets, field_name_map
 
@@ -257,7 +294,7 @@ class FieldNormalization(PlannerBase):
             valid = all(isinstance(item, str) for item in values)
         elif field_type == "INTEGER":
             valid = all(isinstance(item, int) and not isinstance(item, bool) for item in values)
-        elif field_type == "FLOAT":
+        elif field_type in {"FLOAT", "DECIMAL"}:
             valid = all(
                 isinstance(item, (int, float)) and not isinstance(item, bool) for item in values
             )
@@ -281,18 +318,18 @@ class FieldNormalization(PlannerBase):
                 "Schema field value has the wrong type",
                 details={"field": field, "type": field_type, "is_multi": is_multi},
             )
-        if field_type in {"INTEGER", "FLOAT"}:
+        if field_type in {"INTEGER", "FLOAT", "DECIMAL"}:
             minimum = definition.get("numericMin")
             maximum = definition.get("numericMax")
             if minimum is not None and any(item < minimum for item in values):
                 raise ValidationError(
                     "Schema field value is below its minimum",
-                    details={"field": field, "minimum": minimum},
+                    details={"field": field, "minimum": minimum, "reason": "out_of_range"},
                 )
             if maximum is not None and any(item > maximum for item in values):
                 raise ValidationError(
                     "Schema field value is above its maximum",
-                    details={"field": field, "maximum": maximum},
+                    details={"field": field, "maximum": maximum, "reason": "out_of_range"},
                 )
 
     def _is_date(self, value: Any) -> bool:

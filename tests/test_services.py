@@ -31,6 +31,7 @@ from benchling_tools.services import (
     [
         ({"type": "integer"}, "INTEGER"),
         ({"__typename": "benchling.DateTimeFieldDefinition"}, "DATETIME"),
+        ({"__typename": "DecimalFieldDefinition"}, "DECIMAL"),
         ({"__typename": "DropdownLinkFieldDefinition"}, "DROPDOWN"),
         ({"__typename": "EntityLinkFieldDefinition"}, "LINK"),
         ({"__typename": "Surprise"}, "UNKNOWN"),
