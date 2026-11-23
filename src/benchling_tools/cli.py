@@ -1328,6 +1328,14 @@ async def results_list(
             "home's applied upload plans for the entry, which entry filters miss."
         ),
     ),
+    pending_created_after: str | None = typer.Option(
+        None,
+        "--pending-created-after",
+        help=(
+            "With --include-pending: RFC 3339 time, e.g. 2026-11-19T00:00:00Z; also read "
+            "pending results of each results table's schema created at or after it, on any entry."
+        ),
+    ),
 ) -> Any:
     """List one explicit page of result records, optionally filtered by entry, schema, or id.
 
@@ -1341,11 +1349,18 @@ async def results_list(
     list them. --include-pending (needs --entry) adds pending: the still-pending
     records of every applied result upload plan for the entry in this home, read as
     results pending --entry reads them and kept when they match --schema and --id.
-    pending has source local_plans, plans, count, items (at most --page-size, in the
-    results pending item shape: id is the V2 UUID), truncated, not_found, and
-    next_step. It is the same on every page. Plans applied from another home are
-    not known. Reads only.
+    --pending-created-after T also reads pending results of the result schema of
+    each results table on the entry created at or after T (V2 GET /assay-results by
+    schemaId and createdAt.gte, keeping records with no entryId). Benchling ties
+    those to no entry or table, so they may come from another entry. pending has
+    sources (this_home, and schema_window or null), plans, count, items (at most
+    --page-size, in the results pending item shape: id is the V2 UUID; each has
+    source this_home or schema_window, deduplicated by V2 id with this_home kept),
+    truncated, not_found, and next_step. It is the same on every page. Plans
+    applied from another home are not known. Reads only.
     """
+    if pending_created_after is not None and not include_pending:
+        raise ValidationError("pending_created_after applies only with include_pending")
     if include_pending and entry is None:
         raise ValidationError(
             "include_pending needs entry: pending results are found from this home's "
@@ -1361,7 +1376,11 @@ async def results_list(
     if include_pending:
         assert entry is not None
         page["pending"] = await call.runtime.planner.results_list_pending(
-            entry, schema_id=schema_id, result_ids=result_ids or None, limit=page_size
+            entry,
+            schema_id=schema_id,
+            result_ids=result_ids or None,
+            limit=page_size,
+            created_after=pending_created_after,
         )
     return page
 
@@ -1844,6 +1863,14 @@ async def results_diff(
             "for each entry, as rows of the table they were uploaded to."
         ),
     ),
+    pending_created_after: str | None = typer.Option(
+        None,
+        "--pending-created-after",
+        help=(
+            "With --include-pending: RFC 3339 time, e.g. 2026-11-19T00:00:00Z; also read "
+            "pending results of each results table's schema created at or after it, on any entry."
+        ),
+    ),
 ) -> Any:
     """Diff the results-table rows of two entries, or two runs, table by table.
 
@@ -1868,6 +1895,13 @@ async def results_diff(
     pending_right, and pending gives per side plans, pending, attached,
     not_attached, and not_found. Plans applied from another home are not known.
 
+    --pending-created-after T (needs --include-pending) also reads pending results
+    of each results table's schema created at or after T on any entry (source
+    schema_window; this_home rows are marked this_home and win on the same V2 id).
+    Benchling ties these to no entry or table: one goes to the only table on that
+    side with its schema, and with two or more it is listed in pending_unplaced
+    with a warning.
+
     CLI: --output FILE --format json|csv writes every difference to a file, like
     export, and adds its path, row count, and SHA-256 checksum to the reply.
     """
@@ -1886,6 +1920,7 @@ async def results_diff(
         file_format=file_format,
         overwrite=overwrite,
         pending=call.runtime.planner.entry_pending_results if include_pending else None,
+        pending_created_after=pending_created_after,
     )
 
 
