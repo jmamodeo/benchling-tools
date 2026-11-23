@@ -100,7 +100,7 @@ Nothing here changes the safety model. Keychain auth, `--allow-writes`, protecte
 
 ## Gaps and follow-ups
 
-Each gap is a read-only command, and so a read-only MCP tool. Citations are to the official API reference. The quoted line is the operation summary or field description in that spec.
+Each gap is a read-only command, and so a read-only MCP tool. Citations are to the official API reference. The quoted line is the operation summary or field description in that spec. V2 calls requests "Legacy Requests".
 
 ### G1: entity reads
 
@@ -130,7 +130,7 @@ Proposed: `request get ID`, `request list --schema SCHEMA_ID --status STATUS` wi
 
 - [V2 API specification](https://benchling.com/api/v2/openapi.yaml), `getRequest` on `GET /requests/{request_id}`: "Get a Legacy Request by ID".
 - Same spec, `listRequests` on `GET /requests`: "List Legacy Requests". Its parameters include `schemaId` and `requestStatus`.
-- Same spec, `listRequestSchemas` on `GET /request-schemas`: "List Legacy Request schemas".
+- Same spec, `listRequestSchemas` on `GET /request-schemas`: "List request schemas".
 
 ### Out of scope
 
