@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-23
+
+Coverage and diagnosis release for notebook testing and debug workflows: pending-result list and diff, results-table diffs and capacity checks, payload verification, user and container lookups, and plan-time link, field, and capacity validation. One breaking MCP change: `container_find` takes `barcodes` (a list) instead of `barcode`.
+
 ### Added
 
 - `results list --entry ENTRY --include-pending` (MCP `results_list` `include_pending`) adds a `pending` block with the still-pending results of every applied result upload plan for the entry in this home, kept when they match `--schema` and `--id`: `sources`, `plans`, `count`, `items` (at most `--page-size`, in the `results pending` item shape), `truncated`, `not_found`, and `next_step`. `results diff --include-pending` (MCP `results_diff` `include_pending`) compares those records as rows of the table they were uploaded to, numbered after its rows, each with `pending: true` and `result_id`; changed fields add `left_pending` or `right_pending`, `counts` adds `pending_left` and `pending_right`, `pending` reports per side `plans`, `pending`, `attached`, `not_attached` and `not_found`, and `--output` adds `left_pending` and `right_pending` columns. Benchling's V3 [List results](https://docs.benchling.com/docs/api/benchling-api/result/list) `entry.eq` finds a result only after it is accepted, so pending results come from local plans and journals; plans applied from another home are not known. `--pending-created-after TIME` (MCP `pending_created_after`, only with `--include-pending`) also reads pending results of each results table's result schema created at or after `TIME` with the query `results capacity --include-schema-pending` uses ([V2 List assay results](https://docs.benchling.com/docs/api/v2/benchling-api/assay-results/list-assay-results) filters by `schemaId` and `createdAt.gte`, not entry, and has no review or pending filter), reading `isReviewed` and `entryId` from each returned record and keeping records with no `entryId`; items carry `source` (`this_home` or `schema_window`, deduplicated by V2 id with `this_home` kept) and `pending` has `sources`. Benchling ties these records to no entry or table, so `results diff` places one only in the single table on that side with its schema and otherwise lists it in `pending_unplaced` with a warning. Without the flag nothing changes.
@@ -359,7 +363,8 @@ All notable changes to this project are documented here. The format is based on
 - Versioned JSON envelope, stable exit codes, and published JSON schemas.
 - Operating-system trust-store TLS verification.
 
-[Unreleased]: https://github.com/jmamodeo/benchling-tools/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/jmamodeo/benchling-tools/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/jmamodeo/benchling-tools/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/jmamodeo/benchling-tools/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/jmamodeo/benchling-tools/compare/v0.5.3...v0.6.0
 [0.5.3]: https://github.com/jmamodeo/benchling-tools/compare/v0.5.2...v0.5.3
