@@ -113,6 +113,11 @@ def _without_clock(value):
             },
         ),
         (
+            ["results", "pending", "--entry", "EXP-1", "--limit", "2"],
+            "results_pending",
+            {"entry": "EXP-1", "limit": 2},
+        ),
+        (
             ["results", "rows", "docpart_rt1", "--limit", "2"],
             "results_rows",
             {"part_id": "docpart_rt1", "limit": 2},
