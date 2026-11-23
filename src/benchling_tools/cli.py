@@ -2143,9 +2143,10 @@ async def changes_plan(
     table's 1,000-row limit; see results capacity. Result
     fields accept system names, field-definition IDs, or display names. Display
     names are translated to system names in the plan; ambiguous names are rejected.
-    Dropdown values are option IDs (sfso_…), not labels. Schema-constrained
-    links are checked against their allowed schema; storable, any-entity, entry,
-    request, system-category, and attachment links do not require one.
+    Dropdown values are option IDs (sfso_…), not labels. Link values are read
+    at plan time: each linked entity, entry, container, location, box or plate
+    must exist, and a schema-constrained link must use the field's allowed
+    schema. Request and system-category links are checked as non-empty IDs.
     A missing projectId defaults to the entry's project; if unavailable, set
     projectId explicitly. Explicit null creates creator-only results and some
     tenants reject it with projectId is a required field.

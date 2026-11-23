@@ -14,6 +14,7 @@ from .api import BenchlingAPI
 from .environment import protection_summary
 from .errors import (
     AccessError,
+    BenchlingAgentError,
     ConflictError,
     NotFoundError,
     UnsupportedError,
@@ -123,6 +124,34 @@ STORAGE_KINDS = {
     "loc_": ("location", "/locations"),
     "box_": ("box", "/boxes"),
     "plt_": ("plate", "/plates"),
+}
+# Read-only GET routes for link field values, by ID prefix: (API version, route, wrapper key).
+ENTITY_LINK_PREFIXES = ("ent_", "seq_", "aaseq_")
+STORABLE_LINK_PREFIXES = ("con_", *STORAGE_KINDS)
+LINK_TARGET_ROUTES: dict[str, tuple[int, str, str]] = {
+    "ent_": (3, "/custom-entity", "customEntity"),
+    "seq_": (3, "/dna-sequence", "dnaSequence"),
+    "aaseq_": (3, "/aa-sequence", "aaSequence"),
+    "etr_": (3, "/entry", "entry"),
+    "con_": (2, "/containers", "container"),
+    **{prefix: (2, route, kind) for prefix, (kind, route) in STORAGE_KINDS.items()},
+}
+# V2 bulk-get routes for entry and storable link values: (route, ID parameter, list key).
+BULK_GET_LIMIT = CONTAINER_BULK_GET_LIMIT
+BULK_GET_ROUTES: dict[str, tuple[str, str, str]] = {
+    "con_": ("/containers:bulk-get", "containerIds", "containers"),
+    "box_": ("/boxes:bulk-get", "boxIds", "boxes"),
+    "plt_": ("/plates:bulk-get", "plateIds", "plates"),
+    "loc_": ("/locations:bulk-get", "locationIds", "locations"),
+    "etr_": ("/entries:bulk-get", "entryIds", "entries"),
+}
+# What a link value names, by ID prefix, for plan-time link problem reports.
+LINK_TARGET_KINDS = {
+    "con_": "container",
+    "box_": "box",
+    "plt_": "plate",
+    "loc_": "location",
+    "etr_": "entry",
 }
 V2_ID_LOOKUP_MAX_PAGES = 5
 TEMPLATE_TEXT_PREVIEW_LIMIT = 160
@@ -739,12 +768,24 @@ def with_result_ids(record: dict[str, Any], v2_id: Any, v3_id: Any) -> dict[str,
     }
 
 
-def _invalid_ids(exc: ValidationError) -> list[str]:
-    """The ids a V2 400 lists under error.invalidIds, or none."""
+_INVALID_ID_MESSAGE = re.compile(r"Invalid \w+Id: '([^']+)'")
+
+
+def _invalid_ids(exc: BenchlingAgentError) -> list[str]:
+    """The ids a V2 error names: ``error.invalidIds`` (400), ``error.invalidId`` (404),
+    or ``Invalid entryId: 'etr_…'`` in ``error.message`` (400), or none."""
     response = (exc.details or {}).get("response")
     error = response.get("error") if isinstance(response, dict) else None
-    ids = error.get("invalidIds") if isinstance(error, dict) else None
-    return [str(item) for item in ids] if isinstance(ids, list) else []
+    if not isinstance(error, dict):
+        return []
+    ids = error.get("invalidIds")
+    if isinstance(ids, list):
+        return [str(item) for item in ids]
+    single = error.get("invalidId")
+    if isinstance(single, str) and single:
+        return [single]
+    message = error.get("message")
+    return _INVALID_ID_MESSAGE.findall(message) if isinstance(message, str) else []
 
 
 def _lift_invalid_barcodes(exc: ValidationError) -> None:
@@ -1636,31 +1677,74 @@ class BenchlingService:
         """Return V2 containers by ID, keyed by ID, reading up to 100 IDs per call.
 
         Uses ``GET /containers:bulk-get`` with comma-separated ``containerIds``. An ID
-        Benchling does not return is absent from the result.
+        Benchling does not return, or names as invalid, is absent from the result.
         """
         unique = list(
             dict.fromkeys(self._container_reference(item, "container_id") for item in container_ids)
         )
         if any("," in item for item in unique):
             raise ValidationError("container_id must not contain a comma")
-        found: dict[str, dict[str, Any]] = {}
-        for start in range(0, len(unique), CONTAINER_BULK_GET_LIMIT):
-            chunk = unique[start : start + CONTAINER_BULK_GET_LIMIT]
-            payload = await self.api.request(
-                "GET",
-                "/containers:bulk-get",
-                version=2,
-                params={"containerIds": ",".join(chunk)},
-            )
-            containers = payload.get("containers")
-            if not isinstance(containers, list) or any(
-                not isinstance(item, dict) for item in containers
-            ):
-                raise UpstreamError("Benchling returned an unexpected container list")
-            for item in containers:
-                if isinstance(item.get("id"), str) and item["id"] in chunk:
-                    found[item["id"]] = item
+        found, _missing = await self._bulk_get_by_id("con_", unique)
         return found
+
+    async def _bulk_get_by_id(
+        self, prefix: str, ids: list[str]
+    ) -> tuple[dict[str, dict[str, Any]], list[str]]:
+        """Read V2 records of one kind with its ``:bulk-get`` route, 100 IDs per request.
+
+        Benchling refuses the whole request when one ID is unknown: containers, boxes,
+        plates and locations with a 404 naming it in ``error.invalidId``, entries with
+        a 400 ``Invalid entryId: '…'`` message. Each named ID is dropped, recorded as
+        missing, and the rest of the chunk is read again. An error that names no ID
+        in the chunk is raised. Returns the records by ID and the missing IDs.
+        """
+        route, parameter, key = BULK_GET_ROUTES[prefix]
+        found: dict[str, dict[str, Any]] = {}
+        missing: list[str] = []
+        for start in range(0, len(ids), BULK_GET_LIMIT):
+            chunk = ids[start : start + BULK_GET_LIMIT]
+            while chunk:
+                try:
+                    payload = await self.api.request(
+                        "GET", route, version=2, params={parameter: ",".join(chunk)}
+                    )
+                except (ValidationError, NotFoundError) as exc:
+                    rejected = [item for item in _invalid_ids(exc) if item in chunk]
+                    if not rejected:
+                        raise
+                    missing.extend(rejected)
+                    chunk = [item for item in chunk if item not in rejected]
+                    continue
+                records = payload.get(key)
+                if not isinstance(records, list) or any(
+                    not isinstance(item, dict) for item in records
+                ):
+                    raise UpstreamError(
+                        "Benchling returned an unexpected bulk-get response",
+                        details={"route": route},
+                    )
+                for item in records:
+                    if isinstance(item.get("id"), str) and item["id"] in chunk:
+                        found[item["id"]] = item
+                missing.extend(item for item in chunk if item not in found)
+                break
+        return found, missing
+
+    async def bulk_get_link_targets(self, ids: list[str]) -> dict[str, dict[str, Any] | None]:
+        """Read entry and storable link values with V2 bulk-get, grouped by ID prefix.
+
+        Returns each ID's record, or None when Benchling does not have it. IDs whose
+        prefix has no bulk-get route here are left out.
+        """
+        targets: dict[str, dict[str, Any] | None] = {}
+        for prefix in BULK_GET_ROUTES:
+            group = list(dict.fromkeys(item for item in ids if item.startswith(prefix)))
+            if not group:
+                continue
+            found, missing = await self._bulk_get_by_id(prefix, group)
+            targets.update(found)
+            targets.update(dict.fromkeys(missing))
+        return targets
 
     async def get_container_schema(self, schema_id: str) -> dict[str, Any]:
         """Return one V2 container schema and its embedded field definitions."""
@@ -2672,38 +2756,32 @@ class BenchlingService:
             )
         return identifier, namespace, payload
 
-    async def get_linked_entity_schema_id(self, entity_id: str) -> str:
-        """Read a linked entity and return its entity schema ID for result-plan validation."""
-        entity_routes = {
-            "ent_": ("custom-entity", "customEntity"),
-            "seq_": ("dna-sequence", "dnaSequence"),
-            "aaseq_": ("aa-sequence", "aaSequence"),
-        }
+    async def get_link_target(self, item_id: str) -> dict[str, Any]:
+        """Read the item a link field value names, choosing the GET route by ID prefix.
+
+        Raises NotFoundError when Benchling has no such item, and ValidationError
+        (reason ``unresolvable_link_target``) for a prefix with no read route here.
+        """
         route = next(
-            (value for prefix, value in entity_routes.items() if entity_id.startswith(prefix)),
+            (value for prefix, value in LINK_TARGET_ROUTES.items() if item_id.startswith(prefix)),
             None,
         )
         if route is None:
             raise ValidationError(
-                "Linked entity ID has an unsupported namespace",
-                details={"reason": "unresolvable_link_target", "entity_id": entity_id},
+                "Linked item ID has an unsupported namespace",
+                details={"reason": "unresolvable_link_target", "entity_id": item_id},
             )
-        collection, wrapper = route
-        payload = await self.api.request("GET", f"/{collection}/{quote(entity_id, safe='')}")
-        entity = payload.get(wrapper, payload)
-        if not isinstance(entity, dict) or entity.get("id") != entity_id:
+        version, collection, wrapper = route
+        payload = await self.api.request(
+            "GET", f"{collection}/{quote(item_id, safe='')}", version=version
+        )
+        target = payload.get(wrapper, payload)
+        if not isinstance(target, dict) or target.get("id") != item_id:
             raise UpstreamError(
-                "Benchling returned an unexpected linked entity",
-                details={"entity_id": entity_id},
+                "Benchling returned an unexpected linked item",
+                details={"entity_id": item_id},
             )
-        schema = entity.get("typedSchema") or entity.get("schema")
-        schema_id = schema.get("id") if isinstance(schema, dict) else None
-        if not isinstance(schema_id, str) or not schema_id:
-            raise UpstreamError(
-                "Linked entity response did not include its schema",
-                details={"entity_id": entity_id},
-            )
-        return schema_id
+        return target
 
     async def doctor(self) -> dict[str, Any]:
         """Probe V3 and V2 entry endpoints; failures are reported per check rather than raised."""

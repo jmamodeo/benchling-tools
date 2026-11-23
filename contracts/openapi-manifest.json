@@ -71,7 +71,10 @@
         "/registries/{registry_id}/registered-entities:bulk-get",
         "/locations/{location_id}",
         "/boxes/{box_id}",
-        "/plates/{plate_id}"
+        "/plates/{plate_id}",
+        "/boxes:bulk-get",
+        "/plates:bulk-get",
+        "/locations:bulk-get"
       ]
     }
   ]

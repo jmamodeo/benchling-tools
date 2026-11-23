@@ -250,7 +250,7 @@ def field_definitions() -> list[dict[str, Any]]:
             "id": "tsf_link",
             "systemName": "sample_link",
             "name": "Sample link",
-            "__typename": "EntityLinkFieldDefinition",
+            "__typename": "EntryLinkFieldDefinition",
         },
         {
             **base,
@@ -872,10 +872,25 @@ class FakeBenchling:
         return 200, {"entities": deepcopy(entities)}
 
     def _bulk_get_containers(self, call: Call) -> tuple[int, dict[str, Any]]:
-        """V2 containers:bulk-get: the containers whose ids are in containerIds."""
+        """V2 containers:bulk-get: the containers whose ids are in containerIds.
+
+        Like Benchling, an unknown id fails the whole request with a 404 naming it.
+        """
         wanted = (call.params.get("containerIds") or "").split(",")
-        found = [deepcopy(item) for item in self.containers if item["id"] in wanted]
-        return 200, {"containers": found}
+        by_id = {item["id"]: item for item in self.containers}
+        return _bulk_get_reply(wanted, by_id, "containers", "Container")
+
+    def _bulk_get_storage(self, call: Call) -> tuple[int, dict[str, Any]]:
+        """V2 boxes, plates and locations bulk-get, with the same 404 for an unknown id."""
+        kind = call.path.rsplit("/", 1)[-1].partition(":")[0]
+        parameter, prefix, label = {
+            "boxes": ("boxIds", "box_", "Box"),
+            "plates": ("plateIds", "plt_", "Plate"),
+            "locations": ("locationIds", "loc_", "Location"),
+        }[kind]
+        wanted = (call.params.get(parameter) or "").split(",")
+        by_id = {key: item for key, item in self.storage.items() if key.startswith(prefix)}
+        return _bulk_get_reply(wanted, by_id, kind, label)
 
     def _get_container(self, call: Call, container_id: str) -> tuple[int, dict[str, Any]]:
         found = next((item for item in self.containers if item["id"] == container_id), None)
@@ -1180,6 +1195,16 @@ class FakeBenchling:
         rows = self._entry_catalog()
         if call.params.get("entryIds"):
             wanted = call.params["entryIds"].split(",")
+            known = {row["id"] for row in rows}
+            unknown = next((item for item in wanted if item not in known), None)
+            if unknown is not None:
+                # Benchling rejects the whole request with a 400 naming one bad id.
+                return 400, {
+                    "error": {
+                        "message": f"Invalid entryId: '{unknown}'",
+                        "type": "invalid_request_error",
+                    }
+                }
             rows = [row for row in rows if row["id"] in wanted]
         if call.params.get("displayIds"):
             wanted = call.params["displayIds"].split(",")
@@ -2203,6 +2228,22 @@ class FakeBenchling:
         return 404, {"error": {"message": "result not found"}}
 
 
+def _bulk_get_reply(
+    wanted: list[str], by_id: dict[str, dict[str, Any]], key: str, label: str
+) -> tuple[int, dict[str, Any]]:
+    """200 with the records, or Benchling's 404 naming the first unknown id only."""
+    unknown = next((item for item in wanted if item not in by_id), None)
+    if unknown is not None:
+        return 404, {
+            "error": {
+                "invalidId": unknown,
+                "message": f"{label} not found: {unknown}",
+                "type": "invalid_request_error",
+            }
+        }
+    return 200, {key: [deepcopy(by_id[item]) for item in wanted]}
+
+
 def _content_entity_ids(container: dict[str, Any]) -> set[str]:
     """Entity IDs a container holds, directly or through a batch."""
     found: set[str] = set()
@@ -2225,6 +2266,7 @@ ROUTES: list[tuple[str, str]] = [
     (r"/containers/(\w+)", "GET v2|get_container"),
     (r"/registries", "GET v2|list_registries"),
     (r"/registries/(\w+)/registered-entities:bulk-get", "GET v2|bulk_get_registered_entities"),
+    (r"/(?:boxes|plates|locations):bulk-get", "GET v2|bulk_get_storage"),
     (r"/locations/(loc_\w+)", "GET v2|get_storage"),
     (r"/boxes/(box_\w+)", "GET v2|get_storage"),
     (r"/plates/(plt_\w+)", "GET v2|get_storage"),

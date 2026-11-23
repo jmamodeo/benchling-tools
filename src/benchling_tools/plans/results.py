@@ -21,7 +21,7 @@ from ..models import (
     ChangeJournal,
     ChangePlan,
 )
-from ..services import field_definition_type, is_attachment_field, link_kind
+from ..services import field_definition_type, is_attachment_field
 from . import readback
 from .base import PlanParts, write_event_details
 from .blobs import (
@@ -32,7 +32,7 @@ from .blobs import (
     plan_upload_refs,
     stage_field_values,
 )
-from .fields import _resolve_field
+from .fields import LinkCache, _resolve_field
 from .result_update import ResultUpdatePlanning, request_is_result_update
 
 PENDING_RESULTS_WARNING = (
@@ -224,16 +224,31 @@ class ResultsPlanning(ResultUpdatePlanning):
         planned_batches: list[dict[str, Any]] = []
         plan_row_offset = 0
         row_problems: list[dict[str, Any]] = []
-        linked_schema_cache: dict[str, str | None] = {}
+        linked_schema_cache: LinkCache = {}
+        schemas = [await self.service.get_schema(table["schema_id"]) for table in tables]
+        await self._prefetch_link_values(
+            [
+                (definition, field_input.get("value"))
+                for batch, schema in zip(batches, schemas, strict=True)
+                for record in batch["assay_results"]
+                if isinstance(record, dict) and isinstance(record.get("fields"), dict)
+                for key, field_input in record["fields"].items()
+                if isinstance(field_input, dict)
+                and isinstance(
+                    definition := _resolve_field(key, schema.get("field_definitions") or []),
+                    dict,
+                )
+            ],
+            linked_schema_cache,
+        )
         entry_project_id: str | None = None
         project_source = "entry_folder"
         project_resolved = False
         project_defaults: list[dict[str, Any]] = []
-        for batch, table in zip(batches, tables, strict=True):
+        for batch, table, schema in zip(batches, tables, schemas, strict=True):
             table_id = batch["table_id"]
             records = batch["assay_results"]
             schema_id = table["schema_id"]
-            schema = await self.service.get_schema(schema_id)
             definitions = schema.get("field_definitions") or []
             default_rows = [
                 i
@@ -404,7 +419,7 @@ class ResultsPlanning(ResultUpdatePlanning):
         schema_id: str,
         definitions: list[Any],
         *,
-        linked_schema_cache: dict[str, str | None],
+        linked_schema_cache: LinkCache,
         plan_row_offset: int,
         stager: FileStager | None = None,
         default_project_id: str | None = None,
@@ -542,7 +557,7 @@ class ResultsPlanning(ResultUpdatePlanning):
         self,
         fields: dict[str, Any],
         definitions: list[dict[str, Any]],
-        linked_schema_cache: dict[str, str | None],
+        linked_schema_cache: LinkCache,
     ) -> list[ValidationError]:
         problems: list[ValidationError] = []
         for definition in definitions:
@@ -587,78 +602,9 @@ class ResultsPlanning(ResultUpdatePlanning):
                         )
                     )
             elif field_type == "LINK":
-                kind = link_kind(definition)
-                if kind != "schema_constrained":
-                    prefixes = {"entry": ("etr_",), "storable": ("con_", "box_", "plt_", "loc_")}
-                    allowed = prefixes.get(kind)
-                    if allowed and any(
-                        not any(
-                            item.startswith(prefix) and len(item) > len(prefix)
-                            for prefix in allowed
-                        )
-                        for item in values
-                    ):
-                        problems.append(
-                            ValidationError(
-                                "Schema field value has an invalid link ID",
-                                details={
-                                    "reason": "invalid_field_value",
-                                    "field": system_name,
-                                    "value": value,
-                                },
-                            )
-                        )
-                    continue
-                link_definition = definition.get("linkDefinition")
-                allowed_schema_id = (
-                    link_definition.get("id") if isinstance(link_definition, dict) else None
+                problems.extend(
+                    await self._link_value_problems(definition, value, linked_schema_cache)
                 )
-                if not isinstance(allowed_schema_id, str) or not allowed_schema_id:
-                    problems.append(
-                        ValidationError(
-                            "Linked field does not expose an allowed schema",
-                            details={
-                                "reason": "link_definition_unavailable",
-                                "field": system_name,
-                            },
-                        )
-                    )
-                    continue
-                for entity_id in values:
-                    if entity_id not in linked_schema_cache:
-                        try:
-                            linked_schema_cache[
-                                entity_id
-                            ] = await self.service.get_linked_entity_schema_id(entity_id)
-                        except NotFoundError:
-                            linked_schema_cache[entity_id] = None
-                    actual_schema_id = linked_schema_cache[entity_id]
-                    if actual_schema_id is None:
-                        problems.append(
-                            ValidationError(
-                                "Linked entity was not found",
-                                details={
-                                    "reason": "link_target_not_found",
-                                    "field": system_name,
-                                    "entity_id": entity_id,
-                                },
-                            )
-                        )
-                        break
-                    if actual_schema_id != allowed_schema_id:
-                        problems.append(
-                            ValidationError(
-                                "Linked entity does not use a schema allowed by this field",
-                                details={
-                                    "reason": "invalid_link_target",
-                                    "field": system_name,
-                                    "entity_id": entity_id,
-                                    "expected_schema_id": allowed_schema_id,
-                                    "actual_schema_id": actual_schema_id,
-                                },
-                            )
-                        )
-                        break
         return problems
 
     @staticmethod

@@ -149,6 +149,22 @@ async def test_entry_plan_rejects_bad_schema_fields(runtime, fake) -> None:
     assert fake.writes() == []
 
 
+async def test_entry_plan_reads_link_values_at_plan_time(runtime, fake) -> None:
+    with pytest.raises(ValidationError, match="not found") as caught:
+        await runtime.planner.plan(
+            None,
+            "entry",
+            {**REQUEST, "schema_fields": {"sample_link": {"value": "etr_missing"}}},
+        )
+    assert caught.value.details["reason"] == "link_target_not_found"
+    assert caught.value.details["kind"] == "entry"
+    assert any(
+        call.path == "/api/v2/entries:bulk-get" and call.params == {"entryIds": "etr_missing"}
+        for call in fake.calls
+    )
+    assert fake.writes() == []
+
+
 async def test_entry_create_with_uncertain_response_cannot_be_retried(runtime, fake) -> None:
     planned = await runtime.planner.plan(None, "entry", REQUEST)
     fake.payload_overrides.append(("/api/v3/entry", 201, {"name": REQUEST["name"]}))

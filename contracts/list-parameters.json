@@ -1,5 +1,5 @@
 {
-  "description": "Query parameters this client may send on supported read routes. A request may use a subset. V3 entry listing has no folder parameter; folderId is only sent to V2 /entries. V2 name is a single entry name and is sent when that name contains a comma. Entry list sends V2 sort only when a sort is chosen, and only the values recorded under enums. A results-table or lookup-table row page sends pageSize and nextToken only. Container find sends storageContentsIds and ancestorStorageId only with --contents, --registry-id or --in; registry, location, box and plate reads send no query except entityRegistryIds on registered-entities:bulk-get. An entry parts list may add id.anyOf to read one part.",
+  "description": "Query parameters this client may send on supported read routes. A request may use a subset. V3 entry listing has no folder parameter; folderId is only sent to V2 /entries. V2 name is a single entry name and is sent when that name contains a comma. Entry list sends V2 sort only when a sort is chosen, and only the values recorded under enums. A results-table or lookup-table row page sends pageSize and nextToken only. Container find sends storageContentsIds and ancestorStorageId only with --contents, --registry-id or --in; registry, location, box and plate reads send no query except entityRegistryIds on registered-entities:bulk-get. Plan-time link checks send only the ID list (containerIds, boxIds, plateIds, locationIds, entryIds) to the V2 bulk-get routes. An entry parts list may add id.anyOf to read one part.",
   "routes": {
     "GET /api/v3/entry/items": [
       "pageSize",
@@ -70,7 +70,16 @@
     ],
     "GET /api/v2/locations/{location_id}": [],
     "GET /api/v2/boxes/{box_id}": [],
-    "GET /api/v2/plates/{plate_id}": []
+    "GET /api/v2/plates/{plate_id}": [],
+    "GET /api/v2/boxes:bulk-get": [
+      "boxIds"
+    ],
+    "GET /api/v2/plates:bulk-get": [
+      "plateIds"
+    ],
+    "GET /api/v2/locations:bulk-get": [
+      "locationIds"
+    ]
   },
   "enums": {
     "GET /api/v2/entries": {

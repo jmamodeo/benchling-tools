@@ -482,3 +482,30 @@ async def test_inventory_reads_use_listed_v2_routes_and_parameters(runtime, fake
         assert allowed is not None, call.path
         assert set(call.params) <= allowed, (call.path, call.params)
     assert used == INVENTORY_ROUTES
+
+
+async def test_link_bulk_gets_use_listed_v2_routes_and_parameters(runtime, fake) -> None:
+    """Plan-time link lookups send only the ID list each V2 bulk-get route declares."""
+    found = await runtime.service.bulk_get_link_targets(
+        ["con_source1", "box_rack1", "plt_plate1", "loc_room1", ENTRY_ID, "con_missing"]
+    )
+    assert found["con_missing"] is None
+    assert {key for key, value in found.items() if value} == {
+        "con_source1",
+        "box_rack1",
+        "plt_plate1",
+        "loc_room1",
+        ENTRY_ID,
+    }
+    spec = _spec("benchling-v2")
+    routes = _contract("benchling-v2")["routes_used"]
+    calls = [call for call in fake.calls if ":bulk-get" in call.path]
+    assert {call.path for call in calls} == {
+        f"/api/v2/{kind}:bulk-get"
+        for kind in ("containers", "boxes", "plates", "locations", "entries")
+    }
+    for call in calls:
+        path = call.path.removeprefix("/api/v2")
+        assert path in routes
+        assert set(call.params) <= _query_parameters(spec, spec["paths"][path]["get"])
+        assert set(call.params) <= set(_allowed_for("GET", call.path) or ())
