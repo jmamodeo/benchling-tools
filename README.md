@@ -74,6 +74,11 @@ Every command, the six change families, spec shapes, result uploads and attachme
 
 For example, resolve a handle with `benchling-tools users get HANDLE --env dev`, then use the returned ID with `benchling-tools entry list --creator USER_ID --folder lib_example --env dev`. Handles may also be passed directly to `--creator` or `--author`.
 
+For result uploads, preview defaults a missing `projectId` to the entry's project and refuses
+the plan if none is available. An explicit `projectId: null` requests creator-only access,
+but some tenants reject it. Apply checks every batch before uploading attachments; if a
+result creation fails after an upload, the error identifies unlinked blobs.
+
 ## MCP server
 
 One server serves every environment saved with `auth login`. The client config carries no secrets; the server reads the same `environments.json` file and OS keychain as the CLI.

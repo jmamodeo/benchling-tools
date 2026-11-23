@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ..errors import (
+    AccessError,
     BenchlingAgentError,
     ConflictError,
     NotFoundError,
@@ -20,11 +21,13 @@ from ..models import (
     ChangePlan,
 )
 from ..services import field_definition_type, is_attachment_field
+from . import readback
 from .base import PlanParts, write_event_details
 from .blobs import (
     UPLOAD_WARNINGS,
     FileStager,
     discard_refs,
+    local_file_descriptor,
     plan_upload_refs,
     stage_field_values,
 )
@@ -122,6 +125,10 @@ class ResultsPlanning(ResultUpdatePlanning):
         plan_row_offset = 0
         row_problems: list[dict[str, Any]] = []
         linked_schema_cache: dict[str, str | None] = {}
+        entry_project_id: str | None = None
+        project_source = "entry_folder"
+        project_resolved = False
+        project_defaults: list[dict[str, Any]] = []
         for batch in batches:
             if not isinstance(batch, dict):
                 raise ValidationError("Each result batch requires table_id and assay_results")
@@ -149,6 +156,39 @@ class ResultsPlanning(ResultUpdatePlanning):
                 )
             schema = await self.service.get_schema(schema_id)
             definitions = schema.get("field_definitions") or []
+            default_rows = [
+                i
+                for i, record in enumerate(records)
+                if isinstance(record, dict) and "projectId" not in record
+            ]
+            if default_rows and not project_resolved:
+                entry = self.service._v2_object(
+                    await self.api.request("GET", f"/entries/{entry_id}", version=2), "entry"
+                )
+                try:
+                    entry_project_id = await self.service._entry_project_id(entry)
+                except (AccessError, NotFoundError):
+                    entry_project_id = None
+                if isinstance(entry.get("project"), dict) and entry["project"].get("id"):
+                    project_source = "entry_project"
+                project_resolved = True
+            if default_rows:
+                if not isinstance(entry_project_id, str) or not entry_project_id.strip():
+                    raise ValidationError(
+                        "A project is required to plan these results",
+                        details={
+                            "reason": "project_required",
+                            "hint": 'Set projectId on each record (src_…), or pass "projectId": null to create creator-only results.',
+                        },
+                    )
+                project_defaults.append(
+                    {
+                        "table_id": table_id,
+                        "row_indexes": default_rows,
+                        "project_id": entry_project_id,
+                        "source": project_source,
+                    }
+                )
             planned, client_record_ids, projects, problems = await self._prepare_result_records(
                 records,
                 table_id,
@@ -157,6 +197,7 @@ class ResultsPlanning(ResultUpdatePlanning):
                 linked_schema_cache=linked_schema_cache,
                 plan_row_offset=plan_row_offset,
                 stager=stager,
+                default_project_id=entry_project_id,
             )
             row_problems.extend(problems)
             planned_batches.append(
@@ -206,6 +247,7 @@ class ResultsPlanning(ResultUpdatePlanning):
             "projects": all_projects,
             "state": "pending_integration",
             "validation_summary": validation_summary,
+            "project_defaults": project_defaults,
         }
         preconditions: dict[str, Any] = {
             "entry_id": entry_id,
@@ -264,6 +306,7 @@ class ResultsPlanning(ResultUpdatePlanning):
         linked_schema_cache: dict[str, str | None],
         plan_row_offset: int,
         stager: FileStager | None = None,
+        default_project_id: str | None = None,
     ) -> tuple[list[Any], list[str], dict[str, dict[str, Any]], list[dict[str, Any]]]:
         """Validate and normalize records; returns them with correlation IDs and referenced projects."""
         planned: list[Any] = []
@@ -311,9 +354,11 @@ class ResultsPlanning(ResultUpdatePlanning):
                     raise UnsupportedError(
                         "Notebook table uploads use server-assigned result IDs; omit id"
                     )
+                if "projectId" not in record and default_project_id is not None:
+                    record["projectId"] = default_project_id
                 project_id = record.get("projectId")
                 if project_id is not None:
-                    if not isinstance(project_id, str) or not project_id:
+                    if not isinstance(project_id, str) or not project_id.strip():
                         raise ValidationError("projectId must be a non-empty string or null")
                     if project_id not in projects:
                         project = await self.service.get_project(project_id)
@@ -442,7 +487,8 @@ class ResultsPlanning(ResultUpdatePlanning):
         ]
         if any(record.get("projectId") is None for record in planned):
             warnings.append(
-                "Results without projectId are readable only by their creator until access is changed"
+                "Results with projectId null are creator-only until access is changed; "
+                "some tenants reject them at apply with projectId is a required field"
             )
         return warnings
 
@@ -483,32 +529,54 @@ class ResultsPlanning(ResultUpdatePlanning):
                     "schema_fields": plan.preconditions.get("result_schema_fields"),
                 }
             }
+        web_url = plan_entry_web_url(plan)
+        for batch in batches:
+            table_id = batch["table_id"]
+            if any("id" in record for record in batch["records"]):
+                raise ConflictError(
+                    "This result plan uses an unsupported bulk-table contract; create a new preview"
+                )
+            if any(
+                "projectId" not in record
+                or (
+                    record["projectId"] is not None
+                    and (
+                        not isinstance(record["projectId"], str) or not record["projectId"].strip()
+                    )
+                )
+                for record in batch["records"]
+            ):
+                raise ConflictError(
+                    "This result plan has a missing or invalid projectId; create a new preview"
+                )
+            table = await self.service.get_result_table(entry_id, table_id)
+            web_url = table.get("entry_web_url") or web_url
+            self._expect(
+                table.get("schema_id"), expected[table_id]["schema_id"], "result table schema"
+            )
+            schema = await self.service.get_schema(expected[table_id]["schema_id"])
+            self._expect(
+                self._field_definition_fingerprints(schema.get("field_definitions") or []),
+                expected[table_id].get("schema_fields"),
+                "result schema fields",
+            )
+            for record in batch["records"]:
+                for field in record["fields"].values():
+                    value = field.get("value") if isinstance(field, dict) else None
+                    for item in value if isinstance(value, list) else [value]:
+                        descriptor = local_file_descriptor(item)
+                        if descriptor is not None and descriptor["ref"] in refs:
+                            self._read_planned_file(descriptor)
         submitted: list[dict[str, Any]] = []
         failures: list[dict[str, Any]] = []
-        web_url = plan_entry_web_url(plan)
+        orphaned_blob_ids: list[str] = []
         uncertain = False
         first_error: BenchlingAgentError | None = None
         for batch_index, batch in enumerate(batches):
             table_id = batch["table_id"]
+            uploaded_before = set(readback.uploaded_blob_ids(journal))
+            create_attempted = False
             try:
-                if any("id" in record for record in batch["records"]):
-                    raise ConflictError(
-                        "This result plan uses an unsupported bulk-table contract; "
-                        "create a new preview"
-                    )
-                table = await self.service.get_result_table(entry_id, table_id)
-                web_url = table.get("entry_web_url") or web_url
-                self._expect(
-                    table.get("schema_id"),
-                    expected[table_id]["schema_id"],
-                    "result table schema",
-                )
-                schema = await self.service.get_schema(expected[table_id]["schema_id"])
-                self._expect(
-                    self._field_definition_fingerprints(schema.get("field_definitions") or []),
-                    expected[table_id].get("schema_fields"),
-                    "result schema fields",
-                )
                 records = batch["records"]
                 if refs:
                     records = [
@@ -520,6 +588,7 @@ class ResultsPlanning(ResultUpdatePlanning):
                         }
                         for record in records
                     ]
+                create_attempted = True
                 response = await self.api.request(
                     "POST",
                     "/assay-results:bulk-create",
@@ -527,6 +596,12 @@ class ResultsPlanning(ResultUpdatePlanning):
                     json={"tableId": table_id, "assayResults": records},
                 )
             except PartialCompletionError as exc:
+                if not create_attempted:
+                    orphaned_blob_ids.extend(
+                        blob_id
+                        for ref, blob_id in readback.uploaded_blob_ids(journal).items()
+                        if ref not in uploaded_before
+                    )
                 uncertain = True
                 first_error = first_error or exc
                 failure = {
@@ -540,6 +615,11 @@ class ResultsPlanning(ResultUpdatePlanning):
                 self._event(journal, "create_results", "unknown", failure)
                 continue
             except BenchlingAgentError as exc:
+                orphaned_blob_ids.extend(
+                    blob_id
+                    for ref, blob_id in readback.uploaded_blob_ids(journal).items()
+                    if ref not in uploaded_before
+                )
                 first_error = first_error or exc
                 failure = {
                     "batch_index": batch_index,
@@ -591,7 +671,7 @@ class ResultsPlanning(ResultUpdatePlanning):
             self._event(journal, "create_results", "succeeded", recorded)
             submitted.append(result)
         if failures:
-            details = {
+            details: dict[str, Any] = {
                 "submitted": submitted,
                 "failures": failures,
                 "client_record_ids": [
@@ -600,6 +680,12 @@ class ResultsPlanning(ResultUpdatePlanning):
                     for record_id in batch.get("client_record_ids", [])
                 ],
             }
+            if orphaned_blob_ids:
+                details["orphaned_blob_ids"] = orphaned_blob_ids
+                details["next_step"] = (
+                    "The listed blobs were uploaded but are unlinked. The V2 Blobs API has no "
+                    "delete operation; a new plan will upload the files again."
+                )
             if uncertain:
                 raise PartialCompletionError(
                     "One or more result table uploads have an unconfirmed outcome",
