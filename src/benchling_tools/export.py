@@ -169,6 +169,19 @@ async def _load_results_table(
     service: BenchlingService, part_id: str
 ) -> tuple[list[str], list[dict[str, Any]], dict[str, Any]]:
     """Follow results-table row pages until next_token is absent."""
+    first, collected = await _read_results_rows(service, part_id)
+    columns = _column_names(first.get("column_definitions"), _width(collected))
+    source: dict[str, Any] = {"part_id": str(first.get("id") or part_id)}
+    _add_text(source, "name", first.get("name"))
+    _add_text(source, "version_id", first.get("version_id"))
+    _add_text(source, "schema_id", first.get("result_schema_id"))
+    return columns, [_table_row(row, columns) for row in collected], source
+
+
+async def _read_results_rows(
+    service: BenchlingService, part_id: str
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """The first row page (table header) and every normalized row of a results table."""
     first = await service.list_results_table_rows(part_id, limit=listing.LIST_LIMIT_MAX)
     collected: list[dict[str, Any]] = list(first["items"])
     cursor = first["next_token"]
@@ -184,12 +197,7 @@ async def _load_results_table(
             "Table row count did not match the rows that were returned",
             details={"part_id": part_id, "row_count": expected, "returned": len(collected)},
         )
-    columns = _column_names(first.get("column_definitions"), _width(collected))
-    source: dict[str, Any] = {"part_id": str(first.get("id") or part_id)}
-    _add_text(source, "name", first.get("name"))
-    _add_text(source, "version_id", first.get("version_id"))
-    _add_text(source, "schema_id", first.get("result_schema_id"))
-    return columns, [_table_row(row, columns) for row in collected], source
+    return first, collected
 
 
 def _listed_table_error(

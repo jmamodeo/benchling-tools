@@ -164,6 +164,32 @@ def _without_clock(value):
             "container_find",
             {"barcodes": ["BAR-SOURCE", "BAR-NONE"]},
         ),
+        (
+            [
+                "results",
+                "diff",
+                "--left",
+                ENTRY_ID,
+                "--right",
+                ENTRY_ID,
+                "--key",
+                "Ct",
+                "--fields",
+                "Ct",
+                "--resolve-barcodes",
+                "--sample",
+                "2",
+            ],
+            "results_diff",
+            {
+                "left": ENTRY_ID,
+                "right": ENTRY_ID,
+                "key": "Ct",
+                "fields": ["Ct"],
+                "resolve_barcodes": True,
+                "sample": 2,
+            },
+        ),
     ],
 )
 async def test_read_replies_match(cli_reply, mcp_reply, fake, args, tool, arguments) -> None:
