@@ -64,6 +64,14 @@ def _task_next_step(status: dict[str, Any]) -> str:
     """What to do next after reading one task with `changes status --task`."""
     state = status["result_state"]
     task_id = status["task_id"]
+    error = status.get("remote_task_error")
+    if isinstance(error, dict) and error.get("code") == "not_found":
+        return (
+            "Benchling has no task with this ID. It keeps a task only for a while (its 404 "
+            "says the task may have expired), so running this again will not help. Read the "
+            "created results with `results pending --id …` from the app's log, or with "
+            "`results list --entry ENTRY` once they are accepted."
+        )
     if "remote_task_error" in status:
         return (
             "The task could not be read; see remote_task_error, then run "

@@ -139,7 +139,16 @@ async def test_task_lookup_errors_are_reported_not_raised(runtime, fake) -> None
     assert status["remote_task_error"]["code"] == "not_found"
     assert status["result_state"] == "unknown"
     assert status["remote_task"] is None
+    assert "no task with this ID" in status["next_step"]
+    assert "will not help" in status["next_step"]
+
+
+async def test_other_task_lookup_errors_say_to_try_again(runtime, fake) -> None:
+    fake.fail("GET", f"/tasks/{TASK}", 400)
+    status = await runtime.planner.task_status(TASK)
+    assert status["remote_task_error"]["code"] != "not_found"
     assert "remote_task_error" in status["next_step"]
+    assert "again" in status["next_step"]
 
 
 @pytest.mark.parametrize(
