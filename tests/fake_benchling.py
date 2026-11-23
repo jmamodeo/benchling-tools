@@ -2009,7 +2009,7 @@ ROUTES: list[tuple[str, str]] = [
     (r"/entries/(\w+)", "GET v2|get_entry_v2"),
     (r"/folders/(\w+)", "GET v2|get_folder"),
     (r"/projects/(\w+)", "GET v2|get_project"),
-    (r"/tasks/(\w+)", "GET v2|get_task"),
+    (r"/tasks/([\w-]+)", "GET v2|get_task"),
     (r"/assay-results:bulk-create", "POST v2|bulk_create"),
     (r"/blobs", "POST v2|create_blob"),
     (r"/blobs:start-multipart-upload", "POST v2|start_blob"),

@@ -2026,11 +2026,20 @@ async def changes_export(
 @command(read_only=True)
 async def changes_status(
     call: Call,
-    plan_id: str = typer.Argument(
-        ..., help="Plan ID in this home, or a portable plan JSON file or bundle."
+    plan_id: str | None = typer.Argument(
+        None,
+        help="Plan ID in this home, or a portable plan JSON file or bundle. Omit with --task.",
+    ),
+    task_id: str | None = typer.Option(
+        None,
+        "--task",
+        help=(
+            "Benchling task ID to read instead of a plan, for example one returned by "
+            "POST /assay-results:bulk-create. Omit with a plan ID."
+        ),
     ),
     wait: bool = typer.Option(
-        False, "--wait", help="Poll result tasks until completion or timeout."
+        False, "--wait", help="Poll result tasks, or the --task task, until completion or timeout."
     ),
     timeout: float = typer.Option(
         300.0, "--timeout", min=0.1, max=3600, help="Maximum wait, in seconds (0.1-3600)."
@@ -2038,10 +2047,23 @@ async def changes_status(
 ) -> Any:
     """Show plan journal and task status; optionally wait for result tasks.
 
-    Accepts a local plan ID or portable plan file/bundle. For a plain plan file
-    with no sibling journal, use `changes export` in the source home.
+    Pass exactly one of a plan ID or --task. A plan ID accepts a local plan ID
+    or portable plan file/bundle. For a plain plan file with no sibling journal,
+    use `changes export` in the source home.
+
+    --task reads any Benchling background task with V2 GET /tasks/{task_id},
+    such as one a script started with bulk-create, with the same poller and
+    backoff as a plan. It returns task_status, result_state, timed_out, and
+    remote_task in full; for a failed task, Benchling's message and errors. For
+    assay results it lists the created V2 result IDs in record_ids and
+    record_count; another kind of task has response_kind other and its
+    response_keys listed but not interpreted. Relay next_step. Reads only.
     """
-    return await call.runtime.planner.status(plan_id, wait=wait, timeout=timeout)
+    if plan_id is not None and task_id is None:
+        return await call.runtime.planner.status(plan_id, wait=wait, timeout=timeout)
+    if task_id is not None and plan_id is None:
+        return await call.runtime.planner.task_status(task_id, wait=wait, timeout=timeout)
+    raise ValidationError("Pass exactly one of a plan ID or --task")
 
 
 def _issue_spec(
