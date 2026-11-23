@@ -745,6 +745,62 @@ class ChangePlanner(
         known = await self._entry_readback(entry_id)
         return [item for item in known["items"] if item["state"] == readback.PENDING]
 
+    async def entry_pending_results(self, entry_id: str) -> dict[str, Any]:
+        """Still-pending records of this home's applied result upload plans for one entry.
+
+        Benchling has no API filter for pending results by entry, so the records come
+        from the same plans and journals ``results pending --entry`` reads. Returns
+        ``items`` (each with its ``table_id``), ``plans``, ``not_found``, table
+        ``names``, and the entry ``web_url``.
+        """
+        known = await self._entry_readback(entry_id)
+        known["items"] = [item for item in known["items"] if item["state"] == readback.PENDING]
+        return known
+
+    async def results_list_pending(
+        self,
+        entry: str,
+        *,
+        schema_id: str | None = None,
+        result_ids: list[str] | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """The ``pending`` block ``results list --include-pending`` adds to a page.
+
+        Pending results have no entry until accepted, so V3 ``entry.eq`` does not
+        list them. They are read back from this home's applied upload plans for the
+        entry, and kept when they match ``schema_id`` and ``result_ids`` (V2 or V3 ids).
+        At most ``limit`` are listed; ``count`` covers every pending record found.
+        """
+        limit = self._readback_limit(limit, "limit", 100)
+        resolved = await self.service.resolve_entry(entry)
+        entry_id = str(resolved["entry_id"])
+        found = await self.entry_pending_results(entry_id)
+        wanted = set(result_ids) if result_ids else None
+        items = [
+            item
+            for item in found["items"]
+            if (schema_id is None or item.get("schema_id") == schema_id)
+            and (wanted is None or item.get("v2_id") in wanted or item.get("v3_id") in wanted)
+        ]
+        return {
+            "source": "local_plans",
+            "entry_id": entry_id,
+            "plans": found["plans"],
+            "count": len(items),
+            "items": items[:limit],
+            "truncated": len(items) > limit,
+            "not_found": found["not_found"][:limit],
+            "next_step": readback.pending_next_step(
+                len(items),
+                entry_id=entry_id,
+                table_names=self._pending_tables(items, found["names"]),
+                web_url=resolved.get("web_url") or found["web_url"],
+            )
+            if found["plans"]
+            else readback.NO_ENTRY_PLANS_NEXT_STEP,
+        }
+
     async def results_capacity(
         self,
         entry: str,

@@ -1320,6 +1320,14 @@ async def results_list(
         100, "--page-size", min=1, max=100, help="Result records per page, from 1 to 100."
     ),
     cursor: str | None = typer.Option(None, "--cursor", help=_CURSOR_HELP),
+    include_pending: bool = typer.Option(
+        False,
+        "--include-pending",
+        help=(
+            "With --entry: add a pending block with the still-pending results of this "
+            "home's applied upload plans for the entry, which entry filters miss."
+        ),
+    ),
 ) -> Any:
     """List one explicit page of result records, optionally filtered by entry, schema, or id.
 
@@ -1328,14 +1336,34 @@ async def results_list(
     Benchling does not return it. --id takes either namespace; a V2 UUID that cannot
     be mapped is listed in not_found with id_namespace and lookup. results get and
     results pending --id take either id too.
+
+    Pending results have no entry until a person accepts them, so --entry does not
+    list them. --include-pending (needs --entry) adds pending: the still-pending
+    records of every applied result upload plan for the entry in this home, read as
+    results pending --entry reads them and kept when they match --schema and --id.
+    pending has source local_plans, plans, count, items (at most --page-size, in the
+    results pending item shape: id is the V2 UUID), truncated, not_found, and
+    next_step. It is the same on every page. Plans applied from another home are
+    not known. Reads only.
     """
-    return await call.runtime.service.list_results_by_any_id(
+    if include_pending and entry is None:
+        raise ValidationError(
+            "include_pending needs entry: pending results are found from this home's "
+            "upload plans for one entry"
+        )
+    page = await call.runtime.service.list_results_by_any_id(
         entry=entry,
         schema_id=schema_id,
         result_ids=result_ids or None,
         page_size=page_size,
         cursor=cursor,
     )
+    if include_pending:
+        assert entry is not None
+        page["pending"] = await call.runtime.planner.results_list_pending(
+            entry, schema_id=schema_id, result_ids=result_ids or None, limit=page_size
+        )
+    return page
 
 
 @results_app.command("get")
@@ -1808,6 +1836,14 @@ async def results_diff(
     overwrite: bool = typer.Option(
         False, "--overwrite", help="Replace the --output file if it already exists."
     ),
+    include_pending: bool = typer.Option(
+        False,
+        "--include-pending",
+        help=(
+            "Also compare the still-pending results of this home's applied upload plans "
+            "for each entry, as rows of the table they were uploaded to."
+        ),
+    ),
 ) -> Any:
     """Diff the results-table rows of two entries, or two runs, table by table.
 
@@ -1823,8 +1859,14 @@ async def results_diff(
     only_left, only_right, and changed fields. Benchling has no server-side
     text-value filter, so run values select rows locally. Reads only.
 
-    Pending (unaccepted) results are not table rows; use results pending and
-    results verify for those.
+    Pending (unaccepted) results are not table rows. --include-pending adds them:
+    the still-pending records of every applied result upload plan for each entry
+    in this home, read as results pending --entry reads them, become rows of the
+    table they were uploaded to, numbered after its rows and filtered by the run
+    value like them. Each such row has pending true and result_id (v3 id), changed
+    fields add left_pending or right_pending, counts add pending_left and
+    pending_right, and pending gives per side plans, pending, attached,
+    not_attached, and not_found. Plans applied from another home are not known.
 
     CLI: --output FILE --format json|csv writes every difference to a file, like
     export, and adds its path, row count, and SHA-256 checksum to the reply.
@@ -1843,6 +1885,7 @@ async def results_diff(
         output=output,
         file_format=file_format,
         overwrite=overwrite,
+        pending=call.runtime.planner.entry_pending_results if include_pending else None,
     )
 
 
