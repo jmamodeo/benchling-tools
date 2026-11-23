@@ -160,10 +160,26 @@ def _without_clock(value):
             "container_find",
             {"barcodes": ["BAR-SOURCE", "BAR-NONE"]},
         ),
+        (
+            ["container", "find", "--contents", "ent_sample1", "--in", "loc_freezer1"],
+            "container_find",
+            {"contents": ["ent_sample1"], "in_storage": "loc_freezer1"},
+        ),
+        (
+            ["container", "find", "--registry-id", "REG-0001", "--registry", "src_registry1"],
+            "container_find",
+            {"registry_ids": ["REG-0001"], "registry": "src_registry1"},
+        ),
+        (
+            ["container", "get", "con_well1", "--location"],
+            "container_get",
+            {"container_id": "con_well1", "location": True},
+        ),
     ],
 )
 async def test_read_replies_match(cli_reply, mcp_reply, fake, args, tool, arguments) -> None:
     fake.add_results_table()
+    fake.add_stored_containers()
     fake.add_example_results_part()
     printed = await cli_reply(*args)
     assert printed["meta"] == {"env": "sandbox", "tenant_url": TENANT}

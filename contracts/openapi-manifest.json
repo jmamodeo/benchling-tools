@@ -61,7 +61,14 @@
         "/blobs/{blob_id}:complete-upload",
         "/blobs/{blob_id}:abort-upload",
         "/projects/{project_id}",
-        "/tasks/{task_id}"
+        "/tasks/{task_id}",
+        "/containers",
+        "/containers/{container_id}",
+        "/registries",
+        "/registries/{registry_id}/registered-entities:bulk-get",
+        "/locations/{location_id}",
+        "/boxes/{box_id}",
+        "/plates/{plate_id}"
       ]
     }
   ]

@@ -269,6 +269,32 @@ async def test_container_read_tools_and_plans_keep_default_read_only(client, wri
     barcodes_schema = tools["container_find"].inputSchema["properties"]["barcodes"]
     assert "array" in json.dumps(barcodes_schema)
     assert "List containers" in (tools["container_find"].description or "")
+    find_schema = tools["container_find"].inputSchema["properties"]
+    for name in ("contents", "registry_ids"):
+        assert "array" in json.dumps(find_schema[name])
+    assert {"registry", "in_storage"} <= set(find_schema)
+    assert find_schema["limit"]["maximum"] == 1000
+    assert "location" in tools["container_get"].inputSchema["properties"]
+    assert tools["container_find"].annotations.readOnlyHint is True
+    assert tools["container_get"].annotations.readOnlyHint is True
+    fake.add_stored_containers()
+    by_registry = await call(
+        client, "container_find", env="sandbox", registry_ids=["REG-0001"], in_storage="loc_room1"
+    )
+    assert [item["container_id"] for item in by_registry["data"]["found"]] == ["con_well1"]
+    conflict = await call(
+        client, "container_find", env="sandbox", barcodes=["BAR-SOURCE"], in_storage="box_rack1"
+    )
+    assert conflict["error"]["code"] == "validation_error"
+    assert conflict["error"]["message"].startswith("in_storage combines with name, contents")
+    located = await call(
+        client, "container_get", env="sandbox", container_id="con_boxed1", location=True
+    )
+    assert [item["kind"] for item in located["data"]["location_path"]] == [
+        "box",
+        "location",
+        "location",
+    ]
     schemas = await call(client, "container_schema_list", env="sandbox")
     assert schemas["data"]["items"][0]["fieldDefinitions"][0]["name"] == "Storage note"
 

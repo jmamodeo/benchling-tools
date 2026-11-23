@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import random
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from typing import Any
 
 import httpx
@@ -121,7 +121,7 @@ class BenchlingAPI:
         params: dict[str, Any] | None = None,
         item_key: str = "items",
         max_items: int | None = None,
-    ) -> AsyncIterator[dict[str, Any]]:
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """Yield items across nextToken pages, stopping at max_items.
 
         Raises UpstreamError on a malformed page or a repeated token.

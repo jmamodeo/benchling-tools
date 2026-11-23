@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from benchling_tools.errors import ConflictError, ValidationError
+from benchling_tools.errors import ConflictError, UpstreamError, ValidationError
 from benchling_tools.models import PlanStatus
 
 
@@ -57,6 +57,7 @@ async def test_find_containers_many_barcodes_reports_each_outcome(runtime, fake)
                     },
                 ],
                 "archived": False,
+                "parent_storage_id": None,
             },
             {
                 "barcode": "BAR-SOURCE",
@@ -66,6 +67,7 @@ async def test_find_containers_many_barcodes_reports_each_outcome(runtime, fake)
                     {"entity_id": "ent_sample1", "entity_registry_id": None, "batch_id": None}
                 ],
                 "archived": False,
+                "parent_storage_id": None,
             },
             {
                 "barcode": "BAR-DEST",
@@ -73,6 +75,7 @@ async def test_find_containers_many_barcodes_reports_each_outcome(runtime, fake)
                 "schema_id": "contsch_abc123",
                 "contents": [],
                 "archived": False,
+                "parent_storage_id": None,
             },
         ],
         "invalid_barcodes": ["BAR-BAD"],
@@ -156,6 +159,248 @@ async def test_find_containers_barcode_input_is_checked(runtime) -> None:
         await runtime.service.find_containers(barcode=["BAR-SOURCE", "BAR-DEST"], cursor="50")
     single = await runtime.service.find_containers(barcode=["BAR-SOURCE", "BAR-SOURCE"])
     assert [item["id"] for item in single["items"]] == ["con_source1"]
+
+
+async def test_find_containers_by_registry_id_resolves_and_reports_unregistered(
+    runtime, fake
+) -> None:
+    fake.add_stored_containers()
+    found = await runtime.service.find_containers(
+        registry_ids=["REG-0001", "REG-9999"], registry="src_registry1"
+    )
+    assert found["registry"] == "src_registry1"
+    assert found["entities"] == [
+        {
+            "registry_id": "REG-0001",
+            "entity_id": "ent_registered1",
+            "name": "Registered sample",
+            "schema_id": "ts_sample",
+        }
+    ]
+    assert found["unregistered_ids"] == ["REG-9999"]
+    assert [item["container_id"] for item in found["found"]] == ["con_batch1", "con_well1"]
+    assert found["found"][1]["barcode"] == "BAR-WELL"
+    assert found["found"][1]["parent_storage_id"] == "plt_plate1:A1"
+    assert found["truncated"] is False
+    bulk = [call for call in fake.calls if call.path.endswith("registered-entities:bulk-get")]
+    assert [call.path for call in bulk] == [
+        "/api/v2/registries/src_registry1/registered-entities:bulk-get"
+    ]
+    assert bulk[0].params == {"entityRegistryIds": "REG-0001,REG-9999"}
+    assert [call.params["storageContentsIds"] for call in _container_lists(fake)] == [
+        "ent_registered1"
+    ]
+    assert not any(call.path == "/api/v2/registries" for call in fake.calls)
+    assert fake.writes() == []
+
+
+async def test_find_containers_registry_defaults_to_the_only_registry(runtime, fake) -> None:
+    found = await runtime.service.find_containers(registry_ids="REG-0001")
+    assert found["registry"] == "src_registry1"
+    assert [item["container_id"] for item in found["found"]] == ["con_batch1"]
+    assert any(call.path == "/api/v2/registries" for call in fake.calls)
+
+
+async def test_find_containers_several_registries_lists_them(runtime, fake) -> None:
+    fake.registries.append({"id": "src_registry2", "name": "Second registry"})
+    with pytest.raises(ValidationError, match="--registry") as raised:
+        await runtime.service.find_containers(registry_ids=["REG-0001"])
+    assert raised.value.details["registries"] == [
+        {"id": "src_registry1", "name": "Synthetic registry"},
+        {"id": "src_registry2", "name": "Second registry"},
+    ]
+    fake.registries.clear()
+    with pytest.raises(ValidationError, match="0 registries") as none:
+        await runtime.service.find_containers(registry_ids=["REG-0001"])
+    assert none.value.details["registries"] == []
+    assert _container_lists(fake) == []
+
+
+async def test_find_containers_unregistered_ids_skip_the_container_list(runtime, fake) -> None:
+    found = await runtime.service.find_containers(
+        registry_ids=["REG-9999"], registry="src_registry1"
+    )
+    assert found["entities"] == found["found"] == []
+    assert found["unregistered_ids"] == ["REG-9999"]
+    assert _container_lists(fake) == []
+
+
+async def test_find_containers_malformed_registry_replies_are_upstream_errors(
+    runtime, fake
+) -> None:
+    fake.payload_overrides.append(("/registries", 200, {"registries": "none"}))
+    with pytest.raises(UpstreamError, match="registry list"):
+        await runtime.service.find_containers(registry_ids=["REG-0001"])
+    fake.payload_overrides.append(("registered-entities:bulk-get", 200, {"entities": [1]}))
+    with pytest.raises(UpstreamError, match="registered entity list"):
+        await runtime.service.find_containers(registry_ids=["REG-0001"], registry="src_registry1")
+
+
+async def test_find_containers_by_contents_chunks_at_100(runtime, fake) -> None:
+    entities = ["ent_sample1", *(f"ent_{index:03d}" for index in range(149))]
+    found = await runtime.service.find_containers(contents=entities)
+    requests = _container_lists(fake)
+    assert [len(call.params["storageContentsIds"].split(",")) for call in requests] == [100, 50]
+    assert all("ancestorStorageId" not in call.params for call in requests)
+    assert [item["container_id"] for item in found["found"]] == ["con_source1", "con_batch1"]
+    assert found["truncated"] is False
+
+
+async def test_find_containers_in_storage_and_contents_send_both(runtime, fake) -> None:
+    fake.add_stored_containers()
+    in_box = await runtime.service.find_containers(in_storage="box_rack1")
+    assert [item["container_id"] for item in in_box["found"]] == ["con_boxed1"]
+    assert _container_lists(fake)[-1].params["ancestorStorageId"] == "box_rack1"
+    assert "storageContentsIds" not in _container_lists(fake)[-1].params
+
+    in_freezer = await runtime.service.find_containers(
+        contents=["ent_sample1", "ent_registered1"], in_storage="loc_freezer1"
+    )
+    assert [item["container_id"] for item in in_freezer["found"]] == ["con_well1", "con_boxed1"]
+    params = _container_lists(fake)[-1].params
+    assert params["ancestorStorageId"] == "loc_freezer1"
+    assert params["storageContentsIds"] == "ent_sample1,ent_registered1"
+
+    named = await runtime.service.find_containers(name="Boxed tube", in_storage="loc_room1")
+    assert [item["container_id"] for item in named["found"]] == ["con_boxed1"]
+    assert _container_lists(fake)[-1].params["name"] == "Boxed tube"
+
+
+async def test_find_containers_filters_follow_pages_up_to_limit(runtime, fake) -> None:
+    fake.add_stored_containers()
+    fake.container_page_size = 1
+    found = await runtime.service.find_containers(contents=["ent_sample1"], limit=2)
+    assert [item["container_id"] for item in found["found"]] == ["con_source1", "con_batch1"]
+    assert found["truncated"] is True
+    assert [call.params.get("nextToken") for call in _container_lists(fake)] == [None, "1", "2"]
+
+    fake.calls.clear()
+    everything = await runtime.service.find_containers(contents=["ent_sample1"], limit=3)
+    assert len(everything["found"]) == 3
+    assert everything["truncated"] is False
+
+
+async def test_find_containers_lists_a_container_once_across_chunks(runtime, fake) -> None:
+    entities = [*(f"ent_{index:03d}" for index in range(99)), "ent_sample1", "ent_registered1"]
+    found = await runtime.service.find_containers(contents=entities)
+    assert len(_container_lists(fake)) == 2
+    assert [item["container_id"] for item in found["found"]] == ["con_source1", "con_batch1"]
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        ({"barcode": "BAR-SOURCE", "contents": ["ent_sample1"]}, "exactly one"),
+        ({"name": "Source vial", "registry_ids": ["REG-0001"]}, "exactly one"),
+        ({"contents": ["ent_sample1"], "registry_ids": ["REG-0001"]}, "exactly one"),
+        ({"barcode": "BAR-SOURCE", "in_storage": "box_rack1"}, "--in combines"),
+        ({"contents": ["ent_sample1"], "registry": "src_registry1"}, "--registry applies"),
+        ({"in_storage": "box_rack1", "cursor": "50"}, "--cursor pages"),
+        ({"in_storage": "con_source1"}, "--in must be"),
+        ({"in_storage": " "}, "non-empty"),
+        ({"contents": ["ent_a,ent_b"]}, "repeat --contents"),
+        ({"registry_ids": ["REG-1,REG-2"]}, "repeat --registry-id"),
+        ({"contents": []}, "non-empty"),
+        ({"contents": ["ent_sample1"], "limit": 1001}, "1 and 1000"),
+        ({"contents": ["ent_sample1"], "limit": True}, "1 and 1000"),
+        ({"name": "Source vial", "limit": 101}, "1 and 100"),
+    ],
+)
+async def test_find_containers_filter_input_is_checked(runtime, fake, arguments, message) -> None:
+    with pytest.raises(ValidationError, match=message):
+        await runtime.service.find_containers(**arguments)
+    assert _container_lists(fake) == []
+
+
+async def test_get_container_location_follows_well_plate_and_locations(runtime, fake) -> None:
+    fake.add_stored_containers()
+    plain = await runtime.service.get_container("con_well1")
+    assert "location_path" not in plain
+    container = await runtime.service.get_container("con_well1", location=True)
+    assert container["id"] == "con_well1"
+    assert container["location_path"] == [
+        {"id": "plt_plate1:A1", "kind": "well", "name": "A1", "barcode": None, "schema_id": None},
+        {
+            "id": "plt_plate1",
+            "kind": "plate",
+            "name": "Synthetic plate",
+            "barcode": "PLT-1",
+            "schema_id": "pltsch_abc123",
+        },
+        {
+            "id": "loc_freezer1",
+            "kind": "location",
+            "name": "Synthetic freezer",
+            "barcode": "LOC-FREEZER",
+            "schema_id": "locsch_abc123",
+        },
+        {
+            "id": "loc_room1",
+            "kind": "location",
+            "name": "Synthetic room",
+            "barcode": "LOC-ROOM",
+            "schema_id": "locsch_abc123",
+        },
+    ]
+    assert container["location_truncated"] is False
+    reads = [call.path for call in fake.calls if not call.path.startswith("/api/v2/containers")]
+    assert [path for path in reads if path != "/oauth/token"] == [
+        "/api/v2/plates/plt_plate1",
+        "/api/v2/locations/loc_freezer1",
+        "/api/v2/locations/loc_room1",
+    ]
+
+    boxed = await runtime.service.get_container("con_boxed1", location=True)
+    assert [(item["id"], item["kind"]) for item in boxed["location_path"]] == [
+        ("box_rack1", "box"),
+        ("loc_freezer1", "location"),
+        ("loc_room1", "location"),
+    ]
+    top = await runtime.service.get_container("con_dest1", location=True)
+    assert top["location_path"] == []
+    assert top["location_truncated"] is False
+    assert fake.writes() == []
+
+
+async def test_get_container_location_marks_box_positions_and_unknown_parents(
+    runtime, fake
+) -> None:
+    fake.add_stored_containers()
+    fake.containers[-1]["parentStorageId"] = "box_rack1:B2"
+    boxed = await runtime.service.get_container("con_boxed1", location=True)
+    assert boxed["location_path"][0] == {
+        "id": "box_rack1:B2",
+        "kind": "position",
+        "name": "B2",
+        "barcode": None,
+        "schema_id": None,
+    }
+    assert boxed["location_path"][1]["id"] == "box_rack1"
+
+    fake.storage["loc_room1"]["parentStorageId"] = "zzz_unknown"
+    unknown = await runtime.service.get_container("con_boxed1", location=True)
+    assert unknown["location_path"][-1] == {
+        "id": "zzz_unknown",
+        "kind": None,
+        "name": None,
+        "barcode": None,
+        "schema_id": None,
+    }
+    assert unknown["location_truncated"] is False
+
+
+async def test_get_container_location_stops_after_ten_levels_on_a_cycle(runtime, fake) -> None:
+    fake.add_stored_containers()
+    fake.storage["loc_room1"]["parentStorageId"] = "box_rack1"
+    container = await runtime.service.get_container("con_boxed1", location=True)
+    assert len(container["location_path"]) == 10
+    assert container["location_truncated"] is True
+    storage_reads = [
+        call
+        for call in fake.calls
+        if call.path.startswith(("/api/v2/boxes", "/api/v2/locations", "/api/v2/plates"))
+    ]
+    assert len(storage_reads) == 10
 
 
 async def test_container_create_is_preview_then_single_apply(runtime, fake) -> None:

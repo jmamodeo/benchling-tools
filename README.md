@@ -72,7 +72,8 @@ Every command, the six change families, spec shapes, result uploads and attachme
 | `users list` | List visible users by handle, email, name, ID, or organization. |
 | `users get` | Read a visible user by ID or exact handle. |
 | `entry list` | List entries with server-side filters, including creator and author. |
-| `container find` | Find containers by exact name, or check many barcodes in one call and list the invalid, missing, and empty ones. Read-only. |
+| `container find` | Find containers by exact name, by the entities or registry IDs they hold, or inside a location, box or plate, or check many barcodes in one call and list the invalid, missing, and empty ones. Read-only. |
+| `container get --location` | Read a container and its location path, from its well, box or plate up to the top location. Read-only. |
 | `results capacity` | Report each results table's used rows, known pending results, planned rows, and remaining room under Benchling's 1,000-row limit. Read-only. |
 
 For example, resolve a handle with `benchling-tools users get HANDLE --env dev`, then use the returned ID with `benchling-tools entry list --creator USER_ID --folder lib_example --env dev`. Handles may also be passed directly to `--creator` or `--author`.
