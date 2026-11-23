@@ -508,7 +508,25 @@ class FakeBenchling:
                 "schema": {"id": "contsch_abc123"},
                 "contents": [],
             },
+            {
+                "id": "con_batch1",
+                "name": "Batch vial",
+                "barcode": "BAR-BATCH",
+                "modifiedAt": "2026-01-03T00:00:00Z",
+                "schema": {"id": "contsch_abc123"},
+                "archiveRecord": None,
+                "contents": [
+                    {
+                        "batch": {"id": "bat_sample1", "entity": {"id": "ent_sample1"}},
+                        "entity": None,
+                    },
+                    {"entity": {"id": "ent_registered1", "entityRegistryId": "REG-0001"}},
+                ],
+            },
         ]
+        # Barcodes V2 GET /containers rejects with a 400 naming them in invalidBarcodes.
+        self.invalid_barcodes: set[str] = set()
+        self.container_page_size: int | None = None
         self.container_transfers: list[dict[str, Any]] = []
         self.field_defs = {
             "entsch_abc123": field_definitions(),
@@ -731,13 +749,22 @@ class FakeBenchling:
         items = self.containers
         if call.params.get("barcodes"):
             barcodes = call.params["barcodes"].split(",")
+            invalid = [barcode for barcode in barcodes if barcode in self.invalid_barcodes]
+            if invalid:
+                return 400, {
+                    "error": {
+                        "invalidBarcodes": invalid,
+                        "message": "At least one provided barcode is invalid.",
+                        "type": "invalid_request_error",
+                    }
+                }
             items = [item for item in items if item.get("barcode") in barcodes]
         if call.params.get("name"):
             items = [item for item in items if item.get("name") == call.params["name"]]
         return self._page(
             deepcopy(items),
             call,
-            self._limited_page(call, None),
+            self._limited_page(call, self.container_page_size),
             key="containers",
         )
 

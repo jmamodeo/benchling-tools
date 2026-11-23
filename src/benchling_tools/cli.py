@@ -1142,14 +1142,37 @@ async def container_get(
 @command(read_only=True)
 async def container_find(
     call: Call,
-    barcode: str | None = typer.Option(None, "--barcode", help="Exact container barcode."),
+    barcodes: list[str] | None = typer.Option(
+        None,
+        "--barcode",
+        help=(
+            "Exact container barcode. Repeat for several; one value holds one barcode "
+            "(no commas). Duplicates are dropped and order is kept."
+        ),
+    ),
     name: str | None = typer.Option(None, "--name", help="Exact container name."),
     limit: int = typer.Option(50, "--limit", min=1, max=100, help=_LIMIT_HELP),
     cursor: str | None = typer.Option(None, "--cursor", help=_CURSOR_HELP),
 ) -> Any:
-    """Find one page of containers by exact barcode or exact name."""
+    """Find containers by exact barcode (repeatable) or exact name.
+
+    One --barcode, or --name, returns one page as items and next_token. Several
+    --barcode values return requested, found, invalid_barcodes,
+    missing_barcodes (valid, but no container matched) and empty_containers
+    (found with no contents). Each found item has barcode, container_id,
+    schema_id, archived, and contents with entity_id, entity_registry_id and
+    batch_id. The barcodes are sent to V2 GET /containers 100 per request and
+    every page is read, so --limit and --cursor do not apply. Benchling answers
+    an invalid barcode with a 400 that lists invalidBarcodes ("returns a 400
+    error that includes a list of which barcodes are invalid", Benchling docs,
+    List containers). Those barcodes are reported, not failed, and the rest of
+    that chunk is read again once. With one barcode, an invalid barcode is a
+    validation_error with details.invalid_barcodes and a hint.
+
+    MCP: barcodes is a list; one item keeps the one-page reply.
+    """
     return await call.runtime.service.find_containers(
-        barcode=barcode, name=name, limit=limit, cursor=cursor
+        barcode=barcodes or None, name=name, limit=limit, cursor=cursor
     )
 
 
