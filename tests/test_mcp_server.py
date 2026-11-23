@@ -896,6 +896,29 @@ async def test_list_entries_is_read_only_and_routes_folder_filters_to_v2(client,
     assert all(not call.path.endswith("/entry/items") for call in fake.calls)
 
 
+async def test_list_entries_tool_accepts_a_sort_enum(client, fake) -> None:
+    tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+    tool = tools["entry_list"]
+    assert tool.annotations.readOnlyHint is True
+    assert set(tool.inputSchema["$defs"]["EntrySort"]["enum"]) == {
+        "created-desc",
+        "created-asc",
+        "modified-desc",
+        "modified-asc",
+        "name-asc",
+        "name-desc",
+    }
+    assert "next_token from one sort" in tool.inputSchema["properties"]["sort"]["description"]
+    data = (await call(client, "entry_list", env="sandbox", sort="created-desc", limit=1))["data"]
+    assert [item["id"] for item in data["items"]] == ["etr_list4"]
+    assert data["sort"] == "createdAt:desc"
+    (listed,) = [item for item in fake.calls if item.path.endswith("/entries")]
+    assert listed.params == {"sort": "createdAt:desc", "pageSize": "1"}
+    rejected = await client.call_tool("entry_list", {"env": "sandbox", "sort": "newest"})
+    assert rejected.isError is True
+    assert fake.writes() == []
+
+
 async def test_list_results_table_rows_is_read_only_and_paged(client, fake) -> None:
     fake.add_results_table()
     first = (await call(client, "results_rows", env="sandbox", part_id="docpart_rt1", limit=2))[
@@ -977,6 +1000,42 @@ async def test_read_back_and_verify_results_without_allow_writes(client, pool, f
     assert "plug" in pending["next_step"]
     verified = (await call(client, "results_verify", env="sandbox", plan_id=planned.id))["data"]
     assert verified["ok"] is True and verified["counts"]["pending"] == 1
+    assert len(fake.writes()) == writes
+
+
+async def test_results_verify_takes_a_payload_object_and_never_a_path(
+    client, fake, tmp_path
+) -> None:
+    body = {
+        "tableId": "strtbl_example",
+        "assayResults": [{"schemaId": "assaysch_abc123", "fields": {"ct": {"value": 4}}}],
+    }
+    fake.bulk_payloads.append(body)
+    (result_id,) = fake.complete_upload()
+    writes = len(fake.writes())
+    tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+    verify = tools["results_verify"]
+    assert verify.annotations.readOnlyHint is True
+    assert verify.inputSchema["properties"]["payload"]["type"] == ["object", "array"]
+    assert {"payload", "result_ids", "created_after", "created_before", "entry"} <= set(
+        verify.inputSchema["properties"]
+    )
+    assert "plan_id" not in verify.inputSchema.get("required", [])
+
+    by_id = await call(
+        client, "results_verify", env="sandbox", payload=body, result_ids=[result_id]
+    )
+    assert by_id["ok"] is True, by_id
+    assert by_id["data"]["ok"] is True and by_id["data"]["source"]["mode"] == "payload"
+    path = tmp_path / "body.json"
+    path.write_text(json.dumps(body))
+    refused = await call(
+        client, "results_verify", env="sandbox", payload=str(path), result_ids=[result_id]
+    )
+    assert refused["error"]["code"] == "validation_error"
+    assert "not a path" in refused["error"]["message"]
+    both = await call(client, "results_verify", env="sandbox", plan_id="0" * 32, payload=body)
+    assert both["error"]["code"] == "validation_error"
     assert len(fake.writes()) == writes
 
 
@@ -1364,6 +1423,27 @@ async def test_apply_changes_for_results_returns_the_next_step(writer, fake) -> 
         timeout=1,
     )
     assert status["data"]["result_state"] == "pending_integration"
+
+
+async def test_changes_status_reads_a_task_without_allow_writes(client, fake) -> None:
+    fake.tasks["task_mcp1"] = {"status": "FAILED", "message": "failed", "errors": [{"index": 0}]}
+    tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+    schema = tools["changes_status"].inputSchema
+    assert "task_id" in schema["properties"]
+    assert "plan_id" not in schema.get("required", [])
+    assert "task_id" in tools["changes_status"].description
+    status = await call(client, "changes_status", env="sandbox", task_id="task_mcp1")
+    assert status["ok"] is True, status
+    assert status["data"]["result_state"] == "submission_failed"
+    assert status["data"]["errors"] == [{"index": 0}]
+    both = await call(
+        client, "changes_status", env="sandbox", plan_id="0" * 32, task_id="task_mcp1"
+    )
+    assert both["error"]["code"] == "validation_error"
+    assert "task_id" in both["error"]["message"]
+    neither = await call(client, "changes_status", env="sandbox")
+    assert neither["error"]["code"] == "validation_error"
+    assert fake.writes() == []
 
 
 async def test_entry_tools_return_web_url(client) -> None:

@@ -1017,6 +1017,7 @@ class FakeBenchling:
                 "id": ENTRY_ID,
                 "name": self.entry_name,
                 "displayId": self.display_id,
+                "createdAt": "2025-09-01T09:00:00Z",
                 "modifiedAt": "2026-06-15T12:00:00Z",
                 "schemaId": self.entry_schema_id,
                 "projectId": "src_abc123",
@@ -1026,6 +1027,7 @@ class FakeBenchling:
                 "id": "etr_list2",
                 "name": "Other experiment",
                 "displayId": "EXP-2",
+                "createdAt": "2025-12-15T00:00:00Z",
                 "modifiedAt": "2026-01-01T00:00:00Z",
                 "schemaId": "entsch_other",
                 "projectId": "src_other",
@@ -1035,6 +1037,7 @@ class FakeBenchling:
                 "id": "etr_list3",
                 "name": "Third note",
                 "displayId": "EXP-3",
+                "createdAt": "2025-11-20T00:00:00Z",
                 "modifiedAt": "2025-12-01T00:00:00Z",
                 "schemaId": "entsch_abc123",
                 "projectId": "src_abc123",
@@ -1044,6 +1047,7 @@ class FakeBenchling:
                 "id": "etr_list4",
                 "name": "Late note",
                 "displayId": "EXP-4",
+                "createdAt": "2026-03-01T00:00:00Z",
                 "modifiedAt": "2026-11-01T08:30:00Z",
                 "schemaId": "entsch_other",
                 "projectId": "src_abc123",
@@ -1102,6 +1106,13 @@ class FakeBenchling:
                     for row in rows
                     if self._modified_matches(str(row["modifiedAt"]), params["modifiedAt"])
                 ]
+            if params.get("sort"):
+                key, _, direction = params["sort"].partition(":")
+                rows = sorted(
+                    rows,
+                    key=lambda row: str(row.get(key) or row["modifiedAt"]),
+                    reverse=direction != "asc",
+                )
             return rows
         # V3 entry listing does not apply folderId. Leave it unread on purpose.
         if params.get("project.eq"):
@@ -1149,6 +1160,7 @@ class FakeBenchling:
                     "id": row["id"],
                     "name": row["name"],
                     "displayId": row["displayId"],
+                    "createdAt": _offset_stamp(str(row.get("createdAt") or row["modifiedAt"])),
                     "modifiedAt": _offset_stamp(str(row["modifiedAt"])),
                     "schemaId": row["schemaId"],
                     "projectId": row["projectId"],
@@ -1174,6 +1186,7 @@ class FakeBenchling:
                     "id": row["id"],
                     "name": row["name"],
                     "displayId": row["displayId"],
+                    "createdAt": _offset_stamp(str(row.get("createdAt") or row["modifiedAt"])),
                     "modifiedAt": _offset_stamp(str(row["modifiedAt"])),
                     "schemaId": row["schemaId"],
                     "projectId": row["projectId"],
@@ -1955,14 +1968,17 @@ class FakeBenchling:
     def complete_upload(
         self, task_id: str = "task_abc123", *, payload_index: int = -1
     ) -> list[str]:
-        """Create pending V2 results from a bulk-create payload and finish its task."""
+        """Create pending V2 results from a bulk-create payload and finish its task.
+
+        A record's optional client ``id`` (a UUID) becomes its V2 id.
+        """
         payload = self.bulk_payloads[payload_index]
         created = []
         for record in payload["assayResults"]:
             number = len(self.assay_results) + len(created) + 1
             created.append(
                 {
-                    "id": f"00000000-0000-4000-8000-{number:012d}",
+                    "id": record.get("id") or f"00000000-0000-4000-8000-{number:012d}",
                     "v3Id": f"result_up{number}",
                     "entryId": None,
                     "isReviewed": False,
@@ -2131,7 +2147,7 @@ ROUTES: list[tuple[str, str]] = [
     (r"/entries/(\w+)", "GET v2|get_entry_v2"),
     (r"/folders/(\w+)", "GET v2|get_folder"),
     (r"/projects/(\w+)", "GET v2|get_project"),
-    (r"/tasks/(\w+)", "GET v2|get_task"),
+    (r"/tasks/([\w-]+)", "GET v2|get_task"),
     (r"/assay-results:bulk-create", "POST v2|bulk_create"),
     (r"/blobs", "POST v2|create_blob"),
     (r"/blobs:start-multipart-upload", "POST v2|start_blob"),

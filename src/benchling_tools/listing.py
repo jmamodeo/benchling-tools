@@ -6,6 +6,7 @@ Entry filters are sent to the API version that actually applies them. V3
 A name that contains a comma also uses V2. ``name.anyOf`` and
 ``names.anyOf`` are comma-separated lists, and the contract documents no
 escape for a comma inside one name. V2 ``name`` is a single entry name.
+A sort also uses V2, which documents every ``entry list --sort`` order.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ import base64
 import json
 import re
 from datetime import UTC, datetime
+from enum import Enum
 from typing import Any
 
 from .api import BenchlingAPI
@@ -32,6 +34,42 @@ SCHEMA_PATHS = {
 # Filters each entry-list route applies on the server. Nothing is filtered locally.
 V3_ENTRY_FILTERS = ("project", "schema", "name", "modified_at", "creator", "author")
 V2_ENTRY_FILTERS = ("folder", "project", "schema", "name", "modified_at", "creator", "author")
+
+
+class EntrySort(str, Enum):
+    """An ``entry list --sort`` choice."""
+
+    CREATED_DESC = "created-desc"
+    CREATED_ASC = "created-asc"
+    MODIFIED_DESC = "modified-desc"
+    MODIFIED_ASC = "modified-asc"
+    NAME_ASC = "name-asc"
+    NAME_DESC = "name-desc"
+
+
+# The V2 GET /entries sort value each choice sends. V3 entry listing cannot sort by name.
+ENTRY_SORTS = {
+    EntrySort.CREATED_DESC: "createdAt:desc",
+    EntrySort.CREATED_ASC: "createdAt:asc",
+    EntrySort.MODIFIED_DESC: "modifiedAt:desc",
+    EntrySort.MODIFIED_ASC: "modifiedAt:asc",
+    EntrySort.NAME_ASC: "name:asc",
+    EntrySort.NAME_DESC: "name:desc",
+}
+
+
+def _entry_sort(value: object) -> str | None:
+    """The V2 sort value for a choice, or None when no order was asked for."""
+    if value is None:
+        return None
+    try:
+        return ENTRY_SORTS[EntrySort(value)]
+    except ValueError as exc:
+        choices = [choice.value for choice in EntrySort]
+        raise ValidationError(
+            f"sort must be one of {', '.join(choices)}",
+            details={"choices": choices, "received": str(value)},
+        ) from exc
 
 
 def schema_collection(schema_id: str) -> str:
@@ -380,14 +418,16 @@ async def list_entries(
     modified_before: object = None,
     creator: object = None,
     author: object = None,
+    sort: object = None,
     limit: object = LIST_LIMIT,
     cursor: object = None,
 ) -> dict[str, Any]:
     """Return one page of entries.
 
-    Without a folder, and when the name has no comma, filters are V3 query
-    parameters. A folder filter, or a name that contains a comma, sends the
-    whole query to V2 so every filter is applied together.
+    Without a folder, sort, or comma in the name, filters are V3 query
+    parameters. A folder filter, a sort, or a name that contains a comma sends
+    the whole query to V2 so every filter and the order are applied together.
+    Without a sort no ``sort`` is sent and Benchling's default order applies.
     """
     page_size = check_limit(limit)
     project_id = _optional_text(project, "project")
@@ -395,6 +435,7 @@ async def list_entries(
     schema = _optional_text(schema_id, "schema")
     entry_name = _entry_name(name)
     start, end = _modified_range(modified_after, modified_before)
+    order = _entry_sort(sort)
     if cursor is not None and (not isinstance(cursor, str) or not cursor):
         raise ValidationError("cursor must be a non-empty string")
     # V3 name.anyOf and V2 names.anyOf split on commas. V2 name is one name.
@@ -409,8 +450,10 @@ async def list_entries(
     creator_ids = [resolved[ref]["id"] if ref in resolved else ref for ref in creators]
     author_ids = [resolved[ref]["id"] if ref in resolved else ref for ref in authors]
 
-    if folder_id is not None or comma_name:
+    if folder_id is not None or comma_name or order is not None:
         params: dict[str, Any] = {}
+        if order is not None:
+            params["sort"] = order
         if creator_ids:
             params["creatorIds"] = ",".join(creator_ids)
         if author_ids:
@@ -470,6 +513,7 @@ async def list_entries(
     result = {
         "items": [entry_summary(item) for item in items],
         "next_token": token,
+        "sort": order,
         "routing": routing,
     }
     if creators or authors:

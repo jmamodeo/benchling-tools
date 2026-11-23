@@ -15,6 +15,7 @@ from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
+from benchling_tools.listing import ENTRY_SORTS, EntrySort
 from benchling_tools.plans import blobs
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -331,6 +332,8 @@ async def test_list_query_parameters_stay_inside_the_vendored_allow_list(runtime
         }
     )
     await runtime.service.list_entries(name="Assay, replicate 1")
+    for choice in EntrySort:
+        await runtime.service.list_entries(sort=choice, limit=1)
     fake.add_results_table()
     await runtime.service.list_results_table_rows("docpart_rt1", limit=1, cursor="0")
     await runtime.service.bulk_get_containers(["con_source1", "con_dest1"])
@@ -340,6 +343,9 @@ async def test_list_query_parameters_stay_inside_the_vendored_allow_list(runtime
         if allowed_params is None:
             continue
         assert set(call.params) <= allowed_params, (call.method, call.path, call.params)
+        for name, values in LISTS["enums"].get(f"{call.method} {call.path}", {}).items():
+            if name in call.params:
+                assert call.params[name] in values, (call.path, name, call.params[name])
         checked.append(call)
     assert checked
     bulk_get = [call for call in fake.calls if call.path.endswith("/entries:bulk-get")]
@@ -350,6 +356,31 @@ async def test_list_query_parameters_stay_inside_the_vendored_allow_list(runtime
     assert all("folderId" not in call.params for call in v3_entry_lists)
     assert "folderId" not in LISTS["routes"]["GET /api/v3/entry/items"]
     assert any(call.params.get("folderId") == "lib_abc123" for call in fake.calls)
+
+
+def _query_parameter(spec_name: str, path: str, name: str) -> dict[str, Any]:
+    spec = _spec(spec_name)
+    for parameter in spec["paths"][path]["get"].get("parameters", []):
+        if "$ref" in parameter:
+            parameter = spec["components"]["parameters"][parameter["$ref"].split("/")[-1]]
+        if parameter["name"] == name and parameter["in"] == "query":
+            return parameter
+    raise AssertionError(f"{path} has no query parameter {name}")
+
+
+def test_recorded_list_enums_are_documented_query_values() -> None:
+    """Each recorded enum value is in the vendored OpenAPI enum for that parameter."""
+    for route, parameters in LISTS["enums"].items():
+        method, _, path = route.partition(" ")
+        assert method == "GET"
+        version, _, api_path = path.removeprefix("/api/").partition("/")
+        for name, values in parameters.items():
+            assert name in LISTS["routes"][route]
+            schema = _query_parameter(f"benchling-{version}", f"/{api_path}", name)["schema"]
+            assert set(values) <= set(schema["enum"]), (route, name)
+    sort = _query_parameter("benchling-v2", "/entries", "sort")["schema"]
+    assert sort["default"] == "modifiedAt:desc"
+    assert sorted(ENTRY_SORTS.values()) == sorted(LISTS["enums"]["GET /api/v2/entries"]["sort"])
 
 
 INVENTORY_ROUTES = {

@@ -27,7 +27,7 @@ from ..models import (
     PlanFamily,
     PlanStatus,
 )
-from ..services import assay_result_lookup
+from ..services import assay_result_lookup, require_task_id
 from . import readback
 from .containers import ContainerPlanning
 from .document import DocumentPlanning
@@ -43,10 +43,74 @@ from .results import (
 )
 from .table import TablePlanning
 
+# Result IDs named in the `results pending --id` next step of `changes status --task`.
+_NEXT_STEP_IDS = 20
+
+
+def _check_wait(wait: object, timeout: object) -> None:
+    """Validate the --wait and --timeout values shared by plan and task status."""
+    if not isinstance(wait, bool):
+        raise ValidationError("wait must be a boolean")
+    if (
+        isinstance(timeout, bool)
+        or not isinstance(timeout, (int, float))
+        or timeout < 0.1
+        or timeout > 3600
+    ):
+        raise ValidationError("timeout must be greater than 0 and at most 3600 seconds")
+
+
+def _task_next_step(status: dict[str, Any]) -> str:
+    """What to do next after reading one task with `changes status --task`."""
+    state = status["result_state"]
+    task_id = status["task_id"]
+    error = status.get("remote_task_error")
+    if isinstance(error, dict) and error.get("code") == "not_found":
+        return (
+            "Benchling has no task with this ID. It keeps a task only for a while (its 404 "
+            "says the task may have expired), so running this again will not help. Read the "
+            "created results with `results pending --id …` from the app's log, or with "
+            "`results list --entry ENTRY` once they are accepted."
+        )
+    if "remote_task_error" in status:
+        return (
+            "The task could not be read; see remote_task_error, then run "
+            f"`changes status --task {task_id}` again."
+        )
+    if state == "submission_running":
+        return f"The task is still running; run `changes status --task {task_id} --wait`."
+    if state == "submission_failed":
+        return "The task failed; check message and errors for what Benchling reported."
+    if state == "pending_integration":
+        ids = status["record_ids"]
+        if ids:
+            shown = ids[:_NEXT_STEP_IDS]
+            command = "results pending " + " ".join(f"--id {item}" for item in shown)
+            more = (
+                f" This names the first {len(shown)} of {len(ids)}; record_ids lists them all."
+                if len(ids) > len(shown)
+                else ""
+            )
+            return f"The task succeeded. Read the created results back with `{command}`.{more}"
+        if status["response_kind"] == "other":
+            return (
+                "The task succeeded. Its response is not a list of assay results, so it is "
+                "not interpreted; response_keys lists its keys and remote_task has it in full."
+            )
+        return "The task succeeded, but its response lists no created results."
+    return "The task status is not one Benchling documents; see remote_task."
+
+
 # Journal states after an apply that may have created records.
 _APPLIED_STATUSES = frozenset({PlanStatus.SUCCEEDED, PlanStatus.PARTIAL, PlanStatus.UNKNOWN})
 # Pages of 100 read per result schema by ``results capacity --include-schema-pending``.
 _SCHEMA_PENDING_PAGES = 20
+# Pages of 100 read per payload schema by ``results verify --payload --created-after``.
+_PAYLOAD_PAGES = 100
+# One verified batch: the batch, its fetched records, its diff, and extra report keys.
+_VerifyUnit = tuple[
+    dict[str, Any], list[dict[str, Any]], dict[str, list[dict[str, Any]]], dict[str, Any]
+]
 
 
 def _is_result_creation_event(stage: str) -> bool:
@@ -354,15 +418,7 @@ class ChangePlanner(
 
         Remote lookup failures are reported under remote_task_error, not raised.
         """
-        if not isinstance(wait, bool):
-            raise ValidationError("wait must be a boolean")
-        if (
-            isinstance(timeout, bool)
-            or not isinstance(timeout, (int, float))
-            or timeout < 0.1
-            or timeout > 3600
-        ):
-            raise ValidationError("timeout must be greater than 0 and at most 3600 seconds")
+        _check_wait(wait, timeout)
         plan, journal = self._load_plan_and_journal(plan_reference)
         self._check_plan_scope(plan)
         status: dict[str, Any] = {
@@ -439,6 +495,50 @@ class ChangePlanner(
                 finally:
                     lock.release()
         return status
+
+    async def task_status(
+        self, task_id: str, *, wait: bool = False, timeout: float = 300.0
+    ) -> dict[str, Any]:
+        """Read one Benchling task by ID with the plan-status poller. Nothing is written.
+
+        Remote lookup failures are reported under remote_task_error, not raised.
+        """
+        _check_wait(wait, timeout)
+        task_id = require_task_id(task_id)
+        deadline = asyncio.get_running_loop().time() + timeout
+        polled = await self._poll_result_task(
+            {"task_id": task_id, "batch_index": 0, "table_id": None},
+            wait=wait,
+            deadline=deadline,
+        )
+        remote = polled.get("remote_task")
+        response = remote.get("response") if isinstance(remote, dict) else None
+        if not isinstance(response, dict):
+            response_kind = "none"
+        elif "assayResults" in response:
+            response_kind = "assay_results"
+        else:
+            response_kind = "other"
+        record_ids = polled.get("record_ids", [])
+        result: dict[str, Any] = {
+            "task_id": task_id,
+            "task_status": polled.get("task_status"),
+            "result_state": polled.get("result_state", "unknown"),
+            "timed_out": polled.get("timed_out", False),
+            "response_kind": response_kind,
+            "response_keys": sorted(response) if isinstance(response, dict) else [],
+            "record_ids": record_ids,
+            "record_v3_ids": polled.get("record_v3_ids", []),
+            "record_count": len(record_ids),
+        }
+        if isinstance(remote, dict) and polled.get("task_status") == "FAILED":
+            result["message"] = remote.get("message")
+            result["errors"] = remote.get("errors")
+        if "remote_task_error" in polled:
+            result["remote_task_error"] = polled["remote_task_error"]
+        result["next_step"] = _task_next_step(result)
+        result["remote_task"] = remote
+        return result
 
     def _load_plan_and_journal(self, plan_reference: str) -> tuple[ChangePlan, ChangeJournal]:
         """Load a plan ID or portable plan file and its journal."""
@@ -927,14 +1027,7 @@ class ChangePlanner(
                 if isinstance(key, str)
             }
             not_found = set(fetched["not_found"])
-        totals: dict[str, list[dict[str, Any]]] = {
-            "matched": [],
-            "mismatched": [],
-            "missing": [],
-            "extra": [],
-        }
-        fetched_states: list[dict[str, Any]] = []
-        batch_reports = []
+        units: list[_VerifyUnit] = []
         for index, batch in enumerate(batches):
             task = submitted.get(index)
             if task is None:
@@ -951,6 +1044,169 @@ class ChangePlanner(
                 else:
                     reason = "no_matching_result"
             diff = readback.diff_batch(batch, found, missing_reason=reason)
+            units.append(
+                (
+                    batch,
+                    found,
+                    diff,
+                    {"task_id": task["task_id"], "task_status": task.get("task_status")}
+                    if task
+                    else {"submission": reason},
+                )
+            )
+        return self._verify_report(
+            units,
+            head={
+                "plan_id": plan.id,
+                "entry_id": plan.entry_id,
+                "web_url": plan_entry_web_url(plan),
+            },
+            not_found=len(not_found),
+            sample=sample,
+        )
+
+    async def verify_payload(
+        self,
+        payload: Any,
+        *,
+        result_ids: list[str] | None = None,
+        created_after: str | None = None,
+        created_before: str | None = None,
+        entry: str | None = None,
+        sample: int = 20,
+    ) -> dict[str, Any]:
+        """Diff an SDK bulk-create payload against the records Benchling holds.
+
+        The payload is a V2 bulk-create body, a bare list of result objects, or a list of
+        bodies. Records are found by ``result_ids`` (V2 UUIDs or V3 ``result_…`` ids,
+        mixed) or, per payload ``schemaId``, by V2 ``GET /assay-results`` created at or
+        after ``created_after`` (and at or before ``created_before``). ``entry`` drops
+        accepted records of another entry; pending records have no entry and are kept.
+        Rows with a client ``id`` are paired with that record first. The diff and report
+        are the ones ``verify_results`` uses. Nothing is written or saved.
+        """
+        sample = self._readback_limit(sample, "sample", 200)
+        batches = readback.payload_batches(payload)
+        if (result_ids is None) == (created_after is None):
+            raise ValidationError("Pass exactly one of result_ids or created_after with a payload")
+        if created_before is not None and created_after is None:
+            raise ValidationError("created_before applies only with created_after")
+        entry_id: str | None = None
+        web_url: str | None = None
+        if entry is not None:
+            if not isinstance(entry, str) or not entry.strip():
+                raise ValidationError("entry must be an entry ID, display ID, or URL")
+            resolved = await self.service.resolve_entry(entry)
+            entry_id, web_url = resolved["entry_id"], resolved.get("web_url")
+        not_found: list[str] = []
+        warnings: list[str] = []
+        lookup: dict[str, Any]
+        if result_ids is not None:
+            fetched = await self.service.get_assay_results(result_ids)
+            records, not_found = list(fetched["items"]), list(fetched["not_found"])
+            lookup = {"lookup": "ids", "requested": len(records) + len(not_found)}
+        else:
+            assert created_after is not None
+            records = []
+            for schema_id in dict.fromkeys(str(batch["schema_id"]) for batch in batches):
+                cursor, pages = None, 0
+                while pages < _PAYLOAD_PAGES:
+                    page = await self.service.list_assay_results(
+                        schema_id=schema_id,
+                        created_after=created_after,
+                        created_before=created_before,
+                        page_size=100,
+                        cursor=cursor,
+                    )
+                    pages += 1
+                    records.extend(page["items"])
+                    cursor = page["next_token"]
+                    if not cursor:
+                        break
+                if cursor:
+                    warnings.append(
+                        f"Only the first {_PAYLOAD_PAGES * 100} results of schema {schema_id} "
+                        "in the time window were read; narrow it with created_before"
+                    )
+            lookup = {
+                "lookup": "created_window",
+                "created_after": created_after,
+                "created_before": created_before,
+            }
+        kept = [
+            record
+            for record in records
+            if entry_id is None or not record.get("entryId") or record.get("entryId") == entry_id
+        ]
+        by_schema: dict[str | None, list[dict[str, Any]]] = {}
+        for record in kept:
+            by_schema.setdefault(readback.record_schema_id(record), []).append(record)
+        reason = "result_not_found" if not_found else "no_matching_result"
+        units: list[_VerifyUnit] = []
+        for batch in batches:
+            found = by_schema.pop(batch["schema_id"], [])
+            diff = readback.diff_payload_batch(batch, found, missing_reason=reason)
+            units.append((batch, found, diff, {"schema_id": batch["schema_id"]}))
+        for other_schema, found in by_schema.items():
+            batch = {
+                "table_id": None,
+                "schema_id": other_schema,
+                "table_name": None,
+                "records": [],
+                "plan_row_offset": 0,
+            }
+            diff = readback.diff_batch(batch, found, missing_reason=reason)
+            units.append((batch, found, diff, {"schema_id": other_schema}))
+        source: dict[str, Any] = {
+            "mode": "payload",
+            "records": sum(len(batch["records"]) for batch in batches),
+            "schemas": [
+                {
+                    "schema_id": batch["schema_id"],
+                    "table_id": batch["table_id"],
+                    "records": len(batch["records"]),
+                    "fields": sorted(
+                        {name for record in batch["records"] for name in record["fields"]}
+                    ),
+                }
+                for batch in batches
+            ],
+            **lookup,
+            "entry_id": entry_id,
+            "other_entry_dropped": len(records) - len(kept),
+            "not_found": not_found[:sample],
+            "warnings": warnings,
+        }
+        return self._verify_report(
+            units,
+            head={"source": source, "plan_id": None, "entry_id": entry_id, "web_url": web_url},
+            not_found=len(not_found),
+            sample=sample,
+        )
+
+    @staticmethod
+    def _verify_report(
+        units: list[_VerifyUnit],
+        *,
+        head: dict[str, Any],
+        not_found: int,
+        sample: int,
+    ) -> dict[str, Any]:
+        """Assemble the verify report from each batch, its fetched records and its diff.
+
+        ``head`` leads the report and gives the ``entry_id`` and ``web_url`` used in
+        ``next_step``. Each unit's last item is added to that batch's report.
+        """
+        totals: dict[str, list[dict[str, Any]]] = {
+            "matched": [],
+            "mismatched": [],
+            "missing": [],
+            "extra": [],
+        }
+        fetched_states: list[dict[str, Any]] = []
+        batch_reports = []
+        batches = [batch for batch, _found, _diff, _extra in units]
+        for batch, found, diff, extra in units:
             for key, rows in diff.items():
                 totals[key].extend(rows)
             fetched_states.extend({"state": readback.result_state(record)} for record in found)
@@ -960,33 +1216,27 @@ class ChangePlanner(
                     "planned": len(batch["records"]),
                     "fetched": len(found),
                     **{key: len(rows) for key, rows in diff.items()},
-                    **(
-                        {"task_id": task["task_id"], "task_status": task.get("task_status")}
-                        if task
-                        else {"submission": reason}
-                    ),
+                    **extra,
                 }
             )
         states = readback.state_counts(fetched_states)
         paired = totals["matched"] + totals["mismatched"] + totals["extra"]
         pending_rows = [row for row in paired if row["state"] == readback.PENDING]
-        pending_tables = list(
-            dict.fromkeys(
-                str(
-                    next(
-                        (b["table_name"] for b in batches if b["table_id"] == row["table_id"]),
-                        row["table_id"],
-                    )
+        pending_tables = [
+            str(name)
+            for name in dict.fromkeys(
+                next(
+                    (b["table_name"] for b in batches if b["table_id"] == row["table_id"]),
+                    row["table_id"],
                 )
                 for row in pending_rows
             )
-        )
+            if name is not None
+        ]
         planned_count = sum(len(batch["records"]) for batch in batches)
         ok = not (totals["mismatched"] or totals["missing"] or totals["extra"])
         return {
-            "plan_id": plan.id,
-            "entry_id": plan.entry_id,
-            "web_url": plan_entry_web_url(plan),
+            **head,
             "ok": ok,
             "summary": (
                 f"{len(totals['matched'])} of {planned_count} planned rows match; "
@@ -998,7 +1248,7 @@ class ChangePlanner(
                 "fetched": len(fetched_states),
                 **{key: len(rows) for key, rows in totals.items()},
                 **states,
-                "not_found": len(not_found),
+                "not_found": not_found,
             },
             "sample_limit": sample,
             "mismatched": totals["mismatched"][:sample],
@@ -1014,9 +1264,9 @@ class ChangePlanner(
             "batches": batch_reports,
             "next_step": readback.pending_next_step(
                 len(pending_rows),
-                entry_id=plan.entry_id,
+                entry_id=head.get("entry_id"),
                 table_names=pending_tables,
-                web_url=plan_entry_web_url(plan),
+                web_url=head.get("web_url"),
             ),
         }
 

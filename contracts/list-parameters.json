@@ -1,5 +1,5 @@
 {
-  "description": "Query parameters this client may send on supported read routes. A request may use a subset. V3 entry listing has no folder parameter; folderId is only sent to V2 /entries. V2 name is a single entry name and is sent when that name contains a comma. A results-table row page sends pageSize and nextToken only. Container find sends storageContentsIds and ancestorStorageId only with --contents, --registry-id or --in; registry, location, box and plate reads send no query except entityRegistryIds on registered-entities:bulk-get.",
+  "description": "Query parameters this client may send on supported read routes. A request may use a subset. V3 entry listing has no folder parameter; folderId is only sent to V2 /entries. V2 name is a single entry name and is sent when that name contains a comma. Entry list sends V2 sort only when a sort is chosen, and only the values recorded under enums. A results-table row page sends pageSize and nextToken only. Container find sends storageContentsIds and ancestorStorageId only with --contents, --registry-id or --in; registry, location, box and plate reads send no query except entityRegistryIds on registered-entities:bulk-get.",
   "routes": {
     "GET /api/v3/entry/items": [
       "pageSize",
@@ -19,11 +19,37 @@
       "names.anyOf",
       "name",
       "modifiedAt",
+      "displayIds",
+      "sort"
+    ],
+    "GET /api/v2/entries:bulk-get": [
+      "entryIds",
       "displayIds"
     ],
-    "GET /api/v2/entries:bulk-get": ["entryIds", "displayIds"],
-    "GET /api/v2/containers:bulk-get": ["containerIds"],
-    "GET /api/v2/entry-templates": ["pageSize", "nextToken", "name"],
+    "GET /api/v2/containers:bulk-get": [
+      "containerIds"
+    ],
+    "GET /api/v2/entry-templates": [
+      "pageSize",
+      "nextToken",
+      "name"
+    ],
+    "GET /api/v3/document-part-results-table/{document_part_results_table_id}/rows/items": [
+      "pageSize",
+      "nextToken"
+    ],
+    "GET /api/v3/entry-schema/items": [
+      "pageSize",
+      "nextToken"
+    ],
+    "GET /api/v3/result-schema/items": [
+      "pageSize",
+      "nextToken"
+    ],
+    "GET /api/v3/run-schema/items": [
+      "pageSize",
+      "nextToken"
+    ],
     "GET /api/v2/containers": [
       "pageSize",
       "nextToken",
@@ -34,16 +60,23 @@
     ],
     "GET /api/v2/containers/{container_id}": [],
     "GET /api/v2/registries": [],
-    "GET /api/v2/registries/{registry_id}/registered-entities:bulk-get": ["entityRegistryIds"],
+    "GET /api/v2/registries/{registry_id}/registered-entities:bulk-get": [
+      "entityRegistryIds"
+    ],
     "GET /api/v2/locations/{location_id}": [],
     "GET /api/v2/boxes/{box_id}": [],
-    "GET /api/v2/plates/{plate_id}": [],
-    "GET /api/v3/document-part-results-table/{document_part_results_table_id}/rows/items": [
-      "pageSize",
-      "nextToken"
-    ],
-    "GET /api/v3/entry-schema/items": ["pageSize", "nextToken"],
-    "GET /api/v3/result-schema/items": ["pageSize", "nextToken"],
-    "GET /api/v3/run-schema/items": ["pageSize", "nextToken"]
+    "GET /api/v2/plates/{plate_id}": []
+  },
+  "enums": {
+    "GET /api/v2/entries": {
+      "sort": [
+        "createdAt:desc",
+        "createdAt:asc",
+        "modifiedAt:desc",
+        "modifiedAt:asc",
+        "name:asc",
+        "name:desc"
+      ]
+    }
   }
 }

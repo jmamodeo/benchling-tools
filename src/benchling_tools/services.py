@@ -166,6 +166,21 @@ def _require_part_id(value: object) -> str:
     return value.strip()
 
 
+def require_task_id(value: object) -> str:
+    """A Benchling task ID: a non-empty string with no '/' and no whitespace."""
+    if (
+        not isinstance(value, str)
+        or value in {"", ".", ".."}
+        or "/" in value
+        or any(character.isspace() for character in value)
+    ):
+        raise ValidationError(
+            "task_id must be a non-empty string with no '/' and no whitespace",
+            details={"task_id": value},
+        )
+    return value
+
+
 def entry_version(entry: dict[str, Any]) -> str:
     """Return the entry's version ID; raises UpstreamError if version metadata is absent."""
     metadata = entry.get("versionMetadata") or {}
@@ -1807,10 +1822,11 @@ class BenchlingService:
         modified_before: object = None,
         creator: object = None,
         author: object = None,
+        sort: object = None,
         limit: object = listing.LIST_LIMIT,
         cursor: object = None,
     ) -> dict[str, Any]:
-        """Return one page of entries matching the server-side filters."""
+        """Return one page of entries matching the server-side filters, in the given order."""
         return await listing.list_entries(
             self.api,
             project=project,
@@ -1821,6 +1837,7 @@ class BenchlingService:
             modified_before=modified_before,
             creator=creator,
             author=author,
+            sort=sort,
             limit=limit,
             cursor=cursor,
         )
@@ -2044,8 +2061,12 @@ class BenchlingService:
         )
 
     async def get_task(self, task_id: str) -> dict[str, Any]:
-        """Fetch a V2 task; raises UpstreamError if the response has no string status."""
-        payload = await self.api.request("GET", f"/tasks/{task_id}", version=2)
+        """Fetch a V2 task; raises UpstreamError if the response has no string status.
+
+        Raises ValidationError for an empty task ID or one with '/' or whitespace.
+        """
+        task_id = require_task_id(task_id)
+        payload = await self.api.request("GET", f"/tasks/{quote(task_id, safe='')}", version=2)
         task = payload.get("task", payload)
         # Task responses may be a flat status object without an id property.
         if not isinstance(task, dict) or not isinstance(task.get("status"), str):
@@ -2336,24 +2357,31 @@ class BenchlingService:
         *,
         schema_id: str,
         created_after: str,
+        created_before: str | None = None,
         page_size: int = 50,
         cursor: str | None = None,
     ) -> dict[str, Any]:
         """Return one page of V2 assay results for a schema created at or after a time.
 
         V2 ``GET /assay-results`` has no entry filter, so pending results (no entry yet)
-        are found by schema and creation time. ``created_after`` is RFC 3339.
+        are found by schema and creation time. ``created_after`` and the optional
+        ``created_before`` (sent as ``createdAt.lte``) are RFC 3339.
         """
         if not isinstance(schema_id, str) or not schema_id.strip():
             raise ValidationError("schema_id is required")
         if not isinstance(created_after, str) or not created_after.strip():
             raise ValidationError("created_after is required")
-        try:
-            datetime.fromisoformat(created_after.strip())
-        except ValueError as exc:
-            raise ValidationError(
-                "created_after must be an RFC 3339 date or datetime, e.g. 2026-11-19T00:00:00Z"
-            ) from exc
+        for label, value in (("created_after", created_after), ("created_before", created_before)):
+            if value is None:
+                continue
+            try:
+                if not isinstance(value, str):
+                    raise ValueError
+                datetime.fromisoformat(value.strip())
+            except ValueError as exc:
+                raise ValidationError(
+                    f"{label} must be an RFC 3339 date or datetime, e.g. 2026-11-19T00:00:00Z"
+                ) from exc
         if isinstance(page_size, bool) or page_size < 1 or page_size > 100:
             raise ValidationError("page_size must be between 1 and 100")
         params: dict[str, Any] = {
@@ -2362,6 +2390,8 @@ class BenchlingService:
             "sort": "createdAt:asc",
             "pageSize": page_size,
         }
+        if created_before is not None:
+            params["createdAt.lte"] = created_before.strip()
         if cursor:
             params["nextToken"] = cursor
         payload = await self.api.request("GET", "/assay-results", version=2, params=params)
