@@ -18,9 +18,14 @@ keywords:
   - allow-writes
   - export csv
   - unstructured table
+  - include-pending
+  - pending results
 use_cases:
   - List entries and read one entry, its tables, and its assay results
   - Export a table or assay results to a local JSON or CSV file
   - Preview a document, table, field, or result change, then apply that plan
   - Tell the user to accept newly created results in the Benchling results table (they land as pending)
   - Confirm a saved environment without printing the client secret
+  - Check that the results table exists before writing results; create a missing table with a document plan first
+  - List or diff pending assay results with --include-pending
+  - Read a Comments heading and the paragraphs under it when Comments is not a text box
