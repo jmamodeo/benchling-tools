@@ -12,6 +12,7 @@ from typing import Any, NoReturn
 from filelock import FileLock
 from filelock import Timeout as FileLockTimeout
 
+from .. import capacity
 from ..change_spec import parse_change_specification
 from ..errors import (
     BenchlingAgentError,
@@ -34,11 +35,18 @@ from .entry import EntryPlanning
 from .fields import FieldsPlanning
 from .repository import checksum_for, json_diff
 from .result_update import request_is_result_update
-from .results import ResultsPlanning, pending_results_next_step, plan_entry_web_url
+from .results import (
+    ResultsPlanning,
+    pending_results_next_step,
+    plan_entry_web_url,
+    result_upload_batches,
+)
 from .table import TablePlanning
 
 # Journal states after an apply that may have created records.
 _APPLIED_STATUSES = frozenset({PlanStatus.SUCCEEDED, PlanStatus.PARTIAL, PlanStatus.UNKNOWN})
+# Pages of 100 read per result schema by ``results capacity --include-schema-pending``.
+_SCHEMA_PENDING_PAGES = 20
 
 
 def _is_result_creation_event(stage: str) -> bool:
@@ -598,6 +606,163 @@ class ChangePlanner(
             )
         )
 
+    async def _entry_readback(self, entry_id: str) -> dict[str, Any]:
+        """Records of every applied result upload plan for the entry in this home.
+
+        Returns ``items`` (each with its ``table_id`` and state), ``not_found``,
+        ``plans``, table ``names``, and the first recorded entry ``web_url``.
+        """
+        web_url: str | None = None
+        names: dict[Any, Any] = {}
+        table_of: dict[str, Any] = {}
+        plans: list[dict[str, Any]] = []
+        for plan, journal, applied_at in self._entry_upload_plans(entry_id):
+            submitted = await self._submitted_batches(journal)
+            names.update(
+                {batch["table_id"]: batch["table_name"] for batch in readback.planned_batches(plan)}
+            )
+            web_url = web_url or plan_entry_web_url(plan)
+            for batch in submitted:
+                for record_id in batch["record_ids"]:
+                    table_of.setdefault(record_id, batch.get("table_id"))
+            plans.append(
+                {
+                    "plan_id": plan.id,
+                    "applied_at": applied_at.isoformat(),
+                    "record_count": sum(len(batch["record_ids"]) for batch in submitted),
+                }
+            )
+        items, not_found = await self._read_records(table_of)
+        return {
+            "items": items,
+            "not_found": not_found,
+            "plans": plans,
+            "names": names,
+            "web_url": web_url,
+        }
+
+    async def _entry_pending_records(self, entry_id: str) -> list[dict[str, Any]]:
+        known = await self._entry_readback(entry_id)
+        return [item for item in known["items"] if item["state"] == readback.PENDING]
+
+    async def results_capacity(
+        self,
+        entry: str,
+        *,
+        plan_id: str | None = None,
+        spec: dict[str, Any] | None = None,
+        include_schema_pending: bool = False,
+        created_after: str | None = None,
+    ) -> dict[str, Any]:
+        """Report each results table's rows, known pending results, planned rows, and room.
+
+        With ``plan_id`` (a saved plan or portable bundle) or ``spec`` (a result upload
+        spec) the planned rows are counted per table; otherwise current usage only. It
+        is the check ``changes plan --family results`` runs. Nothing is written or saved.
+        ``include_schema_pending`` with ``created_after`` also counts pending results of
+        each table's schema created since then on any entry; that count is reported
+        and not used for ``fits``.
+        """
+        if plan_id is not None and spec is not None:
+            raise ValidationError("Pass only one of --plan, --spec, or --spec-json")
+        if include_schema_pending != (created_after is not None):
+            raise ValidationError("--include-schema-pending and --created-after go together")
+        resolved = await self.service.resolve_entry(entry)
+        entry_id = resolved["entry_id"]
+        planned: dict[str, int] = {}
+        warnings: list[str] = []
+        source: dict[str, Any] = {"mode": "current"}
+        if plan_id is not None:
+            plan, journal = self._load_plan_and_journal(plan_id)
+            self._check_plan_scope(plan)
+            if plan.family != PlanFamily.RESULTS or plan.preconditions.get("operation") == "update":
+                raise ValidationError(
+                    "Only result upload plans add rows to a results table",
+                    details={"plan_id": plan.id, "family": plan.family.value},
+                )
+            if plan.entry_id != entry_id:
+                raise ValidationError(
+                    "The plan is for another entry",
+                    details={
+                        "plan_id": plan.id,
+                        "entry_id": entry_id,
+                        "plan_entry_id": plan.entry_id,
+                    },
+                )
+            source = {"mode": "plan", "plan_id": plan.id, "status": journal.status.value}
+            if journal.status == PlanStatus.PENDING:
+                for batch in readback.planned_batches(plan):
+                    planned[str(batch["table_id"])] = len(batch["records"])
+            else:
+                warnings.append(
+                    "The plan was already applied, so its rows are not counted as planned. "
+                    "Rows it created are pending_known until accepted, then row_count"
+                )
+        elif spec is not None:
+            if request_is_result_update(spec):
+                raise ValidationError("A result update does not add rows to a results table")
+            for batch in result_upload_batches(spec):
+                planned[batch["table_id"]] = len(batch["assay_results"])
+            source = {"mode": "spec"}
+        report = await self.results_table_capacity(entry_id, planned, all_tables=True)
+        if include_schema_pending:
+            assert created_after is not None
+            await self._schema_pending(report, created_after)
+        return {
+            "resolved": resolved,
+            "source": source,
+            "limit": report["limit"],
+            "tables": report["tables"],
+            "fits": report["fits"],
+            "warnings": [*warnings, *report["warnings"]],
+            "next_step": capacity.next_step(report),
+        }
+
+    async def _schema_pending(self, report: dict[str, Any], created_after: str) -> None:
+        """Add ``pending_schema`` to each table: pending results of its schema since a time.
+
+        V2 ``GET /assay-results`` has no entry filter, so the count covers every entry
+        with that schema. At most ``_SCHEMA_PENDING_PAGES`` pages of 100 are read per
+        schema; ``pending_schema_complete`` is false when more remain.
+        """
+        counted: dict[str, tuple[int, bool]] = {}
+        for table in report["tables"]:
+            schema_id = table.get("schema_id")
+            if not isinstance(schema_id, str):
+                table["pending_schema"] = None
+                continue
+            if schema_id not in counted:
+                pending, cursor, pages = 0, None, 0
+                while pages < _SCHEMA_PENDING_PAGES:
+                    page = await self.service.list_assay_results(
+                        schema_id=schema_id,
+                        created_after=created_after,
+                        page_size=100,
+                        cursor=cursor,
+                    )
+                    pages += 1
+                    pending += sum(
+                        readback.result_state(item) == readback.PENDING for item in page["items"]
+                    )
+                    cursor = page["next_token"]
+                    if not cursor:
+                        break
+                counted[schema_id] = (pending, cursor is None)
+            pending, complete = counted[schema_id]
+            table["pending_schema"] = pending
+            table["pending_schema_complete"] = complete
+            used = table.get("used_rows")
+            table["remaining_with_schema_pending"] = (
+                capacity.RESULTS_TABLE_ROW_LIMIT - used - pending - table["planned"]
+                if isinstance(used, int)
+                else None
+            )
+        report["warnings"].append(
+            f"pending_schema counts pending results of each table's schema created at or after "
+            f"{created_after} on any entry, because V2 assay-result lists have no entry filter. "
+            "It is not used for fits"
+        )
+
     async def read_back_results(
         self,
         *,
@@ -653,30 +818,10 @@ class ChangePlanner(
         elif entry is not None:
             resolved = await self.service.resolve_entry(entry)
             entry_id = resolved["entry_id"]
-            web_url = resolved.get("web_url")
-            names: dict[Any, Any] = {}
-            table_of: dict[str, Any] = {}
-            plans: list[dict[str, Any]] = []
-            for plan, journal, applied_at in self._entry_upload_plans(entry_id):
-                submitted = await self._submitted_batches(journal)
-                names.update(
-                    {
-                        batch["table_id"]: batch["table_name"]
-                        for batch in readback.planned_batches(plan)
-                    }
-                )
-                web_url = web_url or plan_entry_web_url(plan)
-                for batch in submitted:
-                    for record_id in batch["record_ids"]:
-                        table_of.setdefault(record_id, batch.get("table_id"))
-                plans.append(
-                    {
-                        "plan_id": plan.id,
-                        "applied_at": applied_at.isoformat(),
-                        "record_count": sum(len(batch["record_ids"]) for batch in submitted),
-                    }
-                )
-            items, not_found = await self._read_records(table_of)
+            known = await self._entry_readback(entry_id)
+            items, not_found, plans = known["items"], known["not_found"], known["plans"]
+            names = known["names"]
+            web_url = resolved.get("web_url") or known["web_url"]
             response = {
                 "source": {
                     "mode": "entry",
