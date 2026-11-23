@@ -316,6 +316,24 @@ def _result_schema_id(item: dict[str, Any]) -> str | None:
 class FakeBenchling:
     def __init__(self) -> None:
         self.calls: list[Call] = []
+        self.users: list[dict[str, Any]] = [
+            {
+                "id": "ent_fixture1",
+                "handle": "fixture_handle_1",
+                "name": "Fixture User 1",
+                "email": "fixture1@example.test",
+                "isSuspended": False,
+                "memberOf": ["org_fixture"],
+            },
+            {
+                "id": "ent_fixture2",
+                "handle": "fixture_handle_2",
+                "name": "Fixture User 2",
+                "email": "fixture2@example.test",
+                "isSuspended": True,
+                "memberOf": ["org_other"],
+            },
+        ]
         self.origin = TENANT
         self.faults: list[Fault] = []
         self.token_status = 200
@@ -688,6 +706,27 @@ class FakeBenchling:
                 return result
         return 404, {"error": {"message": f"no route {call.method} {call.path}"}}
 
+    def _list_users(self, call: Call) -> tuple[int, dict[str, Any]]:
+        items = self.users
+        for param, field in (("handles", "handle"), ("email.anyOf", "email"), ("ids", "id")):
+            if call.params.get(param):
+                values = call.params[param].split(",")
+                items = [item for item in items if item.get(field) in values]
+        if call.params.get("memberOf"):
+            organizations = call.params["memberOf"].split(",")
+            items = [item for item in items if set(organizations) <= set(item.get("memberOf", []))]
+        if call.params.get("name"):
+            items = [item for item in items if item.get("name") == call.params["name"]]
+        if call.params.get("nameIncludes"):
+            items = [item for item in items if call.params["nameIncludes"] in item.get("name", "")]
+        return self._page(deepcopy(items), call, self._limited_page(call, None), key="users")
+
+    def _get_user(self, call: Call, user_id: str) -> tuple[int, dict[str, Any]]:
+        found = next((item for item in self.users if item["id"] == user_id), None)
+        if found is None:
+            return 404, {"error": {"message": "user not found"}}
+        return 200, deepcopy(found)
+
     def _list_containers(self, call: Call) -> tuple[int, dict[str, Any]]:
         items = self.containers
         if call.params.get("barcodes"):
@@ -893,6 +932,14 @@ class FakeBenchling:
     def _filter_entries(self, call: Call, *, version: int) -> list[dict[str, Any]]:
         rows = self._entry_catalog()
         params = call.params
+        creator_key = "creatorIds" if version == 2 else "creator.anyOf"
+        author_key = "authorIds.anyOf" if version == 2 else "authors.anyOf"
+        if params.get(creator_key):
+            ids = params[creator_key].split(",")
+            rows = [row for row in rows if row.get("creatorId") in ids]
+        if params.get(author_key):
+            ids = set(params[author_key].split(","))
+            rows = [row for row in rows if ids.intersection(row.get("authorIds", []))]
         display_ids = [item for item in params.get("displayIds", "").split(",") if item]
         if display_ids:
             rows = [row for row in rows if row["displayId"] in display_ids]
@@ -1639,6 +1686,8 @@ class FakeBenchling:
 
 
 ROUTES: list[tuple[str, str]] = [
+    (r"/users", "GET v2|list_users"),
+    (r"/users/(\w+)", "GET v2|get_user"),
     (r"/container-schemas", "GET v2|list_container_schemas"),
     (r"/container-schemas/(\w+)", "GET v2|get_container_schema"),
     (r"/containers", "GET v2|list_containers"),

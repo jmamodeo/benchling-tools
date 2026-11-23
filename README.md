@@ -66,6 +66,14 @@ benchling-tools changes status PLAN_ID --env dev
 
 Every command, the six change families, spec shapes, result uploads and attachments, pending results, and the canned examples are in the [CLI and MCP reference](docs/reference.md#cli-examples).
 
+| Command | Purpose |
+| --- | --- |
+| `users list` | List visible users by handle, email, name, ID, or organization. |
+| `users get` | Read a visible user by ID or exact handle. |
+| `entry list` | List entries with server-side filters, including creator and author. |
+
+For example, resolve a handle with `benchling-tools users get HANDLE --env dev`, then use the returned ID with `benchling-tools entry list --creator USER_ID --folder lib_example --env dev`. Handles may also be passed directly to `--creator` or `--author`.
+
 For result uploads, preview defaults a missing `projectId` to the entry's project and refuses
 the plan if none is available. An explicit `projectId: null` requests creator-only access,
 but some tenants reject it. Apply checks every batch before uploading attachments; if a

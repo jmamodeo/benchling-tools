@@ -12,11 +12,12 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from datetime import UTC, datetime
 from typing import Any
 
 from .api import BenchlingAPI
-from .errors import UpstreamError, ValidationError
+from .errors import AccessError, NotFoundError, UpstreamError, ValidationError
 
 LIST_LIMIT = 50
 LIST_LIMIT_MAX = 100
@@ -29,8 +30,8 @@ SCHEMA_PATHS = {
 }
 
 # Filters each entry-list route applies on the server. Nothing is filtered locally.
-V3_ENTRY_FILTERS = ("project", "schema", "name", "modified_at")
-V2_ENTRY_FILTERS = ("folder", "project", "schema", "name", "modified_at")
+V3_ENTRY_FILTERS = ("project", "schema", "name", "modified_at", "creator", "author")
+V2_ENTRY_FILTERS = ("folder", "project", "schema", "name", "modified_at", "creator", "author")
 
 
 def schema_collection(schema_id: str) -> str:
@@ -177,6 +178,115 @@ def _next_token(payload: dict[str, Any]) -> str | None:
     return token
 
 
+def _values(value: object, label: str, *, maximum: int | None = None) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)):
+        raise ValidationError(f"{label} must be a list")
+    if maximum is not None and len(value) > maximum:
+        raise ValidationError(f"{label} accepts at most {maximum} values")
+    return [_text(item, label) for item in value]
+
+
+def _user_summary(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": item.get("id"),
+        "handle": item.get("handle"),
+        "name": item.get("name"),
+        "email": item.get("email"),
+        "is_suspended": item.get("isSuspended"),
+    }
+
+
+async def _users_request(api: BenchlingAPI, path: str, params: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return await api.request("GET", path, version=2, params=params)
+    except AccessError as exc:
+        exc.details["hint"] = (
+            "Listing users requires the caller to share an organization with them "
+            "or have tenant administrator access."
+        )
+        raise
+
+
+async def list_users(
+    api: BenchlingAPI,
+    *,
+    handles: object = None,
+    emails: object = None,
+    name: object = None,
+    name_includes: object = None,
+    ids: object = None,
+    member_of: object = None,
+    limit: object = LIST_LIMIT,
+    cursor: object = None,
+) -> dict[str, Any]:
+    """List a single V2 page of visible users."""
+    page_size = check_limit(limit)
+    params: dict[str, Any] = {"pageSize": page_size}
+    for key, value, label, maximum in (
+        ("handles", handles, "handle", None),
+        ("email.anyOf", emails, "email", 100),
+        ("ids", ids, "id", None),
+        ("memberOf", member_of, "member_of", None),
+    ):
+        values = _values(value, label, maximum=maximum)
+        if values:
+            params[key] = ",".join(values)
+    for key, value in (("name", name), ("nameIncludes", name_includes)):
+        if value is not None:
+            if not isinstance(value, str) or not value.strip():
+                raise ValidationError(f"{key} must be a non-empty string")
+            params[key] = value.strip()
+    if cursor is not None:
+        if not isinstance(cursor, str) or not cursor:
+            raise ValidationError("cursor must be a non-empty string")
+        params["nextToken"] = cursor
+    payload = await _users_request(api, "/users", params)
+    return {
+        "items": [_user_summary(item) for item in _items(payload, path="/users", key="users")],
+        "next_token": _next_token(payload),
+        "routing": {
+            "api_version": 2,
+            "path": "/users",
+            "server_side": ["handle", "email", "name", "name_includes", "id", "member_of"],
+            "client_side": [],
+        },
+    }
+
+
+async def _resolve_handles(api: BenchlingAPI, handles: list[str]) -> dict[str, dict[str, Any]]:
+    if not handles:
+        return {}
+    page = await list_users(api, handles=list(dict.fromkeys(handles)), limit=100)
+    if page["next_token"]:
+        raise ValidationError("User lookup returned more than one page; narrow the handle lookup")
+    resolved: dict[str, dict[str, Any]] = {}
+    for handle in dict.fromkeys(handles):
+        matches = [item for item in page["items"] if item["handle"] == handle]
+        if not matches:
+            raise NotFoundError("User handle was not found", details={"handle": handle})
+        if len(matches) != 1:
+            raise ValidationError(
+                "User handle is ambiguous", details={"handle": handle, "matches": matches}
+            )
+        user_id = matches[0]["id"]
+        if not isinstance(user_id, str) or not re.fullmatch(r"ent_[A-Za-z0-9_]+", user_id):
+            raise UpstreamError("Benchling returned an invalid user ID")
+        resolved[handle] = matches[0]
+    return resolved
+
+
+async def get_user(api: BenchlingAPI, reference: object) -> dict[str, Any]:
+    """Get one user by ID or exact handle."""
+    ref = _text(reference, "user")
+    if ref.startswith("ent_"):
+        if not re.fullmatch(r"ent_[A-Za-z0-9_]+", ref):
+            raise ValidationError("Invalid user ID")
+        return _user_summary(await _users_request(api, f"/users/{ref}", {}))
+    return (await _resolve_handles(api, [ref]))[ref]
+
+
 def entry_web_url(item: object) -> str | None:
     """The entry's Benchling web-app link: V3 ``webUrl`` or V2 ``webURL``, else None."""
     if not isinstance(item, dict):
@@ -268,6 +378,8 @@ async def list_entries(
     name: object = None,
     modified_after: object = None,
     modified_before: object = None,
+    creator: object = None,
+    author: object = None,
     limit: object = LIST_LIMIT,
     cursor: object = None,
 ) -> dict[str, Any]:
@@ -287,9 +399,22 @@ async def list_entries(
         raise ValidationError("cursor must be a non-empty string")
     # V3 name.anyOf and V2 names.anyOf split on commas. V2 name is one name.
     comma_name = entry_name is not None and "," in entry_name
+    creators = _values(creator, "creator", maximum=100)
+    authors = _values(author, "author", maximum=100)
+    for ref in creators + authors:
+        if ref.startswith("ent_") and not re.fullmatch(r"ent_[A-Za-z0-9_]+", ref):
+            raise ValidationError("Invalid user ID")
+    handles = [ref for ref in creators + authors if not ref.startswith("ent_")]
+    resolved = await _resolve_handles(api, handles)
+    creator_ids = [resolved[ref]["id"] if ref in resolved else ref for ref in creators]
+    author_ids = [resolved[ref]["id"] if ref in resolved else ref for ref in authors]
 
     if folder_id is not None or comma_name:
         params: dict[str, Any] = {}
+        if creator_ids:
+            params["creatorIds"] = ",".join(creator_ids)
+        if author_ids:
+            params["authorIds.anyOf"] = ",".join(author_ids)
         if folder_id is not None:
             params["folderId"] = folder_id
         if project_id is not None:
@@ -317,6 +442,10 @@ async def list_entries(
         }
     else:
         params = {}
+        if creator_ids:
+            params["creator.anyOf"] = ",".join(creator_ids)
+        if author_ids:
+            params["authors.anyOf"] = ",".join(author_ids)
         if project_id is not None:
             params["project.eq"] = project_id
         if schema is not None:
@@ -338,11 +467,14 @@ async def list_entries(
             "server_side": list(V3_ENTRY_FILTERS),
             "client_side": [],
         }
-    return {
+    result = {
         "items": [entry_summary(item) for item in items],
         "next_token": token,
         "routing": routing,
     }
+    if creators or authors:
+        result["resolved_users"] = {"creator": creator_ids, "author": author_ids}
+    return result
 
 
 def _encode_cursor(kind: str, token: str | None) -> str:
