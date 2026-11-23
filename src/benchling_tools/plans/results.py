@@ -36,8 +36,8 @@ from .fields import _resolve_field
 from .result_update import ResultUpdatePlanning, request_is_result_update
 
 PENDING_RESULTS_WARNING = (
-    "Created results stay pending until a person accepts them in the entry's results table "
-    "in Benchling (the plug icon in the table toolbar)"
+    "Created results stay pending until a person reviews and accepts them in Benchling; "
+    "this toolkit does not accept results"
 )
 
 
@@ -83,12 +83,11 @@ def pending_results_next_step(
     url = web_url or plan_entry_web_url(plan)
     where = f"entry {plan.entry_id} at {url}" if url else f"entry {plan.entry_id}"
     return (
-        f'Results are pending. Open {where}, go to the result {noun} "{name}", '
-        "and click the plug (integrate) icon in each table's toolbar to accept the pending results. "
-        "Until you do, they do not appear in the table and cannot be updated with this "
-        "toolkit, because an update needs a result that is on the entry. Refresh the page "
-        "if the entry is already open. To check, re-read with `results list --entry` or "
-        "`results rows`."
+        f'Results are pending: Benchling has not added them to the result {noun} "{name}" '
+        f"on {where} yet. {readback.PENDING_REVIEW} Until then they do not appear in "
+        "the table and cannot be updated with this toolkit, because an update needs a "
+        "result that is on the entry. Read them back with `results pending` or "
+        "`results verify`."
     )
 
 

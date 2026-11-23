@@ -1597,8 +1597,8 @@ async def results_pending(
 ) -> Any:
     """Read back results, including pending ones, and mark each pending, accepted, or archived.
 
-    Pending results have no entry until a person accepts them with the plug icon
-    in the results table, so listing results by entry does not find them. Pass
+    Pending results have no entry until a person reviews and accepts them in
+    Benchling, so listing results by entry does not find them. Pass
     exactly one of --entry, --plan, --id, or --schema with --created-after. Relay
     next_step. Reads only.
 
@@ -1704,7 +1704,7 @@ async def results_verify(
     """Diff a result upload plan, or an SDK upload payload, against the records Benchling created.
 
     Compares planned fields by system name and reports matched, mismatched,
-    missing, and extra rows, and which rows still need the plug-icon accept. Reads only.
+    missing, and extra rows, and which rows are still pending review. Reads only.
     The plan's record ids may be V2 assay result UUIDs or V3 result ids (result_…).
     Each row reports result_id and v2_id (the V2 UUID) and v3_id (result_…), so
     either id can be passed to results get or results pending --id.

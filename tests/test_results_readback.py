@@ -65,7 +65,11 @@ async def test_pending_by_plan_reads_task_ids_and_writes_nothing(runtime, fake) 
     assert all(item["needs_accept"] and item["table_id"] == TABLE for item in data["items"])
     assert data["needs_accept"] == ids
     assert data["batches"][0]["task_status"] == "SUCCEEDED"
-    assert "plug" in data["next_step"] and '"Assay results"' in data["next_step"]
+    assert (
+        "review and accept them in Benchling" in data["next_step"]
+        and "plug" not in data["next_step"]
+        and '"Assay results"' in data["next_step"]
+    )
     assert f"entry {ENTRY_ID} at {entry_web_url(ENTRY_ID)}," in data["next_step"]
     assert journal_text(runtime, planned.id) == before
     assert len(fake.writes()) == writes
@@ -364,7 +368,7 @@ async def test_verify_matches_every_planned_row_regardless_of_order(runtime, fak
     assert [row["plan_row_index"] for row in data["needs_accept"]] == [0, 1]
     assert {row["result_id"] for row in data["needs_accept"]} == set(ids)
     assert data["summary"].startswith("2 of 2 planned rows match")
-    assert "plug" in data["next_step"]
+    assert "review and accept them in Benchling" in data["next_step"]
     assert fake.writes()[-1].path == "/api/v2/assay-results:bulk-create"
 
 
@@ -828,7 +832,7 @@ def test_readback_helpers_handle_sparse_records() -> None:
     assert readback.record_schema_id({"schemaId": "assaysch_abc123"}) == "assaysch_abc123"
     assert readback.record_schema_id({}) is None
     assert readback.values_equal([1, 2], [1, 2]) is True
-    assert "go to its results table" in readback.pending_next_step(2, entry_id=ENTRY_ID)
+    assert f"Sent to entry {ENTRY_ID}." in readback.pending_next_step(2, entry_id=ENTRY_ID)
     assert readback.pending_next_step(0) is None
 
 
@@ -844,6 +848,6 @@ async def test_verify_links_the_entry_in_next_step(runtime, fake) -> None:
 def test_pending_next_step_links_the_entry_when_a_web_url_is_known() -> None:
     url = "https://your-tenant-dev.benchling.com/benchling/f/lib_abc123-n/etr_abc123-s/edit"
     step = readback.pending_next_step(1, entry_id=ENTRY_ID, web_url=url)
-    assert step is not None and f"entry {ENTRY_ID} at {url}," in step
+    assert step is not None and f"entry {ENTRY_ID} at {url}" in step
     assert " at " not in (readback.pending_next_step(1, entry_id=ENTRY_ID) or "")
     assert url not in (readback.pending_next_step(1, web_url=url) or "")
