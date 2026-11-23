@@ -150,6 +150,16 @@ def _without_clock(value):
             "results_rows",
             {"part_id": "docpart_rt1", "limit": 2},
         ),
+        (
+            ["container", "find", "--barcode", "BAR-SOURCE"],
+            "container_find",
+            {"barcodes": ["BAR-SOURCE"]},
+        ),
+        (
+            ["container", "find", "--barcode", "BAR-SOURCE", "--barcode", "BAR-NONE"],
+            "container_find",
+            {"barcodes": ["BAR-SOURCE", "BAR-NONE"]},
+        ),
     ],
 )
 async def test_read_replies_match(cli_reply, mcp_reply, fake, args, tool, arguments) -> None:
