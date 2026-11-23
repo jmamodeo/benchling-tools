@@ -1252,9 +1252,10 @@ async def container_find(
     --cursor do not apply. Benchling answers an invalid barcode with a 400 that
     lists invalidBarcodes ("returns a 400 error that includes a list of which
     barcodes are invalid", Benchling docs, List containers). Those barcodes are
-    reported, not failed, and the rest of that chunk is read again once. With
-    one barcode, an invalid barcode is a validation_error with
-    details.invalid_barcodes and a hint.
+    reported, not failed, and the rest of that chunk is read again once. One
+    --barcode follows the same rule: its page adds invalid_barcodes, and an
+    invalid barcode gives items [] with a hint and exits 0. Only bad input (an
+    empty value, a comma inside one value) is a validation_error.
 
     --contents, --registry-id and --in return found (the same items) and
     truncated, reading every page up to --limit containers (default 50, at
