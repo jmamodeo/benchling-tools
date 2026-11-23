@@ -111,7 +111,6 @@ The full safety model, design tradeoffs, exit codes, and known limitations are i
 - [CLI and MCP reference](docs/reference.md): every command and tool, configuration, safety model, exit codes, and known limitations
 - [Setup guide](docs/setup.md), [API limitations](docs/api-limitations.md), and [research record](docs/research.md)
 - [Threat model](docs/threat-model.md): credentials, stale or replayed plans, write scoping, and agent misuse, including the limits of those controls
-- [Coverage matrix](docs/coverage-matrix.md): downstream app testing and debugging workflows mapped to commands, with gaps and follow-ups
 - [ARCHITECTURE.md](ARCHITECTURE.md): the plan, apply, and journal sequence and the module map
 - [CHANGELOG.md](CHANGELOG.md)
 
