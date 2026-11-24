@@ -70,7 +70,7 @@ Use the bug or feature form. Both ask what you tried, the expected and actual be
 
 ## Merging
 
-Every change lands as a pull request from a feature branch and is squash-merged once CI is green and the change is verified, with John Amodeo as the sole commit author and no trailers. Releases, tags, PyPI publishes, force-pushes and deletions need John's explicit approval.
+Changes land through pull requests from feature branches and are squash-merged once CI passes. Releases and PyPI publishes are cut from `main` by maintainers.
 
 ## Releasing
 
