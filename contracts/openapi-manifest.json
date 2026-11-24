@@ -1,11 +1,11 @@
 {
-  "captured_at": "2026-11-19",
+  "captured_at": "2026-11-23",
   "contracts": [
     {
       "name": "benchling-v3",
       "url": "https://benchling.com/api/v3/openapi.yaml",
-      "sha256": "0c7bff4e17f796f6deeb716d5beb75230b0d7c48e16877a9f8f4ed54a9347273",
-      "captured_at": "2026-11-19",
+      "sha256": "bc8b850ea7c0d20ef5fa6d5cf965a3325cd722152950870dc55d5a495c550f11",
+      "captured_at": "2026-11-23",
       "snapshot": "contracts/benchling-v3-openapi.yaml",
       "routes_used": [
         "/entry",

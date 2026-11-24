@@ -11,6 +11,16 @@ components:
           type: string
         maxItems: 100
         type: array
+    action.eq:
+      description: 'Restricts results to folders on which the caller''s permissions
+        grant this action: READ, APPEND, WRITE, or ADMIN. The default Read, Append,
+        Write, and Admin policies each include the actions below them, so they match
+        hierarchically. A custom policy that grants WRITE without APPEND matches WRITE
+        but not APPEND. Archived folders only match READ.'
+      in: query
+      name: action.eq
+      schema:
+        type: string
     aminoAcids.anyOf:
       description: Restricts results to those whose sequence exactly matches any of
         the specified amino acid sequences (case-insensitive). Comma-separated list.
@@ -243,6 +253,18 @@ components:
         items:
           type: string
         maxItems: 100
+        type: array
+    itemType.anyOf:
+      description: 'Restricts results to worklists that hold any of the specified
+        item types: CONTAINER, ENTITY, or PLATE. Comma-separated list.'
+      explode: false
+      in: query
+      name: itemType.anyOf
+      schema:
+        items:
+          type: string
+        maxItems: 3
+        minItems: 1
         type: array
     libraryParameterDefinition.anyOf:
       description: Restricts results to parameter versions linked to any of the specified
@@ -9062,31 +9084,6 @@ components:
             type: string
           type: array
       type: object
-    CreateEntryContentInput:
-      allOf:
-      - properties:
-          contentType:
-            enum:
-            - external_file
-            - registration_table
-            - result_table
-            - text
-            type: string
-        required:
-        - contentType
-      - oneOf:
-        - $ref: '#/components/schemas/CreateFileAttachmentInput'
-        - $ref: '#/components/schemas/CreateRegistrationTableInput'
-        - $ref: '#/components/schemas/CreateResultTableInput'
-        - $ref: '#/components/schemas/CreateTextInput'
-      discriminator:
-        mapping:
-          external_file: '#/components/schemas/CreateFileAttachmentInput'
-          registration_table: '#/components/schemas/CreateRegistrationTableInput'
-          result_table: '#/components/schemas/CreateResultTableInput'
-          text: '#/components/schemas/CreateTextInput'
-        propertyName: contentType
-      type: object
     CreateEntryInput:
       additionalProperties: false
       example:
@@ -9164,7 +9161,8 @@ components:
         parts:
           description: Specifies the document content parts to create, in order. When
             omitted, a blank document is created using the default behavior for its
-            document type. An empty parts array is rejected.
+            document type. An empty parts array is rejected. Unstructured tables are
+            limited to 50000 cells in total across all parts.
           items:
             $ref: '#/components/schemas/DocumentContentInput'
           type: array
@@ -9684,23 +9682,6 @@ components:
       - type
       - isMulti
       - linkDefinitionId
-      type: object
-    CreateFileAttachmentInput:
-      additionalProperties: false
-      properties:
-        contentType:
-          enum:
-          - external_file
-          type: string
-        url:
-          deprecated: true
-          description: 'Deprecated: prefer the attachment content flow (AttachmentContentInput
-            via partsMutation), which takes a scratchFileId instead of a URL. The
-            URL must be a Benchling-hosted S3 URL, as returned when uploading a file
-            to Benchling; arbitrary external URLs are rejected.'
-          type: string
-      required:
-      - contentType
       type: object
     CreateFileInput:
       additionalProperties: false
@@ -11381,19 +11362,6 @@ components:
       - domainLinkedSchemas
       - chainLinkedSchemas
       type: object
-    CreateRegistrationTableInput:
-      additionalProperties: false
-      properties:
-        contentType:
-          enum:
-          - registration_table
-          type: string
-        entitySchemaId:
-          type: string
-      required:
-      - contentType
-      - entitySchemaId
-      type: object
     CreateRequestLinkFieldDefinitionInput:
       additionalProperties: false
       properties:
@@ -11580,19 +11548,6 @@ components:
           type: string
       required:
       - organizationId
-      type: object
-    CreateResultTableInput:
-      additionalProperties: false
-      properties:
-        contentType:
-          enum:
-          - result_table
-          type: string
-        resultSchemaId:
-          type: string
-      required:
-      - contentType
-      - resultSchemaId
       type: object
     CreateRnaOligoInput:
       additionalProperties: false
@@ -12523,9 +12478,14 @@ components:
     CreateStudyItemAssociationInput:
       additionalProperties: false
       example:
-        itemId: bfi_ldOK8IUg
+        isAutoLinking: true
+        itemId: etr_8rVKW0g7
         studyId: stdy_9CYiCggY
       properties:
+        isAutoLinking:
+          description: Specifies whether items created within this item are automatically
+            associated with the study. Defaults to false.
+          type: boolean
         itemId:
           type: string
         studyId:
@@ -12839,19 +12799,6 @@ components:
       - systemName
       - isRequired
       - type
-      type: object
-    CreateTextInput:
-      additionalProperties: false
-      properties:
-        contentType:
-          enum:
-          - text
-          type: string
-        text:
-          type: string
-      required:
-      - contentType
-      - text
       type: object
     CreateTextMessageBlockInput:
       additionalProperties: false
@@ -15669,6 +15616,8 @@ components:
             - code_block
             - header
             - list_item
+            - registration_table_create_entities
+            - registration_table_register_existing_entities
             - results_table
             - section
             - text
@@ -15684,6 +15633,8 @@ components:
         - $ref: '#/components/schemas/CodeBlockContentInput'
         - $ref: '#/components/schemas/HeaderContentInput'
         - $ref: '#/components/schemas/ListItemContentInput'
+        - $ref: '#/components/schemas/RegistrationTableCreateEntitiesContentInput'
+        - $ref: '#/components/schemas/RegistrationTableRegisterExistingEntitiesContentInput'
         - $ref: '#/components/schemas/ResultsTableContentInput'
         - $ref: '#/components/schemas/SectionContentInput'
         - $ref: '#/components/schemas/TextContentInput'
@@ -15697,6 +15648,8 @@ components:
           code_block: '#/components/schemas/CodeBlockContentInput'
           header: '#/components/schemas/HeaderContentInput'
           list_item: '#/components/schemas/ListItemContentInput'
+          registration_table_create_entities: '#/components/schemas/RegistrationTableCreateEntitiesContentInput'
+          registration_table_register_existing_entities: '#/components/schemas/RegistrationTableRegisterExistingEntitiesContentInput'
           results_table: '#/components/schemas/ResultsTableContentInput'
           section: '#/components/schemas/SectionContentInput'
           text: '#/components/schemas/TextContentInput'
@@ -15761,8 +15714,13 @@ components:
       - $ref: '#/components/schemas/DocumentPartCodeBlock'
       - $ref: '#/components/schemas/DocumentPartHeader'
       - $ref: '#/components/schemas/DocumentPartImageGrid'
+      - $ref: '#/components/schemas/DocumentPartInventoryTableCreateContainers'
+      - $ref: '#/components/schemas/DocumentPartInventoryTableFillContainers'
+      - $ref: '#/components/schemas/DocumentPartInventoryTableUpdateContainers'
       - $ref: '#/components/schemas/DocumentPartListItem'
       - $ref: '#/components/schemas/DocumentPartLookupTable'
+      - $ref: '#/components/schemas/DocumentPartRegistrationTableCreateEntities'
+      - $ref: '#/components/schemas/DocumentPartRegistrationTableRegisterExistingEntities'
       - $ref: '#/components/schemas/DocumentPartResultsTable'
       - $ref: '#/components/schemas/DocumentPartRun'
       - $ref: '#/components/schemas/DocumentPartSection'
@@ -15780,8 +15738,13 @@ components:
           DocumentPartCodeBlock: '#/components/schemas/DocumentPartCodeBlock'
           DocumentPartHeader: '#/components/schemas/DocumentPartHeader'
           DocumentPartImageGrid: '#/components/schemas/DocumentPartImageGrid'
+          DocumentPartInventoryTableCreateContainers: '#/components/schemas/DocumentPartInventoryTableCreateContainers'
+          DocumentPartInventoryTableFillContainers: '#/components/schemas/DocumentPartInventoryTableFillContainers'
+          DocumentPartInventoryTableUpdateContainers: '#/components/schemas/DocumentPartInventoryTableUpdateContainers'
           DocumentPartListItem: '#/components/schemas/DocumentPartListItem'
           DocumentPartLookupTable: '#/components/schemas/DocumentPartLookupTable'
+          DocumentPartRegistrationTableCreateEntities: '#/components/schemas/DocumentPartRegistrationTableCreateEntities'
+          DocumentPartRegistrationTableRegisterExistingEntities: '#/components/schemas/DocumentPartRegistrationTableRegisterExistingEntities'
           DocumentPartResultsTable: '#/components/schemas/DocumentPartResultsTable'
           DocumentPartRun: '#/components/schemas/DocumentPartRun'
           DocumentPartSection: '#/components/schemas/DocumentPartSection'
@@ -16144,6 +16107,277 @@ components:
           $ref: '#/components/schemas/DocumentLikeVersionMetadata'
           description: Specifies version metadata for the parent document.
       type: object
+    DocumentPartInventoryTableCreateContainers:
+      description: A transfer table that creates new destination containers and fills
+        them from a source.
+      properties:
+        __typename:
+          type: string
+        barcodingStrategy:
+          description: 'How barcodes are assigned to the containers this table creates.
+            Corresponds to the
+
+            "Barcodes" option in the UI.'
+          enum:
+          - AUTOGENERATE
+          - CUSTOM
+          type: string
+        columnDefinitions:
+          items:
+            $ref: '#/components/schemas/IStructuredTableColumnDefinition'
+          type: array
+        createdAt:
+          format: datetime
+          type: string
+        destinationSchema:
+          description: 'The schema of the containers this table creates. This is always
+            a container schema,
+
+            including for BOX and MATRIX_PLATE destinations, where the destination
+            grid itself is
+
+            chosen per row rather than configured on the table. Returns null when
+            no schema is
+
+            configured or when the caller lacks read permission on the schema.'
+          oneOf:
+          - $ref: '#/components/schemas/ContainerSchemaRef'
+          - type: 'null'
+        destinationType:
+          description: 'Where the containers created by this table are placed. Corresponds
+            to the "Container
+
+            destination" option in the UI. BOX and MATRIX_PLATE place each new container
+            into a
+
+            grid position, while LOCATION places it directly into a storage location.'
+          enum:
+          - BOX
+          - LOCATION
+          - MATRIX_PLATE
+          type: string
+        id:
+          type: string
+        includeSampleRoles:
+          description: 'Whether the table includes the sample control role columns
+            (restriction status,
+
+            restricted users, and sample owners). Corresponds to the "Sample control
+            roles" option
+
+            in the UI, which is available when sample controls are enabled for the
+            tenant and the
+
+            destination is not a plate.'
+          type: boolean
+        indentation:
+          type: integer
+        isEvaluated:
+          type: boolean
+        isSubmittable:
+          type: boolean
+        modifiedAt:
+          format: datetime
+          type: string
+        modifier:
+          oneOf:
+          - $ref: '#/components/schemas/PrincipalRef'
+          - type: 'null'
+        name:
+          type: string
+        rowCount:
+          type: integer
+        rows:
+          format: uri
+          type: string
+        sourceType:
+          description: 'What kind of item each row transfers material out of. Corresponds
+            to the "Source"
+
+            option in the UI.'
+          enum:
+          - ENTITY
+          - CONTAINER
+          - PLATE
+          type: string
+        submissionStatus:
+          enum:
+          - UNSUBMITTED
+          - SUBMITTED
+          - HAS_UNSUBMITTED_CHANGES
+          - UNEVALUATED
+          type: string
+        versionMetadata:
+          $ref: '#/components/schemas/DocumentLikeVersionMetadata'
+      type: object
+    DocumentPartInventoryTableFillContainers:
+      description: A transfer table that fills existing containers or plate wells
+        from a source.
+      properties:
+        __typename:
+          type: string
+        columnDefinitions:
+          items:
+            $ref: '#/components/schemas/IStructuredTableColumnDefinition'
+          type: array
+        createdAt:
+          format: datetime
+          type: string
+        destinationSchema:
+          description: 'The schema of the items this table fills. For CONTAINER destinations
+            this is a
+
+            ContainerSchema. For PLATE destinations this is the WellPlateSchema or
+            MatrixPlateSchema that was configured;
+
+            the schema of the wells being filled is available from its containerSchema
+            field.
+
+            Returns null when no schema is configured or when the caller lacks read
+            permission on
+
+            the schema.'
+          oneOf:
+          - $ref: '#/components/schemas/StorableSchema'
+          - type: 'null'
+        destinationType:
+          description: 'What kind of existing item each row fills. Corresponds to
+            the "Destination to fill"
+
+            option in the UI. CONTAINER fills standalone containers, while PLATE fills
+            the wells
+
+            of an existing plate.'
+          enum:
+          - CONTAINER
+          - PLATE
+          type: string
+        id:
+          type: string
+        includeSampleRoles:
+          description: 'Whether the table includes the sample control role columns
+            (restriction status,
+
+            restricted users, and sample owners). Corresponds to the "Sample control
+            roles" option
+
+            in the UI, which is available when sample controls are enabled for the
+            tenant and the
+
+            destination is not a plate.'
+          type: boolean
+        indentation:
+          type: integer
+        isEvaluated:
+          type: boolean
+        isSubmittable:
+          type: boolean
+        modifiedAt:
+          format: datetime
+          type: string
+        modifier:
+          oneOf:
+          - $ref: '#/components/schemas/PrincipalRef'
+          - type: 'null'
+        name:
+          type: string
+        rowCount:
+          type: integer
+        rows:
+          format: uri
+          type: string
+        sourceType:
+          description: 'What kind of item each row transfers material out of. Corresponds
+            to the "Source"
+
+            option in the UI.'
+          enum:
+          - ENTITY
+          - CONTAINER
+          - PLATE
+          type: string
+        submissionStatus:
+          enum:
+          - UNSUBMITTED
+          - SUBMITTED
+          - HAS_UNSUBMITTED_CHANGES
+          - UNEVALUATED
+          type: string
+        versionMetadata:
+          $ref: '#/components/schemas/DocumentLikeVersionMetadata'
+      type: object
+    DocumentPartInventoryTableUpdateContainers:
+      description: An inventory table that updates metadata, quantity, and concentration
+        on existing containers.
+      properties:
+        __typename:
+          type: string
+        columnDefinitions:
+          items:
+            $ref: '#/components/schemas/IStructuredTableColumnDefinition'
+          type: array
+        createdAt:
+          format: datetime
+          type: string
+        fallbackRegistry:
+          description: 'The registry whose schemas this table can target. Taken from
+            the selected schema''s
+
+            registry, or, when the table targets any schema of a given type rather
+            than one
+
+            specific schema, from the "Registry" option in the UI, which appears when
+            the eligible
+
+            schemas span more than one registry. Returns null when the table has no
+            associated
+
+            registry, or when the caller lacks read permission on the registry.'
+          oneOf:
+          - $ref: '#/components/schemas/RegistryRef'
+          - type: 'null'
+        id:
+          type: string
+        indentation:
+          type: integer
+        isEvaluated:
+          type: boolean
+        isSubmittable:
+          type: boolean
+        modifiedAt:
+          format: datetime
+          type: string
+        modifier:
+          oneOf:
+          - $ref: '#/components/schemas/PrincipalRef'
+          - type: 'null'
+        name:
+          type: string
+        rowCount:
+          type: integer
+        rows:
+          format: uri
+          type: string
+        storableSchemaType:
+          description: 'Whether this table updates standalone containers or plates
+            and their wells. Follows
+
+            from the "Schema" option in the UI and determines which columns the table
+            has.'
+          enum:
+          - CONTAINER_SCHEMA
+          - PLATE_SCHEMA
+          type: string
+        submissionStatus:
+          enum:
+          - UNSUBMITTED
+          - SUBMITTED
+          - HAS_UNSUBMITTED_CHANGES
+          - UNEVALUATED
+          type: string
+        versionMetadata:
+          $ref: '#/components/schemas/DocumentLikeVersionMetadata'
+      type: object
     DocumentPartListItem:
       description: Represents a single list item within a document. List items combine
         a marker style with rich text and indentation for ordered, unordered, and
@@ -16210,6 +16444,62 @@ components:
           $ref: '#/components/schemas/DocumentLikeVersionMetadata'
           description: Specifies version metadata for the parent document.
       type: object
+    DocumentPartLookupTable:
+      description: 'A lookup structured table that retrieves related data from linked
+        items.
+
+
+        Lookup column values are only computed when the entry is opened in a browser.'
+      properties:
+        __typename:
+          type: string
+        columnDefinitions:
+          items:
+            $ref: '#/components/schemas/IStructuredTableColumnDefinition'
+          type: array
+        createdAt:
+          format: datetime
+          type: string
+        id:
+          type: string
+        indentation:
+          type: integer
+        isEvaluated:
+          type: boolean
+        isSubmittable:
+          type: boolean
+        lookupSchema:
+          description: 'The root schema that the table''s lookup columns start from.
+            Returns null when the schema is not a
+
+            supported lookup schema type.'
+          oneOf:
+          - $ref: '#/components/schemas/LookupTableSchema'
+          - type: 'null'
+        modifiedAt:
+          format: datetime
+          type: string
+        modifier:
+          oneOf:
+          - $ref: '#/components/schemas/PrincipalRef'
+          - type: 'null'
+        name:
+          type: string
+        rowCount:
+          type: integer
+        rows:
+          format: uri
+          type: string
+        submissionStatus:
+          enum:
+          - UNSUBMITTED
+          - SUBMITTED
+          - HAS_UNSUBMITTED_CHANGES
+          - UNEVALUATED
+          type: string
+        versionMetadata:
+          $ref: '#/components/schemas/DocumentLikeVersionMetadata'
+      type: object
     DocumentPartPaginatedList:
       additionalProperties: false
       properties:
@@ -16254,58 +16544,141 @@ components:
           format: api_id
           type: string
       type: object
-    DocumentPartLookupTable:
-      description: Represents a lookup table embedded within a document. Its rows
-        are read-only and are not submitted as results.
+    DocumentPartRegistrationTableCreateEntities:
+      description: A registration table that creates new entities and registers them.
       properties:
         __typename:
           type: string
         columnDefinitions:
-          description: Lists column definitions for the table.
           items:
             $ref: '#/components/schemas/IStructuredTableColumnDefinition'
           type: array
         createdAt:
-          description: 'Timestamp inherited from the document content backing this
-            part. For entry and
-
-            document content, this can reflect when the containing document was created,
-
-            not when the DocumentPart identifier was created.'
           format: datetime
           type: string
+        entitySchema:
+          oneOf:
+          - $ref: '#/components/schemas/EntitySchemaRef'
+          - type: 'null'
         id:
-          description: Identifies the document part.
           type: string
         indentation:
-          description: Specifies the indentation level for this content within the
-            document.
           type: integer
         isEvaluated:
-          description: Specifies whether the table has been evaluated.
+          type: boolean
+        isSubmittable:
           type: boolean
         modifiedAt:
-          description: Specifies when this document part was last modified.
           format: datetime
           type: string
         modifier:
-          description: Identifies who last modified this document part.
           oneOf:
           - $ref: '#/components/schemas/PrincipalRef'
           - type: 'null'
         name:
-          description: Specifies the display name of the table.
           type: string
+        namingStrategy:
+          enum:
+          - NEW_IDS
+          - IDS_FROM_NAMES
+          - DELETE_NAMES
+          - SET_FROM_NAME_PARTS
+          - REPLACE_NAMES_FROM_PARTS
+          - KEEP_NAMES
+          - REPLACE_ID_AND_NAME_FROM_PARTS
+          - null
+          type:
+          - 'null'
+          - string
+        registrationDestinationFolder:
+          description: 'The folder where newly registered entities are placed. When
+            the table is configured
+
+            to inherit from the entry, this resolves to the entry''s project folder.
+            Returns null
+
+            when the table is configured for no folder, when the destination cannot
+            be determined
+
+            (e.g. a template), or when the caller lacks read permission on the folder.'
+          oneOf:
+          - $ref: '#/components/schemas/FolderRef'
+          - type: 'null'
         rowCount:
-          description: Specifies the number of rows in the table.
           type: integer
         rows:
-          description: Lists rows in the table, in row order.
           format: uri
+          type: string
+        submissionStatus:
+          enum:
+          - UNSUBMITTED
+          - SUBMITTED
+          - HAS_UNSUBMITTED_CHANGES
+          - UNEVALUATED
           type: string
         versionMetadata:
           $ref: '#/components/schemas/DocumentLikeVersionMetadata'
-          description: Specifies version metadata for the parent document.
+      type: object
+    DocumentPartRegistrationTableRegisterExistingEntities:
+      description: A registration table that registers entities that already exist.
+      properties:
+        __typename:
+          type: string
+        columnDefinitions:
+          items:
+            $ref: '#/components/schemas/IStructuredTableColumnDefinition'
+          type: array
+        createdAt:
+          format: datetime
+          type: string
+        entitySchema:
+          oneOf:
+          - $ref: '#/components/schemas/EntitySchemaRef'
+          - type: 'null'
+        id:
+          type: string
+        indentation:
+          type: integer
+        isEvaluated:
+          type: boolean
+        isSubmittable:
+          type: boolean
+        modifiedAt:
+          format: datetime
+          type: string
+        modifier:
+          oneOf:
+          - $ref: '#/components/schemas/PrincipalRef'
+          - type: 'null'
+        name:
+          type: string
+        namingStrategy:
+          enum:
+          - NEW_IDS
+          - IDS_FROM_NAMES
+          - DELETE_NAMES
+          - SET_FROM_NAME_PARTS
+          - REPLACE_NAMES_FROM_PARTS
+          - KEEP_NAMES
+          - REPLACE_ID_AND_NAME_FROM_PARTS
+          - null
+          type:
+          - 'null'
+          - string
+        rowCount:
+          type: integer
+        rows:
+          format: uri
+          type: string
+        submissionStatus:
+          enum:
+          - UNSUBMITTED
+          - SUBMITTED
+          - HAS_UNSUBMITTED_CHANGES
+          - UNEVALUATED
+          type: string
+        versionMetadata:
+          $ref: '#/components/schemas/DocumentLikeVersionMetadata'
       type: object
     DocumentPartResultsTable:
       description: 'A results structured table promoted to a first-class, individually-fetchable
@@ -21837,7 +22210,8 @@ components:
           type: string
         parts:
           description: Specifies the document content parts to insert, in order. At
-            least one part is required.
+            least one part is required. Unstructured tables are limited to 50000 cells
+            in total across all parts.
           items:
             $ref: '#/components/schemas/DocumentContentInput'
           type: array
@@ -22877,6 +23251,24 @@ components:
           type:
           - 'null'
           - integer
+      type: object
+    LookupTableSchema:
+      anyOf:
+      - $ref: '#/components/schemas/ObjectRef'
+      description: 'Specifies the schema types a lookup table can use as its input
+        schema. Entity schemas and schema
+
+        interfaces back entity lookups; box, container, and plate schemas back inventory
+        lookups.'
+      discriminator:
+        mapping:
+          BoxSchema: '#/components/schemas/ObjectRef'
+          ContainerSchema: '#/components/schemas/ObjectRef'
+          EntitySchema: '#/components/schemas/ObjectRef'
+          Fieldset: '#/components/schemas/ObjectRef'
+          MatrixPlateSchema: '#/components/schemas/ObjectRef'
+          WellPlateSchema: '#/components/schemas/ObjectRef'
+        propertyName: __typename
       type: object
     MafftOptionsInput:
       additionalProperties: false
@@ -25303,9 +25695,7 @@ components:
           - type: 'null'
         createdAt:
           format: datetime
-          type:
-          - 'null'
-          - string
+          type: string
         description:
           type: string
         fieldDefinitions:
@@ -25900,9 +26290,7 @@ components:
           - type: 'null'
         createdAt:
           format: datetime
-          type:
-          - 'null'
-          - string
+          type: string
         description:
           type: string
         fieldDefinitions:
@@ -30364,9 +30752,7 @@ components:
           - type: 'null'
         createdAt:
           format: datetime
-          type:
-          - 'null'
-          - string
+          type: string
         description:
           type: string
         domainLinkedSchemas:
@@ -31082,6 +31468,50 @@ components:
           type:
           - 'null'
           - string
+      type: object
+    RegistrationTableCreateEntitiesContentInput:
+      additionalProperties: false
+      properties:
+        contentType:
+          enum:
+          - registration_table_create_entities
+          type: string
+        entitySchemaId:
+          description: Specifies the ID of the entity schema of the entities the table
+            creates. The schema must not be archived.
+          type: string
+        indentation:
+          type: integer
+        name:
+          description: Specifies the display name of the table. The name must not
+            be empty or blank, and must be at most 100 characters.
+          type: string
+      required:
+      - contentType
+      - entitySchemaId
+      - name
+      type: object
+    RegistrationTableRegisterExistingEntitiesContentInput:
+      additionalProperties: false
+      properties:
+        contentType:
+          enum:
+          - registration_table_register_existing_entities
+          type: string
+        entitySchemaId:
+          description: Specifies the ID of the entity schema of the entities the table
+            registers. The schema must not be archived.
+          type: string
+        indentation:
+          type: integer
+        name:
+          description: Specifies the display name of the table. The name must not
+            be empty or blank, and must be at most 100 characters.
+          type: string
+      required:
+      - contentType
+      - entitySchemaId
+      - name
       type: object
     Registry:
       description: 'A centralized, validated repository for entities and inventory
@@ -35033,6 +35463,26 @@ components:
             name and for API access.
           type: string
       type: object
+    StorableSchema:
+      anyOf:
+      - $ref: '#/components/schemas/ObjectRef'
+      description: 'A union of all inventory item schema types. Includes BoxSchema
+        for storage boxes,
+
+        WellPlateSchema and MatrixPlateSchema for plates, LocationSchema for freezers,
+        shelves,
+
+        and other storage locations, and ContainerSchema for individual containers
+        like tubes and vials.'
+      discriminator:
+        mapping:
+          BoxSchema: '#/components/schemas/ObjectRef'
+          ContainerSchema: '#/components/schemas/ObjectRef'
+          LocationSchema: '#/components/schemas/ObjectRef'
+          MatrixPlateSchema: '#/components/schemas/ObjectRef'
+          WellPlateSchema: '#/components/schemas/ObjectRef'
+        propertyName: __typename
+      type: object
     Storage:
       anyOf:
       - $ref: '#/components/schemas/ObjectRef'
@@ -35341,6 +35791,12 @@ components:
           $ref: '#/components/schemas/PrincipalRef'
         id:
           type: string
+        isAutoLinking:
+          description: Indicates whether objects created within the context of the
+            associated item should automatically inherit the study association. For
+            example, when an entry has auto-linking enabled, entities registered from
+            that entry are automatically linked to the same study.
+          type: boolean
         item:
           $ref: '#/components/schemas/StudyableRef'
         study:
@@ -36261,6 +36717,7 @@ components:
           description: Tenant-wide enforcement setting.
           type: boolean
         monthlyCreditLimit:
+          deprecated: true
           description: 'The monthly credit limit applied to each user tenant-wide.
             Equals `tenantCreditLimit.monthlyLimit`
 
@@ -36276,6 +36733,7 @@ components:
             to be billed.
           type: number
         tenantCreditLimit:
+          deprecated: true
           description: The credit limit for the tenant as a whole, if there is one.
           oneOf:
           - $ref: '#/components/schemas/CreditLimitRef'
@@ -36308,85 +36766,6 @@ components:
         items:
           items:
             $ref: '#/components/schemas/TenantMetering'
-          type: array
-        nextToken:
-          type:
-          - string
-          - 'null'
-      type: object
-    TenantMeteringSummary:
-      description: 'A mix of database and metering information for the tenant as a
-        whole.
-
-        Implicitly refers to Benchling credits ("AI" credits).'
-      properties:
-        __typename:
-          type: string
-        balance:
-          description: Number of credits remaining in the current granted amount.
-          type: number
-        grantedAmount:
-          description: Total credits granted to the tenant.
-          type: number
-        hasEntitlement:
-          description: 'Whether the tenant has a Benchling credit entitlement. When
-            false, `balance`, `usage`, `overage`,
-
-            and `grantedAmount` are all zero.'
-          type: boolean
-        id:
-          type: string
-        isUserCreditEnforcementEnabled:
-          description: Tenant-wide enforcement setting.
-          type: boolean
-        monthlyCreditLimit:
-          description: 'The monthly credit limit applied to each user tenant-wide.
-            Equals `tenantCreditLimit.monthlyLimit`
-
-            when the tenant has a tenant-wide limit; otherwise the default limit.
-            Null when per-user credit
-
-            limits are not enabled for the tenant.'
-          type:
-          - 'null'
-          - integer
-        overage:
-          description: Excess credits that have been consumed by the tenant, possibly
-            to be billed.
-          type: number
-        tenantCreditLimit:
-          description: The credit limit for the tenant as a whole, if there is one.
-          oneOf:
-          - $ref: '#/components/schemas/CreditLimitRef'
-          - type: 'null'
-        usage:
-          description: How many credits the tenant has used in the past period.
-          type: number
-      type: object
-    TenantMeteringSummaryInput:
-      additionalProperties: false
-      properties:
-        isUserCreditEnforcementEnabled:
-          description: Whether per-user credit limits are enforced for the tenant.
-          type: boolean
-      type: object
-    TenantMeteringSummaryInputWithPathParams:
-      additionalProperties: false
-      properties:
-        id:
-          type: string
-        isUserCreditEnforcementEnabled:
-          description: Whether per-user credit limits are enforced for the tenant.
-          type: boolean
-      required:
-      - id
-      type: object
-    TenantMeteringSummaryPaginatedList:
-      additionalProperties: false
-      properties:
-        items:
-          items:
-            $ref: '#/components/schemas/TenantMeteringSummary'
           type: array
         nextToken:
           type:
@@ -41166,14 +41545,6 @@ components:
           items:
             type: string
           type: array
-        content:
-          deprecated: true
-          description: Deprecated. Use partsMutation instead. Do not use for new integrations.
-            Specifies legacy document content to append to the entry. Omit to leave
-            document content unchanged.
-          items:
-            $ref: '#/components/schemas/CreateEntryContentInput'
-          type: array
         name:
           description: Specifies the entry title. Omit to leave the title unchanged.
           type: string
@@ -41206,14 +41577,6 @@ components:
           type:
           - 'null'
           - string
-        sectionUuid:
-          deprecated: true
-          description: Deprecated. Use partsMutation instead. Do not use for new integrations.
-            Specifies the UUID of the section where legacy content is inserted when
-            using the content field. Content is appended at the end of that section.
-            Omit to append at the end of the document.
-          format: uuid
-          type: string
         selectors:
           description: Specifies dropdown selectors to create, update, or delete for
             unstructured tables. To create or update a selector, provide a non-empty
@@ -41284,14 +41647,6 @@ components:
           items:
             type: string
           type: array
-        content:
-          deprecated: true
-          description: Deprecated. Use partsMutation instead. Do not use for new integrations.
-            Specifies legacy document content to append to the entry. Omit to leave
-            document content unchanged.
-          items:
-            $ref: '#/components/schemas/CreateEntryContentInput'
-          type: array
         id:
           type: string
         name:
@@ -41324,14 +41679,6 @@ components:
           type:
           - 'null'
           - string
-        sectionUuid:
-          deprecated: true
-          description: Deprecated. Use partsMutation instead. Do not use for new integrations.
-            Specifies the UUID of the section where legacy content is inserted when
-            using the content field. Content is appended at the end of that section.
-            Omit to append at the end of the document.
-          format: uuid
-          type: string
         selectors:
           description: Specifies dropdown selectors to create, update, or delete for
             unstructured tables. To create or update a selector, provide a non-empty
@@ -48030,7 +48377,7 @@ components:
       description: 'AI credit usage for one user in the current billing period, generated
         on demand.
 
-        Currently, this can only be fetched by the authenticated user, for themselves.'
+        Users can fetch their own, and tenant admins can fetch any user''s.'
       properties:
         __typename:
           type: string
@@ -48066,52 +48413,6 @@ components:
         items:
           items:
             $ref: '#/components/schemas/UserMetering'
-          type: array
-        nextToken:
-          type:
-          - string
-          - 'null'
-      type: object
-    UserMeteringSummary:
-      description: 'AI credit usage for one user in the current billing period, generated
-        on demand.
-
-        Currently, this can only be fetched by the authenticated user, for themselves.'
-      properties:
-        __typename:
-          type: string
-        effectiveLimit:
-          description: The user's credit limit for the billing period, or null when
-            per-user limits are not enforced
-          type:
-          - 'null'
-          - integer
-        id:
-          description: Synthetic ID formed by replacing the user's `ent` prefix with
-            `umesu`.
-          type: string
-        isTenantOutOfCredits:
-          description: Whether the tenant is out of credits.
-          type: boolean
-        periodStart:
-          description: The date (UTC) on which the current billing period started.
-          format: date
-          type: string
-        resetDate:
-          description: The date (UTC) on which the next billing period starts and
-            usage resets.
-          format: date
-          type: string
-        usage:
-          description: AI credits consumed so far this billing period.
-          type: number
-      type: object
-    UserMeteringSummaryPaginatedList:
-      additionalProperties: false
-      properties:
-        items:
-          items:
-            $ref: '#/components/schemas/UserMeteringSummary'
           type: array
         nextToken:
           type:
@@ -61614,6 +61915,240 @@ paths:
       summary: Export a single item to a downloadable file
       tags:
       - DocumentExport
+  /document-part-inventory-table-create-containers/{document_part_inventory_table_create_containers_id}:
+    get:
+      description: Get a single DocumentPartInventoryTableCreateContainers by ID.
+      operationId: DocumentPartInventoryTableCreateContainers.Get
+      parameters:
+      - description: ID of the DocumentPartInventoryTableCreateContainers.
+        in: path
+        name: document_part_inventory_table_create_containers_id
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/returning'
+      - $ref: '#/components/parameters/omit'
+      - description: Set to true to access beta operations via /api/v3.
+        in: header
+        name: EARLY-ACCESS
+        required: false
+        schema: *id004
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentPartInventoryTableCreateContainers'
+          description: OK
+          headers: {}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      summary: Get DocumentPartInventoryTableCreateContainers by ID
+      tags:
+      - DocumentPartInventoryTableCreateContainers
+  /document-part-inventory-table-create-containers/{document_part_inventory_table_create_containers_id}/rows/items:
+    get:
+      description: List StructuredTableRow items.
+      operationId: DocumentPartInventoryTableCreateContainers.rows.List
+      parameters:
+      - $ref: '#/components/parameters/nextToken'
+      - $ref: '#/components/parameters/pageSize'
+      - description: ID of the DocumentPartInventoryTableCreateContainers.
+        in: path
+        name: document_part_inventory_table_create_containers_id
+        required: true
+        schema:
+          type: string
+      - description: Set to true to access beta operations via /api/v3.
+        in: header
+        name: EARLY-ACCESS
+        required: false
+        schema: *id004
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StructuredTableRowPaginatedList'
+          description: OK
+          headers: {}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      summary: List StructuredTableRow items
+      tags:
+      - DocumentPartInventoryTableCreateContainers
+  /document-part-inventory-table-fill-containers/{document_part_inventory_table_fill_containers_id}:
+    get:
+      description: Get a single DocumentPartInventoryTableFillContainers by ID.
+      operationId: DocumentPartInventoryTableFillContainers.Get
+      parameters:
+      - description: ID of the DocumentPartInventoryTableFillContainers.
+        in: path
+        name: document_part_inventory_table_fill_containers_id
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/returning'
+      - $ref: '#/components/parameters/omit'
+      - description: Set to true to access beta operations via /api/v3.
+        in: header
+        name: EARLY-ACCESS
+        required: false
+        schema: *id004
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentPartInventoryTableFillContainers'
+          description: OK
+          headers: {}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      summary: Get DocumentPartInventoryTableFillContainers by ID
+      tags:
+      - DocumentPartInventoryTableFillContainers
+  /document-part-inventory-table-fill-containers/{document_part_inventory_table_fill_containers_id}/rows/items:
+    get:
+      description: List StructuredTableRow items.
+      operationId: DocumentPartInventoryTableFillContainers.rows.List
+      parameters:
+      - $ref: '#/components/parameters/nextToken'
+      - $ref: '#/components/parameters/pageSize'
+      - description: ID of the DocumentPartInventoryTableFillContainers.
+        in: path
+        name: document_part_inventory_table_fill_containers_id
+        required: true
+        schema:
+          type: string
+      - description: Set to true to access beta operations via /api/v3.
+        in: header
+        name: EARLY-ACCESS
+        required: false
+        schema: *id004
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StructuredTableRowPaginatedList'
+          description: OK
+          headers: {}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      summary: List StructuredTableRow items
+      tags:
+      - DocumentPartInventoryTableFillContainers
+  /document-part-inventory-table-update-containers/{document_part_inventory_table_update_containers_id}:
+    get:
+      description: Get a single DocumentPartInventoryTableUpdateContainers by ID.
+      operationId: DocumentPartInventoryTableUpdateContainers.Get
+      parameters:
+      - description: ID of the DocumentPartInventoryTableUpdateContainers.
+        in: path
+        name: document_part_inventory_table_update_containers_id
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/returning'
+      - $ref: '#/components/parameters/omit'
+      - description: Set to true to access beta operations via /api/v3.
+        in: header
+        name: EARLY-ACCESS
+        required: false
+        schema: *id004
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentPartInventoryTableUpdateContainers'
+          description: OK
+          headers: {}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      summary: Get DocumentPartInventoryTableUpdateContainers by ID
+      tags:
+      - DocumentPartInventoryTableUpdateContainers
+  /document-part-inventory-table-update-containers/{document_part_inventory_table_update_containers_id}/rows/items:
+    get:
+      description: List StructuredTableRow items.
+      operationId: DocumentPartInventoryTableUpdateContainers.rows.List
+      parameters:
+      - $ref: '#/components/parameters/nextToken'
+      - $ref: '#/components/parameters/pageSize'
+      - description: ID of the DocumentPartInventoryTableUpdateContainers.
+        in: path
+        name: document_part_inventory_table_update_containers_id
+        required: true
+        schema:
+          type: string
+      - description: Set to true to access beta operations via /api/v3.
+        in: header
+        name: EARLY-ACCESS
+        required: false
+        schema: *id004
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StructuredTableRowPaginatedList'
+          description: OK
+          headers: {}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      summary: List StructuredTableRow items
+      tags:
+      - DocumentPartInventoryTableUpdateContainers
   /document-part-lookup-table/{document_part_lookup_table_id}:
     get:
       description: Get a single DocumentPartLookupTable by ID.
@@ -61692,6 +62227,163 @@ paths:
       summary: List StructuredTableRow items
       tags:
       - DocumentPartLookupTable
+  /document-part-registration-table-create-entities/{document_part_registration_table_create_entities_id}:
+    get:
+      description: Get a single DocumentPartRegistrationTableCreateEntities by ID.
+      operationId: DocumentPartRegistrationTableCreateEntities.Get
+      parameters:
+      - description: ID of the DocumentPartRegistrationTableCreateEntities.
+        in: path
+        name: document_part_registration_table_create_entities_id
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/returning'
+      - $ref: '#/components/parameters/omit'
+      - description: Set to true to access beta operations via /api/v3.
+        in: header
+        name: EARLY-ACCESS
+        required: false
+        schema: *id004
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentPartRegistrationTableCreateEntities'
+          description: OK
+          headers: {}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      summary: Get DocumentPartRegistrationTableCreateEntities by ID
+      tags:
+      - DocumentPartRegistrationTableCreateEntities
+  /document-part-registration-table-create-entities/{document_part_registration_table_create_entities_id}/rows/items:
+    get:
+      description: List StructuredTableRow items.
+      operationId: DocumentPartRegistrationTableCreateEntities.rows.List
+      parameters:
+      - $ref: '#/components/parameters/nextToken'
+      - $ref: '#/components/parameters/pageSize'
+      - description: ID of the DocumentPartRegistrationTableCreateEntities.
+        in: path
+        name: document_part_registration_table_create_entities_id
+        required: true
+        schema:
+          type: string
+      - description: Set to true to access beta operations via /api/v3.
+        in: header
+        name: EARLY-ACCESS
+        required: false
+        schema: *id004
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StructuredTableRowPaginatedList'
+          description: OK
+          headers: {}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      summary: List StructuredTableRow items
+      tags:
+      - DocumentPartRegistrationTableCreateEntities
+  /document-part-registration-table-register-existing-entities/{document_part_registration_table_register_existing_entities_id}:
+    get:
+      description: Get a single DocumentPartRegistrationTableRegisterExistingEntities
+        by ID.
+      operationId: DocumentPartRegistrationTableRegisterExistingEntities.Get
+      parameters:
+      - description: ID of the DocumentPartRegistrationTableRegisterExistingEntities.
+        in: path
+        name: document_part_registration_table_register_existing_entities_id
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/returning'
+      - $ref: '#/components/parameters/omit'
+      - description: Set to true to access beta operations via /api/v3.
+        in: header
+        name: EARLY-ACCESS
+        required: false
+        schema: *id004
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentPartRegistrationTableRegisterExistingEntities'
+          description: OK
+          headers: {}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      summary: Get DocumentPartRegistrationTableRegisterExistingEntities by ID
+      tags:
+      - DocumentPartRegistrationTableRegisterExistingEntities
+  ? /document-part-registration-table-register-existing-entities/{document_part_registration_table_register_existing_entities_id}/rows/items
+  : get:
+      description: List StructuredTableRow items.
+      operationId: DocumentPartRegistrationTableRegisterExistingEntities.rows.List
+      parameters:
+      - $ref: '#/components/parameters/nextToken'
+      - $ref: '#/components/parameters/pageSize'
+      - description: ID of the DocumentPartRegistrationTableRegisterExistingEntities.
+        in: path
+        name: document_part_registration_table_register_existing_entities_id
+        required: true
+        schema:
+          type: string
+      - description: Set to true to access beta operations via /api/v3.
+        in: header
+        name: EARLY-ACCESS
+        required: false
+        schema: *id004
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StructuredTableRowPaginatedList'
+          description: OK
+          headers: {}
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      summary: List StructuredTableRow items
+      tags:
+      - DocumentPartRegistrationTableRegisterExistingEntities
   /document-part-results-table/{document_part_results_table_id}:
     get:
       description: Get a single DocumentPartResultsTable by ID.
@@ -66632,6 +67324,7 @@ paths:
       description: List Folder items.
       operationId: Folder.List
       parameters:
+      - $ref: '#/components/parameters/action.eq'
       - $ref: '#/components/parameters/archiveReason.anyOf'
       - $ref: '#/components/parameters/archived.anyOf'
       - $ref: '#/components/parameters/id.anyOf'
@@ -66783,6 +67476,7 @@ paths:
       description: List Folder items.
       operationId: Folder.children.List
       parameters:
+      - $ref: '#/components/parameters/action.eq'
       - $ref: '#/components/parameters/archiveReason.anyOf'
       - $ref: '#/components/parameters/archived.anyOf'
       - $ref: '#/components/parameters/id.anyOf'
@@ -72346,12 +73040,6 @@ paths:
     post:
       description: Create OligoConjugateSchema.
       operationId: OligoConjugateSchema.Create
-      parameters:
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       requestBody:
         content:
           application/json:
@@ -72414,11 +73102,6 @@ paths:
           - modifiedAt:asc
           - modifiedAt:desc
           type: string
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       responses:
         '200':
           content:
@@ -72453,11 +73136,6 @@ paths:
           type: string
       - $ref: '#/components/parameters/returning'
       - $ref: '#/components/parameters/omit'
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       responses:
         '200':
           content:
@@ -72489,11 +73167,6 @@ paths:
         required: true
         schema:
           type: string
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       requestBody:
         content:
           application/json:
@@ -72571,11 +73244,6 @@ paths:
         schema:
           type: string
       - $ref: '#/components/parameters/archived.anyOf'
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       responses:
         '200':
           content:
@@ -72646,11 +73314,6 @@ paths:
         required: true
         schema:
           type: string
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       requestBody:
         content:
           application/json:
@@ -72739,11 +73402,6 @@ paths:
         required: true
         schema:
           type: string
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       requestBody:
         content:
           application/json:
@@ -72782,11 +73440,6 @@ paths:
         required: true
         schema:
           type: string
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       requestBody:
         content:
           application/json:
@@ -72864,12 +73517,6 @@ paths:
       description: Batch create OligoConjugateSchema synchronously in one transaction.
         Maximum 25 items per request.
       operationId: OligoConjugateSchema.BatchCreate
-      parameters:
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       requestBody:
         content:
           application/json:
@@ -72920,12 +73567,6 @@ paths:
       description: Batch update OligoConjugateSchema synchronously in one transaction.
         Maximum 25 items per request.
       operationId: OligoConjugateSchema.BatchUpdate
-      parameters:
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       requestBody:
         content:
           application/json:
@@ -72977,12 +73618,6 @@ paths:
     post:
       description: Bulk create OligoConjugateSchema.
       operationId: OligoConjugateSchema.BulkCreate
-      parameters:
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       requestBody:
         content:
           application/json:
@@ -73014,12 +73649,6 @@ paths:
     patch:
       description: Bulk update OligoConjugateSchema.
       operationId: OligoConjugateSchema.BulkUpdate
-      parameters:
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       requestBody:
         content:
           application/json:
@@ -73446,12 +74075,6 @@ paths:
     post:
       description: Create OligoDuplexSchema.
       operationId: OligoDuplexSchema.Create
-      parameters:
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       requestBody:
         content:
           application/json:
@@ -73514,11 +74137,6 @@ paths:
           - modifiedAt:asc
           - modifiedAt:desc
           type: string
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       responses:
         '200':
           content:
@@ -73553,11 +74171,6 @@ paths:
           type: string
       - $ref: '#/components/parameters/returning'
       - $ref: '#/components/parameters/omit'
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       responses:
         '200':
           content:
@@ -73589,11 +74202,6 @@ paths:
         required: true
         schema:
           type: string
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       requestBody:
         content:
           application/json:
@@ -73671,11 +74279,6 @@ paths:
         schema:
           type: string
       - $ref: '#/components/parameters/archived.anyOf'
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       responses:
         '200':
           content:
@@ -73746,11 +74349,6 @@ paths:
         required: true
         schema:
           type: string
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       requestBody:
         content:
           application/json:
@@ -73839,11 +74437,6 @@ paths:
         required: true
         schema:
           type: string
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       requestBody:
         content:
           application/json:
@@ -73882,11 +74475,6 @@ paths:
         required: true
         schema:
           type: string
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       requestBody:
         content:
           application/json:
@@ -73964,12 +74552,6 @@ paths:
       description: Batch create OligoDuplexSchema synchronously in one transaction.
         Maximum 25 items per request.
       operationId: OligoDuplexSchema.BatchCreate
-      parameters:
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       requestBody:
         content:
           application/json:
@@ -74020,12 +74602,6 @@ paths:
       description: Batch update OligoDuplexSchema synchronously in one transaction.
         Maximum 25 items per request.
       operationId: OligoDuplexSchema.BatchUpdate
-      parameters:
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       requestBody:
         content:
           application/json:
@@ -74077,12 +74653,6 @@ paths:
     post:
       description: Bulk create OligoDuplexSchema.
       operationId: OligoDuplexSchema.BulkCreate
-      parameters:
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       requestBody:
         content:
           application/json:
@@ -74114,12 +74684,6 @@ paths:
     patch:
       description: Bulk update OligoDuplexSchema.
       operationId: OligoDuplexSchema.BulkUpdate
-      parameters:
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       requestBody:
         content:
           application/json:
@@ -80696,12 +81260,6 @@ paths:
     post:
       description: Create ProteinSchema.
       operationId: ProteinSchema.Create
-      parameters:
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       requestBody:
         content:
           application/json:
@@ -80764,11 +81322,6 @@ paths:
           - modifiedAt:asc
           - modifiedAt:desc
           type: string
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       responses:
         '200':
           content:
@@ -80803,11 +81356,6 @@ paths:
           type: string
       - $ref: '#/components/parameters/returning'
       - $ref: '#/components/parameters/omit'
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       responses:
         '200':
           content:
@@ -80839,11 +81387,6 @@ paths:
         required: true
         schema:
           type: string
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       requestBody:
         content:
           application/json:
@@ -80921,11 +81464,6 @@ paths:
         schema:
           type: string
       - $ref: '#/components/parameters/archived.anyOf'
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       responses:
         '200':
           content:
@@ -80996,11 +81534,6 @@ paths:
         required: true
         schema:
           type: string
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       requestBody:
         content:
           application/json:
@@ -81089,11 +81622,6 @@ paths:
         required: true
         schema:
           type: string
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       requestBody:
         content:
           application/json:
@@ -81132,11 +81660,6 @@ paths:
         required: true
         schema:
           type: string
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       requestBody:
         content:
           application/json:
@@ -81214,12 +81737,6 @@ paths:
       description: Batch create ProteinSchema synchronously in one transaction. Maximum
         25 items per request.
       operationId: ProteinSchema.BatchCreate
-      parameters:
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       requestBody:
         content:
           application/json:
@@ -81270,12 +81787,6 @@ paths:
       description: Batch update ProteinSchema synchronously in one transaction. Maximum
         25 items per request.
       operationId: ProteinSchema.BatchUpdate
-      parameters:
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       requestBody:
         content:
           application/json:
@@ -81327,12 +81838,6 @@ paths:
     post:
       description: Bulk create ProteinSchema.
       operationId: ProteinSchema.BulkCreate
-      parameters:
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       requestBody:
         content:
           application/json:
@@ -81364,12 +81869,6 @@ paths:
     patch:
       description: Bulk update ProteinSchema.
       operationId: ProteinSchema.BulkUpdate
-      parameters:
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       requestBody:
         content:
           application/json:
@@ -88802,7 +89301,7 @@ paths:
                         Molecule, OligoConjugate, OligoDuplex, PredictionBatch, Procedure,
                         Protein, Reaction, RnaOligo, RnaSequence, SqlDashboard, StageEntry,
                         TestDefinition, WellPlate, WorkflowOutput, WorkflowTask, WorkflowTaskGroup,
-                        Worksheet.'
+                        Worklist, Worksheet.'
                       minProperties: 1
                       properties:
                         anyOf:
@@ -88957,6 +89456,20 @@ paths:
                           maxItems: 100
                           type: array
                       type: object
+                    itemType:
+                      additionalProperties: false
+                      description: 'Supported objectTypes: Worklist.'
+                      minProperties: 1
+                      properties:
+                        anyOf:
+                          description: 'Restricts results to worklists that hold any
+                            of the specified item types: CONTAINER, ENTITY, or PLATE.'
+                          items:
+                            type: string
+                          maxItems: 3
+                          minItems: 1
+                          type: array
+                      type: object
                     memberOf:
                       additionalProperties: false
                       description: 'Supported objectTypes: User.'
@@ -89092,7 +89605,7 @@ paths:
                       type: object
                     owner:
                       additionalProperties: false
-                      description: 'Supported objectTypes: TemplateCollection.'
+                      description: 'Supported objectTypes: TemplateCollection, Worklist.'
                       minProperties: 1
                       properties:
                         anyOf:
@@ -94654,11 +95167,6 @@ paths:
         required: true
         schema:
           type: string
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       responses:
         '200':
           content:
@@ -94707,11 +95215,6 @@ paths:
         required: true
         schema:
           type: string
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       responses:
         '200':
           content:
@@ -94760,11 +95263,6 @@ paths:
         required: true
         schema:
           type: string
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       responses:
         '200':
           content:
@@ -94813,11 +95311,6 @@ paths:
         required: true
         schema:
           type: string
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       responses:
         '200':
           content:
@@ -94979,11 +95472,6 @@ paths:
         required: true
         schema:
           type: string
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       responses:
         '200':
           content:
@@ -95032,11 +95520,6 @@ paths:
         required: true
         schema:
           type: string
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
       responses:
         '200':
           content:
@@ -95381,84 +95864,6 @@ paths:
       summary: Poll async task status
       tags:
       - StudySchema
-  /tasks/tenant-metering-summary/export-usage/{task_id}:
-    get:
-      deprecated: true
-      description: 'Poll the status of the "Export the tenant''s usage of credits
-        as a CSV file" task.
-
-
-        Export the tenant''s usage of Benchling credits as a CSV file. Returns a task;
-        when the task completes, its result contains a presigned download `url` and
-        an expiration timestamp.
-
-
-        ## Notes
-
-
-        - Requires tenant admin permission.
-
-        - The report reflects only AI credits.
-
-        - Returns `400` if `fromTimestamp` is later than `toTimestamp`, or if `userId`
-        does not identify a user in the tenant.
-
-        - If the export cannot retrieve all usage in the requested range, the result
-        has `truncated: true`, no `url`, and a `message` explaining why. Narrow the
-        time range and try again.
-
-
-        DEPRECATION GUIDANCE: Use TenantMetering instead.'
-      operationId: TenantMeteringSummary.ExportUsage.Get
-      parameters:
-      - description: ID of the asynchronous task to poll.
-        in: path
-        name: task_id
-        required: true
-        schema:
-          type: string
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                properties:
-                  message:
-                    type: string
-                  result:
-                    oneOf:
-                    - $ref: '#/components/schemas/ExportTenantUsageOutput'
-                    - type: 'null'
-                  status:
-                    enum:
-                    - NOT_STARTED
-                    - IN_PROGRESS
-                    - COMPLETED
-                    - FAILED
-                    type: string
-                required:
-                - status
-                - message
-                type: object
-          description: OK
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-      summary: Poll async task status
-      tags:
-      - TenantMeteringSummary
   /tasks/tenant-metering/export-usage/{task_id}:
     get:
       description: 'Poll the status of the "Export the tenant''s usage of credits
@@ -96265,294 +96670,6 @@ paths:
       summary: List TemplateCollectible items
       tags:
       - TemplateCollection
-  /tenant-metering-summary/items:
-    get:
-      deprecated: true
-      description: 'List TenantMeteringSummary items.
-
-
-        DEPRECATION GUIDANCE: Use TenantMetering instead.'
-      operationId: TenantMeteringSummary.List
-      parameters:
-      - $ref: '#/components/parameters/id.anyOf'
-      - $ref: '#/components/parameters/nextToken'
-      - $ref: '#/components/parameters/omit'
-      - $ref: '#/components/parameters/pageSize'
-      - $ref: '#/components/parameters/returning'
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TenantMeteringSummaryPaginatedList'
-          description: OK
-          headers: {}
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-      summary: List TenantMeteringSummary items
-      tags:
-      - TenantMeteringSummary
-  /tenant-metering-summary/{tenant_metering_summary_id}:
-    get:
-      deprecated: true
-      description: 'Get a single TenantMeteringSummary by ID.
-
-
-        DEPRECATION GUIDANCE: Use TenantMetering instead.'
-      operationId: TenantMeteringSummary.Get
-      parameters:
-      - description: ID of the TenantMeteringSummary.
-        in: path
-        name: tenant_metering_summary_id
-        required: true
-        schema:
-          type: string
-      - $ref: '#/components/parameters/returning'
-      - $ref: '#/components/parameters/omit'
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TenantMeteringSummary'
-          description: OK
-          headers: {}
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-      summary: Get TenantMeteringSummary by ID
-      tags:
-      - TenantMeteringSummary
-    patch:
-      deprecated: true
-      description: 'Update TenantMeteringSummary.
-
-
-        DEPRECATION GUIDANCE: Use TenantMetering instead.'
-      operationId: TenantMeteringSummary.Update
-      parameters:
-      - description: ID of the TenantMeteringSummary.
-        in: path
-        name: tenant_metering_summary_id
-        required: true
-        schema:
-          type: string
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/TenantMeteringSummaryInput'
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TenantMeteringSummary'
-          description: OK
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-      summary: Update TenantMeteringSummary
-      tags:
-      - TenantMeteringSummary
-  /tenant-metering-summary:batch-update:
-    patch:
-      deprecated: true
-      description: 'Batch update TenantMeteringSummary synchronously in one transaction.
-        Maximum 1 items per request.
-
-
-        DEPRECATION GUIDANCE: Use TenantMetering instead.'
-      operationId: TenantMeteringSummary.BatchUpdate
-      parameters:
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
-      requestBody:
-        content:
-          application/json:
-            schema:
-              additionalProperties: false
-              properties:
-                items:
-                  items:
-                    $ref: '#/components/schemas/TenantMeteringSummaryInputWithPathParams'
-                  maxItems: 1
-                  minItems: 1
-                  type: array
-              required:
-              - items
-              type: object
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                additionalProperties: false
-                properties:
-                  items:
-                    items:
-                      $ref: '#/components/schemas/TenantMeteringSummary'
-                    type: array
-                required:
-                - items
-                type: object
-          description: OK
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-      summary: Batch update TenantMeteringSummary
-      tags:
-      - TenantMeteringSummary
-  /tenant-metering-summary:bulk-update:
-    patch:
-      deprecated: true
-      description: 'Bulk update TenantMeteringSummary.
-
-
-        DEPRECATION GUIDANCE: Use TenantMetering instead.'
-      operationId: TenantMeteringSummary.BulkUpdate
-      parameters:
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/BulkImport'
-      responses:
-        '202':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AsyncTaskLink'
-          description: Task started
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-      summary: Bulk update TenantMeteringSummary
-      tags:
-      - TenantMeteringSummary
-  /tenant-metering-summary:export-usage:
-    post:
-      deprecated: true
-      description: 'Export the tenant''s usage of Benchling credits as a CSV file.
-        Returns a task; when the task completes, its result contains a presigned download
-        `url` and an expiration timestamp.
-
-
-        ## Notes
-
-
-        - Requires tenant admin permission.
-
-        - The report reflects only AI credits.
-
-        - Returns `400` if `fromTimestamp` is later than `toTimestamp`, or if `userId`
-        does not identify a user in the tenant.
-
-        - If the export cannot retrieve all usage in the requested range, the result
-        has `truncated: true`, no `url`, and a `message` explaining why. Narrow the
-        time range and try again.
-
-
-        DEPRECATION GUIDANCE: Use TenantMetering instead.'
-      operationId: TenantMeteringSummary.ExportUsage
-      parameters:
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ExportTenantUsageInput'
-      responses:
-        '202':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AsyncTaskLink'
-          description: Task started
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-      summary: Export the tenant's usage of credits as a CSV file
-      tags:
-      - TenantMeteringSummary
   /tenant-metering/items:
     get:
       description: List TenantMetering items.
@@ -98413,92 +98530,11 @@ paths:
       summary: Create User
       tags:
       - User
-  /user-metering-summary/items:
-    get:
-      deprecated: true
-      description: 'Returns only the authenticated user''s summary.
-
-
-        DEPRECATION GUIDANCE: Use UserMetering instead.'
-      operationId: UserMeteringSummary.List
-      parameters:
-      - $ref: '#/components/parameters/id.anyOf'
-      - $ref: '#/components/parameters/nextToken'
-      - $ref: '#/components/parameters/omit'
-      - $ref: '#/components/parameters/pageSize'
-      - $ref: '#/components/parameters/returning'
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UserMeteringSummaryPaginatedList'
-          description: OK
-          headers: {}
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-      summary: List UserMeteringSummary items
-      tags:
-      - UserMeteringSummary
-  /user-metering-summary/{user_metering_summary_id}:
-    get:
-      deprecated: true
-      description: 'Get a single UserMeteringSummary by ID.
-
-
-        DEPRECATION GUIDANCE: Use UserMetering instead.'
-      operationId: UserMeteringSummary.Get
-      parameters:
-      - description: ID of the UserMeteringSummary.
-        in: path
-        name: user_metering_summary_id
-        required: true
-        schema:
-          type: string
-      - $ref: '#/components/parameters/returning'
-      - $ref: '#/components/parameters/omit'
-      - description: Set to true to access beta operations via /api/v3.
-        in: header
-        name: EARLY-ACCESS
-        required: false
-        schema: *id004
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/UserMeteringSummary'
-          description: OK
-          headers: {}
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-      summary: Get UserMeteringSummary by ID
-      tags:
-      - UserMeteringSummary
   /user-metering/items:
     get:
-      description: Returns only the authenticated user's summary.
+      description: Returns the authenticated user's summary by default. Tenant admins
+        can list other users' summaries by filtering on `userId` or `id`; other users
+        can list only their own.
       operationId: UserMetering.List
       parameters:
       - $ref: '#/components/parameters/id.anyOf'
@@ -98506,6 +98542,7 @@ paths:
       - $ref: '#/components/parameters/omit'
       - $ref: '#/components/parameters/pageSize'
       - $ref: '#/components/parameters/returning'
+      - $ref: '#/components/parameters/userId.anyOf'
       - description: Set to true to access beta operations via /api/v3.
         in: header
         name: EARLY-ACCESS
@@ -102193,7 +102230,9 @@ paths:
       - $ref: '#/components/parameters/createdAt.gte'
       - $ref: '#/components/parameters/createdAt.lt'
       - $ref: '#/components/parameters/createdAt.lte'
+      - $ref: '#/components/parameters/creator.anyOf'
       - $ref: '#/components/parameters/id.anyOf'
+      - $ref: '#/components/parameters/itemType.anyOf'
       - $ref: '#/components/parameters/modifiedAt.gt'
       - $ref: '#/components/parameters/modifiedAt.gte'
       - $ref: '#/components/parameters/modifiedAt.lt'
@@ -102202,6 +102241,7 @@ paths:
       - $ref: '#/components/parameters/name.anyOf.caseSensitive'
       - $ref: '#/components/parameters/nextToken'
       - $ref: '#/components/parameters/omit'
+      - $ref: '#/components/parameters/owner.anyOf'
       - $ref: '#/components/parameters/pageSize'
       - $ref: '#/components/parameters/returning'
       - description: 'Method by which to order results. Valid sorts are: createdAt
@@ -103298,11 +103338,37 @@ tags:
   name: DnaSequenceSchema
   x-bnch-organization: Benchling
   x-displayName: DNA Sequence Schema
-- description: Represents a lookup table embedded within a document. Its rows are
-    read-only and are not submitted as results.
+- description: A transfer table that creates new destination containers and fills
+    them from a source.
+  name: DocumentPartInventoryTableCreateContainers
+  x-bnch-organization: Benchling
+  x-displayName: Document Part Inventory Table Create Containers
+- description: A transfer table that fills existing containers or plate wells from
+    a source.
+  name: DocumentPartInventoryTableFillContainers
+  x-bnch-organization: Benchling
+  x-displayName: Document Part Inventory Table Fill Containers
+- description: An inventory table that updates metadata, quantity, and concentration
+    on existing containers.
+  name: DocumentPartInventoryTableUpdateContainers
+  x-bnch-organization: Benchling
+  x-displayName: Document Part Inventory Table Update Containers
+- description: 'A lookup structured table that retrieves related data from linked
+    items.
+
+
+    Lookup column values are only computed when the entry is opened in a browser.'
   name: DocumentPartLookupTable
   x-bnch-organization: Benchling
   x-displayName: Document Part Lookup Table
+- description: A registration table that creates new entities and registers them.
+  name: DocumentPartRegistrationTableCreateEntities
+  x-bnch-organization: Benchling
+  x-displayName: Document Part Registration Table Create Entities
+- description: A registration table that registers entities that already exist.
+  name: DocumentPartRegistrationTableRegisterExistingEntities
+  x-bnch-organization: Benchling
+  x-displayName: Document Part Registration Table Register Existing Entities
 - description: 'A results structured table promoted to a first-class, individually-fetchable
     document part.
 
@@ -105028,12 +105094,6 @@ tags:
   name: TenantMetering
   x-bnch-organization: Benchling
   x-displayName: Tenant Metering
-- description: 'A mix of database and metering information for the tenant as a whole.
-
-    Implicitly refers to Benchling credits ("AI" credits).'
-  name: TenantMeteringSummary
-  x-bnch-organization: Benchling
-  x-displayName: Tenant Metering Summary
 - description: 'A Test Definition is a configuration object that specifies a type
     of test or assay that can be
 
@@ -105157,17 +105217,10 @@ tags:
 - description: 'AI credit usage for one user in the current billing period, generated
     on demand.
 
-    Currently, this can only be fetched by the authenticated user, for themselves.'
+    Users can fetch their own, and tenant admins can fetch any user''s.'
   name: UserMetering
   x-bnch-organization: Benchling
   x-displayName: User Metering
-- description: 'AI credit usage for one user in the current billing period, generated
-    on demand.
-
-    Currently, this can only be fetched by the authenticated user, for themselves.'
-  name: UserMeteringSummary
-  x-bnch-organization: Benchling
-  x-displayName: User Metering Summary
 - description: 'Represents credentials for connecting to Benchling''s data warehouse,
     enabling users to query data
 

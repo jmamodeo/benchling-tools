@@ -47,7 +47,8 @@ def test_vendored_specs_match_the_manifest_checksums() -> None:
         snapshot = ROOT / str(contract["snapshot"])
         digest = hashlib.sha256(snapshot.read_bytes()).hexdigest()
         assert digest == contract["sha256"]
-        assert contract["captured_at"] == "2026-11-19"
+        expected = "2026-11-23" if name == "benchling-v3" else "2026-11-19"
+        assert contract["captured_at"] == expected
 
 
 @lru_cache(maxsize=4)
