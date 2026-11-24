@@ -70,7 +70,15 @@ Use the bug or feature form. Both ask what you tried, the expected and actual be
 
 ## Merging
 
-Changes land through pull requests from feature branches and are squash-merged once CI passes. Releases and PyPI publishes are cut from `main` by maintainers.
+Changes land through pull requests from feature branches. Authors never merge their own pull requests.
+
+The reviewer leaves the review as a comment, not a GitHub Approval. When the pull request is clean and CI is green, the reviewer squash-merges it, pinned to the reviewed commit:
+
+```
+gh pr merge --squash --match-head-commit <sha> --delete-branch
+```
+
+Branches that deploy to production are merged by the maintainer rather than as ordinary reviewed merges. A new PyPI release is an ordinary reviewed merge, not a production deploy. After the reviewed merge, the maintainer cuts the GitHub release and PyPI publish from `main`, as described under Releasing.
 
 ## Releasing
 
