@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- Refreshed the vendored public V3 OpenAPI snapshot and `contracts/openapi-manifest.json` to the 2026-11-23 specification. The V2 snapshot and checksum are unchanged. On the routes this toolkit uses, that specification adds registration-table and inventory-table document part types, adds optional `lookupSchema`, `isSubmittable`, and `submissionStatus` fields on `DocumentPartLookupTable`, notes a 50,000-cell cap on unstructured tables in create and insert descriptions, and removes the deprecated `content` and `sectionUuid` properties from `UpdateEntryInput`. Request and response shapes this toolkit already sends and parses are unchanged: writes use `partsMutation`, not the removed fields, and reads keep unknown part types as opaque data.
+
 ## [0.8.0] - 2026-11-23
 
 Coverage and diagnosis release for notebook testing and debug workflows: pending-result list and diff, results-table diffs and capacity checks, payload verification, user and container lookups, and plan-time link, field, capacity, and missing-table validation. A results plan fails at plan time with `results_table_missing` when the entry has no results table for the schema. One breaking MCP change: `container_find` takes `barcodes` (a list) instead of `barcode`.
